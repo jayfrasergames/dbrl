@@ -1,0 +1,3 @@
+[submodule "src/jfg"]
+	path = src/jfg
+	url = ../jfg

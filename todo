@@ -1,0 +1,11 @@
+
+* create a proper windows game loop
+* deal with setting cursor image correctly
+
+* create IMgui slider adjustments and "constants" files
+* create header files with game data (e.g. game images, maps of those images etc) - using python scripts
+    * put these in gen/
+    * includes:
+        * <name>.data.h (shaders, textures, etc)
+        * <name>.edit.h (constants for animations etc)
+          in game editor should edit <name>.edit.h files
