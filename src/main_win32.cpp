@@ -7,12 +7,10 @@
 
 #include "jfg/jfg_d3d11.h"
 #include "jfg/imgui.h"
+#include "tile_render.h"
+#include "gen/background_tiles.data.h"
 
 #include <dxgi1_2.h>
-
-#include "gen/cs_draw_red.data.h"
-#include "gen/vs_text.data.h"
-#include "gen/ps_text.data.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -245,6 +243,14 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 		return 0;
 	}
 
+	Tile_Render tile_render;
+	tile_render_init(&tile_render, (Tile_Render_Texture*)&TEXTURE_BACKGROUND_TILES.header);
+	Tile_Render_D3D11_Context tile_render_d3d11;
+	if (!tile_render_d3d11_init(&tile_render_d3d11, &tile_render, device)) {
+		show_debug_messages(window, info_queue);
+		return 0;
+	}
+
 	for (u32 frame_number = 0; running; ++frame_number) {
 		MSG msg = {};
 		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -265,14 +271,15 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 		};
 
 		imgui_begin(&imgui);
-		imgui_set_text_cursor(&imgui, { 1.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f });
+		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
 		imgui_text(&imgui, "Hello, world!");
 
 		context->RSSetViewports(1, &viewport);
-		f32 clear_color[4] = { 0.2f, 0.4f, 0.2f, 1.0f };
+		f32 clear_color[4] = { 0.1f, 0.1f, 0.3f, 1.0f };
 		context->ClearRenderTargetView(back_buffer_rtv, clear_color);
 
 		imgui_d3d11_draw(&imgui, &imgui_d3d11, context, back_buffer_rtv, screen_size);
+		tile_render_d3d11_draw(&tile_render_d3d11, &tile_render, context, back_buffer_rtv);
 
 		swap_chain->Present(1, 0);
 	}

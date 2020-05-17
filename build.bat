@@ -21,6 +21,9 @@ if "%1"=="" GOTO Continue
 	if "%1" == "shaders" (
 		CALL :build_shaders
 	)
+	if "%1" == "assets" (
+		CALL :build_assets
+	)
 SHIFT
 GOTO Loop
 :Continue
@@ -75,6 +78,15 @@ EXIT /B 0
 :build_shaders
 echo build_shaders
 
+pushd ..\src
+
+fxc /Fh gen\tile_render_dxbc_tile_vertex_shader.data.h ^
+	/E vs_tile /Vn TILE_RENDER_TILE_VS /T vs_5_0 tile_render.hlsl
+fxc /Fh gen\tile_render_dxbc_tile_pixel_shader.data.h  ^
+	/E ps_tile /Vn TILE_RENDER_TILE_PS /T ps_5_0 tile_render.hlsl
+
+popd
+
 EXIT /B 0
 
 :build_release
@@ -87,5 +99,18 @@ cl ..\src\main_win32.cpp ^
 	/Ot /MD ^
 	/D WIN32 ^
 	/link /incremental:no /subsystem:windows
+
+EXIT /B 0
+
+:build_assets
+echo build_assets
+
+python ..\scripts\texture_convert ^
+	-i ../assets/tiles.png ^
+	-o ../src/gen/background_tiles.data.h ^
+	-t Tile_Render_Texture ^
+	-n Background_Tiles ^
+	--tile-width 24 ^
+	--tile-height 24
 
 EXIT /B 0

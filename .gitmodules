@@ -1,3 +1,9 @@
 [submodule "src/jfg"]
 	path = src/jfg
-	url = ../jfg
+	url = git@github.com:jayfrasergames/jfg.git
+[submodule "assets"]
+	path = assets
+	url = git@github.com:jayfrasergames/dbrl_assets.git
+[submodule "scripts"]
+	path = scripts
+	url = git@github.com:jayfrasergames/scripts.git
