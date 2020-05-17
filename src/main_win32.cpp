@@ -4,25 +4,21 @@
 #define WIN32_LEAN_AND_MEAN
 
 #include <windows.h>
-#include <d3d11.h>
+
+#include "jfg/jfg_d3d11.h"
+#include "jfg/imgui.h"
+
 #include <dxgi1_2.h>
 
 #include "gen/cs_draw_red.data.h"
 #include "gen/vs_text.data.h"
 #include "gen/ps_text.data.h"
 
-#include "gpu_data_types.h"
-
+#include <math.h>
 #include <stdio.h>
 #include <assert.h>
 
-#define MAX_TEXT_INSTANCES 4096
-struct Text_Instance_Buffer
-{
-	u32 num_instances;
-	VS_Text_Instance instances[MAX_TEXT_INSTANCES];
-};
-Text_Instance_Buffer text_instance_buffer;
+#include "dbrl.h"
 
 void show_debug_messages(HWND window, ID3D11InfoQueue *info_queue)
 {
@@ -43,10 +39,13 @@ void show_debug_messages(HWND window, ID3D11InfoQueue *info_queue)
 	}
 }
 
+u8 running = 1;
+
 LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam)
 {
 	switch (msg) {
 	case WM_DESTROY:
+		running = 0;
 		PostQuitMessage(0);
 		return 0;
 	case WM_PAINT: {
@@ -59,6 +58,44 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 	}
 	return DefWindowProc(window, msg, wparam, lparam);
 }
+
+#ifdef DEBUG
+
+#define LIBRARY_NAME "dbrl_d.dll"
+HMODULE game_library;
+
+#define GAME_FUNCTION(return_type, name, ...) static return_type (*name)(__VA_ARGS__) = NULL;
+GAME_FUNCTIONS
+#undef GAME_FUNCTION
+
+u8 load_game_functions()
+{
+	game_library = LoadLibrary(LIBRARY_NAME);
+	if (game_library == NULL) {
+		return 0;
+	}
+
+#define GAME_FUNCTION(return_type, name, ...) \
+	name = (return_type (*)(__VA_ARGS__))GetProcAddress(game_library, #name); \
+	if (name == NULL) { \
+		return 0; \
+	}
+	GAME_FUNCTIONS
+#undef GAME_FUNCTION
+
+	return 1;
+}
+
+#else
+
+#include "dbrl.cpp"
+
+u8 load_game_functions()
+{
+	return 1;
+}
+
+#endif
 
 INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, INT cmd_show)
 {
@@ -90,6 +127,12 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 		return 0;
 	}
 
+	if (!load_game_functions()) {
+		return 0;
+	}
+
+	// TODO - should probably only show window _after_ initialisation of graphics API
+	// stuff...
 	ShowWindow(window, cmd_show);
 
 	ID3D11Device        *device;
@@ -195,127 +238,19 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 	viewport.MinDepth = 0.0f;
 	viewport.MaxDepth = 1.0f;
 
-	D3D11_BUFFER_DESC text_instance_buffer_desc = {};
-	text_instance_buffer_desc.ByteWidth = sizeof(text_instance_buffer.instances);
-	text_instance_buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
-	text_instance_buffer_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	text_instance_buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	text_instance_buffer_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-	text_instance_buffer_desc.StructureByteStride = sizeof(VS_Text_Instance);
-
-	ID3D11Buffer *gpu_text_instance_buffer;
-	hr = device->CreateBuffer(&text_instance_buffer_desc, NULL, &gpu_text_instance_buffer);
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	D3D11_SHADER_RESOURCE_VIEW_DESC text_instance_buffer_srv_desc = {};
-	text_instance_buffer_srv_desc.Format = DXGI_FORMAT_UNKNOWN;
-	text_instance_buffer_srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-	text_instance_buffer_srv_desc.Buffer.ElementOffset = 0;
-	text_instance_buffer_srv_desc.Buffer.ElementWidth = MAX_TEXT_INSTANCES;
-
-	ID3D11ShaderResourceView *text_instance_buffer_srv;
-	hr = device->CreateShaderResourceView(gpu_text_instance_buffer,
-		&text_instance_buffer_srv_desc, &text_instance_buffer_srv);
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	ID3D11VertexShader *vs_text;
-	hr = device->CreateVertexShader(VS_TEXT, ARRAY_SIZE(VS_TEXT), NULL, &vs_text);
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	ID3D11PixelShader *ps_text;
-	hr = device->CreatePixelShader(PS_TEXT, ARRAY_SIZE(PS_TEXT), NULL, &ps_text);
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	D3D11_BUFFER_DESC text_constant_buffer_desc = {};
-	text_constant_buffer_desc.ByteWidth = sizeof(CB_Text);
-	text_constant_buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
-	text_constant_buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	text_constant_buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	text_constant_buffer_desc.MiscFlags = 0;
-	text_constant_buffer_desc.StructureByteStride = sizeof(CB_Text);
-
-	ID3D11Buffer *gpu_text_constant_buffer;
-	hr = device->CreateBuffer(&text_constant_buffer_desc, NULL, &gpu_text_constant_buffer);
-	if (FAILED(hr)) {
+	IMGUI_Context imgui;
+	IMGUI_D3D11_Context imgui_d3d11;
+	if (!imgui_d3d11_init(&imgui_d3d11, device)) {
 		show_debug_messages(window, info_queue);
 		return 0;
 	}
 
-	D3D11_RASTERIZER_DESC rasterizer_desc = {};
-	rasterizer_desc.FillMode = D3D11_FILL_SOLID;
-	rasterizer_desc.CullMode = D3D11_CULL_NONE;
-
-	ID3D11RasterizerState *rasterizer_state;
-	hr = device->CreateRasterizerState(&rasterizer_desc, &rasterizer_state);
-	if (FAILED(hr)) {
-		show_debug_messages(window, info_queue);
-		return 0;
-	}
-
-	D3D11_TEXTURE2D_DESC text_texture_desc = {};
-	text_texture_desc.Width = TEXTURE_CODEPAGE_437.width;
-	text_texture_desc.Height = TEXTURE_CODEPAGE_437.height;
-	text_texture_desc.MipLevels = 1;
-	text_texture_desc.ArraySize = 1;
-	text_texture_desc.Format = DXGI_FORMAT_R8_UNORM;
-	text_texture_desc.SampleDesc.Count = 1;
-	text_texture_desc.SampleDesc.Quality = 0;
-	text_texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
-	text_texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	text_texture_desc.CPUAccessFlags = 0;
-	text_texture_desc.MiscFlags = 0;
-
-	D3D11_SUBRESOURCE_DATA text_texture_data_desc = {};
-	text_texture_data_desc.pSysMem = TEXTURE_CODEPAGE_437.data;
-	text_texture_data_desc.SysMemPitch = TEXTURE_CODEPAGE_437.width * sizeof(TEXTURE_CODEPAGE_437.data[0]);
-	text_texture_data_desc.SysMemSlicePitch = 0;
-
-	ID3D11Texture2D *text_texture;
-	hr = device->CreateTexture2D(&text_texture_desc, &text_texture_data_desc, &text_texture);
-	if (FAILED(hr)) {
-		show_debug_messages(window, info_queue);
-		return 0;
-	}
-
-	D3D11_SHADER_RESOURCE_VIEW_DESC text_texture_srv_desc = {};
-	text_texture_srv_desc.Format = DXGI_FORMAT_R8_UNORM;
-	text_texture_srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	text_texture_srv_desc.Texture2D.MostDetailedMip = 0;
-	text_texture_srv_desc.Texture2D.MipLevels = 1;
-
-	ID3D11ShaderResourceView *text_texture_srv;
-	hr = device->CreateShaderResourceView(text_texture, &text_texture_srv_desc, &text_texture_srv);
-	if (FAILED(hr)) {
-		show_debug_messages(window, info_queue);
-		return 0;
-	}
-
-
-	text_instance_buffer.num_instances = 3;
-	text_instance_buffer.instances[0].glyph = 'A';
-	text_instance_buffer.instances[0].pos = { 0.0f, 0.0f };
-	text_instance_buffer.instances[0].color = { 1.0f, 0.0f, 0.0f, 1.0f };
-
-	text_instance_buffer.instances[1].glyph = 'B';
-	text_instance_buffer.instances[1].pos = { 1.0f, 0.0f };
-	text_instance_buffer.instances[1].color = { 0.0f, 1.0f, 0.0f, 1.0f };
-
-	text_instance_buffer.instances[2].glyph = 'C';
-	text_instance_buffer.instances[2].pos = { 0.0f, 1.0f };
-	text_instance_buffer.instances[2].color = { 0.0f, 0.0f, 1.0f, 1.0f };
-
-	MSG msg = {};
-	while (GetMessage(&msg, NULL, 0, 0)) {
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
+	for (u32 frame_number = 0; running; ++frame_number) {
+		MSG msg = {};
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
 
 		DXGI_SWAP_CHAIN_DESC swap_chain_desc;
 		hr = swap_chain->GetDesc(&swap_chain_desc);
@@ -324,50 +259,20 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 			return 0;
 		}
 
-		CB_Text text_constant_buffer = {};
-		text_constant_buffer.screen_size.w = (f32)swap_chain_desc.BufferDesc.Width;
-		text_constant_buffer.screen_size.h = (f32)swap_chain_desc.BufferDesc.Height;
-		text_constant_buffer.glyph_size.w = (f32)TEXTURE_CODEPAGE_437.glyph_width;
-		text_constant_buffer.glyph_size.h = (f32)TEXTURE_CODEPAGE_437.glyph_height;
-		text_constant_buffer.tex_size.w = (f32)TEXTURE_CODEPAGE_437.width;
-		text_constant_buffer.tex_size.h = (f32)TEXTURE_CODEPAGE_437.height;
-		text_constant_buffer.zoom = 5.0f;
+		v2_u32 screen_size = {
+			swap_chain_desc.BufferDesc.Width,
+			swap_chain_desc.BufferDesc.Height
+		};
+
+		imgui_begin(&imgui);
+		imgui_set_text_cursor(&imgui, { 1.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f });
+		imgui_text(&imgui, "Hello, world!");
 
 		context->RSSetViewports(1, &viewport);
 		f32 clear_color[4] = { 0.2f, 0.4f, 0.2f, 1.0f };
 		context->ClearRenderTargetView(back_buffer_rtv, clear_color);
 
-		D3D11_MAPPED_SUBRESOURCE mapped_buffer = {};
-
-		hr = context->Map(gpu_text_instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
-			&mapped_buffer);
-		assert(SUCCEEDED(hr));
-		memcpy(mapped_buffer.pData, text_instance_buffer.instances,
-			text_instance_buffer.num_instances * sizeof(VS_Text_Instance));
-		context->Unmap(gpu_text_instance_buffer, 0);
-
-		hr = context->Map(gpu_text_constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
-			&mapped_buffer);
-		assert(SUCCEEDED(hr));
-		memcpy(mapped_buffer.pData, &text_constant_buffer,
-			sizeof(text_constant_buffer));
-		context->Unmap(gpu_text_constant_buffer, 0);
-
-
-		context->IASetInputLayout(NULL);
-		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-		context->VSSetConstantBuffers(0, 1, &gpu_text_constant_buffer);
-		context->VSSetShaderResources(0, 1, &text_instance_buffer_srv);
-		context->VSSetShader(vs_text, NULL, 0);
-		context->PSSetConstantBuffers(0, 1, &gpu_text_constant_buffer);
-		context->PSSetShaderResources(0, 1, &text_texture_srv);
-		context->PSSetShader(ps_text, NULL, 0);
-
-		context->RSSetState(rasterizer_state);
-		context->OMSetRenderTargets(1, &back_buffer_rtv, NULL);
-
-		context->DrawInstanced(6, text_instance_buffer.num_instances, 0, 0);
+		imgui_d3d11_draw(&imgui, &imgui_d3d11, context, back_buffer_rtv, screen_size);
 
 		swap_chain->Present(1, 0);
 	}

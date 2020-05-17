@@ -1,6 +1,12 @@
 
+* load game functions dll
+* consider best way of building HLSL into imgui.h
+
 * create a proper windows game loop
 * deal with setting cursor image correctly
+* deal with window resize/swapchain resize
+
+* create xinput loading lib
 
 * create IMgui slider adjustments and "constants" files
 * create header files with game data (e.g. game images, maps of those images etc) - using python scripts

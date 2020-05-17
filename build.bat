@@ -2,6 +2,7 @@
 
 pushd %~dp0
 
+set project_name=dbrl
 if not exist build mkdir build
 
 pushd build
@@ -34,8 +35,8 @@ echo build_debug_runner
 cl ..\src\main_win32.cpp ^
 	d3d11.lib user32.lib ^
 	/I ..\src ^
-	/Fe: dbrl_d.exe ^
-	/Fd: dbrl_d.pdb ^
+	/Fe: %project_name%_d.exe ^
+	/Fd: %project_name%_d.pdb ^
 	/Zi /Od /MDd ^
 	/D WIN32 /D DEBUG ^
 	/link /incremental:no /subsystem:windows
@@ -44,27 +45,45 @@ EXIT /B 0
 
 :build_debug_library
 echo build_debug_library
+
+if not exist pdb mkdir pdb
+
+set time_str=%time%
+set hour_str=%time_str:~0,2%
+if %hour_str% lss 10 (set hour_str=0%hour_str:~1,1%)
+set min_str=%time_str:~3,2%
+set sec_str=%time_str:~6,2%
+
+set date_str=%date%
+set year_str=%date_str:~6,4%
+set mon_str=%date_str:~3,2%
+set day_str=%date_str:~0,2%
+
+set time_str=%year_str%-%mon_str%-%day_str%-%hour_str%-%min_str%-%sec_str%
+
+cl ..\src\dbrl.cpp ^
+	/I ..\src ^
+	/Fe: %project_name%_d.dll ^
+	/Fd: pdb\%project_name%_lib_d_%time_str%_2.pdb ^
+	/Zi /LDd /MDd /D DEBUG /D LIBRARY ^
+	/link /dll /incremental:no /pdb:pdb\%project_name%_lib_d_%time_str%_1.pdb
+
+echo written_library > written_library
+
 EXIT /B 0
 
 :build_shaders
 echo build_shaders
-
-fxc /Fh ..\src\gen\vs_text.data.h /E vs_text /Vn VS_TEXT /T vs_5_0 ..\src\shaders.hlsl
-fxc /Fh ..\src\gen\ps_text.data.h /E ps_text /Vn PS_TEXT /T ps_5_0 ..\src\shaders.hlsl
 
 EXIT /B 0
 
 :build_release
 echo build_debug_release
 
-cl ..\src\main_sdl.cpp ^
-	..\libs\build\SDL2\Release\SDL2main.lib ^
-	..\libs\build\SDL2\Release\SDL2.lib ^
-	..\libs\build\box2d\src\Release\box2d.lib ^
-	user32.lib kernel32.lib shell32.lib winmm.lib advapi32.lib ole32.lib gdi32.lib version.lib ^
-	setupapi.lib oleaut32.lib imm32.lib ^
-	/I ..\src /I ..\libs\SDL2\include /I ..\libs\box2d\include ^
-	/Fe: super_over_it.exe ^
+cl ..\src\main_win32.cpp ^
+	d3d11.lib user32.lib ^
+	/I ..\src ^
+	/Fe: %project_name%.exe ^
 	/Ot /MD ^
 	/D WIN32 ^
 	/link /incremental:no /subsystem:windows
