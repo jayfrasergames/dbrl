@@ -1,10 +1,19 @@
 
-* load game functions dll
-* consider best way of building HLSL into imgui.h
+
+* tile rendering:
+  * create compute shader tile blitting/pixel perfect
+
+  * correct pixel sampling (i.e. blend when a pixel overlaps edge of samples)
+  * tiles to be rendered with parameters:
+    * horiz stretch
+    * vertical stretch
+    * rotation
+    to be applied stretches first
+  * generate anisotropic mips
 
 * create a proper windows game loop
-* deal with setting cursor image correctly
-* deal with window resize/swapchain resize
+  * make jfg/input.h to convert input from windows to custom input format
+    * read input from windows message loop and translate it to sensibly buffered input
 
 * create xinput loading lib
 

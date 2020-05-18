@@ -37,7 +37,15 @@ void show_debug_messages(HWND window, ID3D11InfoQueue *info_queue)
 	}
 }
 
-u8 running = 1;
+static u8 running = 1;
+
+void get_screen_size(HWND window, v2_u32* screen_size)
+{
+	RECT rect;
+	GetClientRect(window, &rect);
+	screen_size->w = rect.right;
+	screen_size->h = rect.bottom;
+}
 
 LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam)
 {
@@ -95,43 +103,16 @@ u8 load_game_functions()
 
 #endif
 
-INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, INT cmd_show)
+struct Game_Loop_Args
 {
-	const char window_class_name[] = "dbrl_window_class";
+	HWND window;
+};
 
-	WNDCLASS window_class = {};
+DWORD __stdcall game_loop(void *uncast_args)
+{
+	Game_Loop_Args *args = (Game_Loop_Args*)uncast_args;
 
-	window_class.lpfnWndProc = window_proc;
-	window_class.hInstance = instance;
-	window_class.lpszClassName = window_class_name;
-
-	RegisterClass(&window_class);
-
-	HWND window = CreateWindowEx(
-		0,
-		window_class_name,
-		"dbrl",
-		WS_OVERLAPPEDWINDOW,
-		CW_USEDEFAULT,
-		CW_USEDEFAULT,
-		CW_USEDEFAULT,
-		CW_USEDEFAULT,
-		NULL,
-		NULL,
-		instance,
-		NULL);
-	
-	if (window == NULL) {
-		return 0;
-	}
-
-	if (!load_game_functions()) {
-		return 0;
-	}
-
-	// TODO - should probably only show window _after_ initialisation of graphics API
-	// stuff...
-	ShowWindow(window, cmd_show);
+	HWND window = args->window;
 
 	ID3D11Device        *device;
 	ID3D11DeviceContext *context;
@@ -251,37 +232,112 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 		return 0;
 	}
 
+	v2_u32 screen_size, prev_screen_size;
+	get_screen_size(window, &screen_size);
+	prev_screen_size = screen_size;
+	v2_u32 back_buffer_size;
 	for (u32 frame_number = 0; running; ++frame_number) {
-		MSG msg = {};
-		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
+		get_screen_size(window, &screen_size);
+		if (screen_size.w != prev_screen_size.w || screen_size.h != prev_screen_size.h) {
+			back_buffer_rtv->Release();
+			back_buffer->Release();
+			hr = swap_chain->ResizeBuffers(2, screen_size.w, screen_size.h,
+				DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
+			assert(SUCCEEDED(hr));
+			hr = swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
+			assert(SUCCEEDED(hr));
+			back_buffer->GetDesc(&back_buffer_desc);
+			back_buffer_rtv_desc.Format = back_buffer_desc.Format;
+			hr = device->CreateRenderTargetView(back_buffer, &back_buffer_rtv_desc,
+				&back_buffer_rtv);
+			prev_screen_size = screen_size;
+			back_buffer_size.w = back_buffer_desc.Width;
+			back_buffer_size.h = back_buffer_desc.Height;
 		}
-
-		DXGI_SWAP_CHAIN_DESC swap_chain_desc;
-		hr = swap_chain->GetDesc(&swap_chain_desc);
-		if (FAILED(hr)) {
-			show_debug_messages(window, info_queue);
-			return 0;
-		}
-
-		v2_u32 screen_size = {
-			swap_chain_desc.BufferDesc.Width,
-			swap_chain_desc.BufferDesc.Height
-		};
 
 		imgui_begin(&imgui);
 		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
 		imgui_text(&imgui, "Hello, world!");
+		char buffer[1024];
+		snprintf(buffer, ARRAY_SIZE(buffer), "Frame: %u", frame_number);
+		imgui_text(&imgui, buffer);
+		snprintf(buffer, ARRAY_SIZE(buffer), "Screen size: %u x %u",
+			screen_size.w, screen_size.h);
+		imgui_text(&imgui, buffer);
 
+		viewport.Width = (f32)screen_size.w;
+		viewport.Height = (f32)screen_size.h;
 		context->RSSetViewports(1, &viewport);
 		f32 clear_color[4] = { 0.1f, 0.1f, 0.3f, 1.0f };
 		context->ClearRenderTargetView(back_buffer_rtv, clear_color);
 
 		imgui_d3d11_draw(&imgui, &imgui_d3d11, context, back_buffer_rtv, screen_size);
-		tile_render_d3d11_draw(&tile_render_d3d11, &tile_render, context, back_buffer_rtv);
+		tile_render_d3d11_draw(&tile_render_d3d11, &tile_render, context, back_buffer_rtv,
+			{ (f32)screen_size.w, (f32)screen_size.h });
 
 		swap_chain->Present(1, 0);
+	}
+	return 1;
+}
+
+INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, INT cmd_show)
+{
+	const char window_class_name[] = "dbrl_window_class";
+
+	WNDCLASS window_class = {};
+
+	window_class.lpfnWndProc = window_proc;
+	window_class.hInstance = instance;
+	window_class.lpszClassName = window_class_name;
+	window_class.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+	window_class.hCursor = LoadCursor(NULL, IDC_ARROW);
+
+	RegisterClass(&window_class);
+
+	HWND window = CreateWindowEx(
+		0,
+		window_class_name,
+		"dbrl",
+		WS_OVERLAPPEDWINDOW,
+		CW_USEDEFAULT,
+		CW_USEDEFAULT,
+		CW_USEDEFAULT,
+		CW_USEDEFAULT,
+		NULL,
+		NULL,
+		instance,
+		NULL);
+	
+	if (window == NULL) {
+		return 0;
+	}
+
+	if (!load_game_functions()) {
+		return 0;
+	}
+
+	// TODO - should probably only show window _after_ initialisation of graphics API
+	// stuff...
+	ShowWindow(window, cmd_show);
+
+	Game_Loop_Args game_loop_args = {};
+	game_loop_args.window = window;
+
+	HANDLE game_thread = CreateThread(
+		NULL,
+		1024 * 1024,
+		game_loop,
+		&game_loop_args,
+		0,
+		NULL);
+
+	// windows message loop
+	while (running) {
+		MSG msg = {};
+		while (GetMessage(&msg, NULL, 0, 0)) {
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
 	}
 
 	return 0;

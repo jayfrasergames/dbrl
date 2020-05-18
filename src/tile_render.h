@@ -59,7 +59,8 @@ u8 tile_render_d3d11_init(Tile_Render_D3D11_Context* context,
 void tile_render_d3d11_draw(Tile_Render_D3D11_Context* tile_render_d3d11,
                             Tile_Render*               tile_render,
                             ID3D11DeviceContext*       d3d11,
-                            ID3D11RenderTargetView*    output_rtv);
+                            ID3D11RenderTargetView*    output_rtv,
+                            v2                         screen_size);
 
 #ifndef JFG_HEADER_ONLY
 #include "gen/tile_render_dxbc_tile_vertex_shader.data.h"
@@ -217,16 +218,17 @@ error_init_tile_tex:
 void tile_render_d3d11_draw(Tile_Render_D3D11_Context* tile_render_d3d11,
                             Tile_Render*               tile_render,
                             ID3D11DeviceContext*       d3d11,
-                            ID3D11RenderTargetView*    output_rtv)
+                            ID3D11RenderTargetView*    output_rtv,
+                            v2                         screen_size)
 {
 	Tile_Render_CB_Tile tile_constant_buffer = {};
-	tile_constant_buffer.screen_size.w = 100.0f;
-	tile_constant_buffer.screen_size.h = 100.0f;
+	tile_constant_buffer.screen_size = screen_size;
+	// tile_constant_buffer.screen_size.h = screen_size.h
 	tile_constant_buffer.tile_size.w = tile_render->texture.tile_size.w;
 	tile_constant_buffer.tile_size.h = tile_render->texture.tile_size.h;
 	tile_constant_buffer.tex_size.w = tile_render->texture.dimensions.w;
 	tile_constant_buffer.tex_size.h = tile_render->texture.dimensions.h;
-	tile_constant_buffer.zoom = 1.0f;
+	tile_constant_buffer.zoom = 4.0f;
 
 	D3D11_MAPPED_SUBRESOURCE mapped_buffer = {};
 
