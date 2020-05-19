@@ -20,25 +20,38 @@ struct Tile_Render
 	Tile_Render_Tile_Instance tile_instances[TILE_RENDER_MAX_INSTANCES];
 };
 
+void tile_render_reset(Tile_Render* context);
 void tile_render_init(Tile_Render* context, Tile_Render_Texture* texture);
+void tile_render_add_tile(Tile_Render* context, Tile_Render_Tile_Instance instance);
 
 #ifndef JFG_HEADER_ONLY
 
 // XXX - for memset, should probably get rid of this later
 #include <string.h>
 
+void tile_render_reset(Tile_Render* context)
+{
+	context->num_instances = 0;
+}
+
 void tile_render_init(Tile_Render* tile_render, Tile_Render_Texture* texture)
 {
-	memset(tile_render, 0, sizeof(tile_render));
+	memset(tile_render, 0, sizeof(*tile_render));
 	tile_render->texture = *texture;
-	tile_render->num_instances = 1;
-	tile_render->tile_instances[0].sprite_pos = { 10.0f, 10.0f };
-	tile_render->tile_instances[0].world_pos = { 1.0f, 1.0f };
 }
+
+void tile_render_add_tile(Tile_Render* context, Tile_Render_Tile_Instance instance)
+{
+	context->tile_instances[context->num_instances++] = instance;
+}
+
 #endif
 
 // d3d11
 #ifdef JFG_D3D11_H
+
+// XXX - would be cooler to have our own assert in prelude
+#include <assert.h>
 
 struct Tile_Render_D3D11_Context
 {
@@ -237,7 +250,7 @@ void tile_render_d3d11_draw(Tile_Render_D3D11_Context* tile_render_d3d11,
 		0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_buffer);
 	assert(SUCCEEDED(hr));
 	memcpy(mapped_buffer.pData, &tile_render->tile_instances,
-		sizeof(IMGUI_VS_Text_Instance) * tile_render->num_instances);
+		sizeof(Tile_Render_Tile_Instance) * tile_render->num_instances);
 	d3d11->Unmap(tile_render_d3d11->tile_instance_buffer, 0);
 
 	hr = d3d11->Map(tile_render_d3d11->tile_constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,

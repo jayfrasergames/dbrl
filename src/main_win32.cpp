@@ -7,8 +7,6 @@
 
 #include "jfg/jfg_d3d11.h"
 #include "jfg/imgui.h"
-#include "tile_render.h"
-#include "gen/background_tiles.data.h"
 
 #include <dxgi1_2.h>
 
@@ -224,13 +222,13 @@ DWORD __stdcall game_loop(void *uncast_args)
 		return 0;
 	}
 
-	Tile_Render tile_render;
-	tile_render_init(&tile_render, (Tile_Render_Texture*)&TEXTURE_BACKGROUND_TILES.header);
-	Tile_Render_D3D11_Context tile_render_d3d11;
-	if (!tile_render_d3d11_init(&tile_render_d3d11, &tile_render, device)) {
-		show_debug_messages(window, info_queue);
-		return 0;
-	}
+	Memory_Spec game_size = get_game_size();
+	Game* game = (Game*)malloc(game_size.size);
+
+	assert(((uintptr_t)game & (game_size.alignment - 1)) == 0);
+
+	init_game(game);
+	init_game_d3d11(game, device);
 
 	v2_u32 screen_size, prev_screen_size;
 	get_screen_size(window, &screen_size);
@@ -238,6 +236,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	v2_u32 back_buffer_size;
 	for (u32 frame_number = 0; running; ++frame_number) {
 		get_screen_size(window, &screen_size);
+
 		if (screen_size.w != prev_screen_size.w || screen_size.h != prev_screen_size.h) {
 			back_buffer_rtv->Release();
 			back_buffer->Release();
@@ -255,6 +254,8 @@ DWORD __stdcall game_loop(void *uncast_args)
 			back_buffer_size.h = back_buffer_desc.Height;
 		}
 
+		process_frame(game, NULL, screen_size);
+
 		imgui_begin(&imgui);
 		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
 		imgui_text(&imgui, "Hello, world!");
@@ -271,9 +272,9 @@ DWORD __stdcall game_loop(void *uncast_args)
 		f32 clear_color[4] = { 0.1f, 0.1f, 0.3f, 1.0f };
 		context->ClearRenderTargetView(back_buffer_rtv, clear_color);
 
+		render_d3d11(game, context, back_buffer_rtv);
+
 		imgui_d3d11_draw(&imgui, &imgui_d3d11, context, back_buffer_rtv, screen_size);
-		tile_render_d3d11_draw(&tile_render_d3d11, &tile_render, context, back_buffer_rtv,
-			{ (f32)screen_size.w, (f32)screen_size.h });
 
 		swap_chain->Present(1, 0);
 	}
