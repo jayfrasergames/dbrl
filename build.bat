@@ -85,6 +85,11 @@ fxc /Fh gen\tile_render_dxbc_tile_vertex_shader.data.h ^
 fxc /Fh gen\tile_render_dxbc_tile_pixel_shader.data.h  ^
 	/E ps_tile /Vn TILE_RENDER_TILE_PS /T ps_5_0 tile_render.hlsl
 
+fxc /Fh gen\sprite_render_dxbc_sprite_vertex_shader.data.h ^
+	/E vs_sprite /Vn SPRITE_RENDER_SPRITE_VS /T vs_5_0 sprite_render.hlsl
+fxc /Fh gen\sprite_render_dxbc_sprite_pixel_shader.data.h  ^
+	/E ps_sprite /Vn SPRITE_RENDER_SPRITE_PS /T ps_5_0 sprite_render.hlsl
+
 popd
 
 EXIT /B 0
@@ -110,6 +115,13 @@ python ..\scripts\texture_convert ^
 	-o ../src/gen/background_tiles.data.h ^
 	-t Tile_Render_Texture ^
 	-n Background_Tiles ^
+	--tile-width 24 ^
+	--tile-height 24
+python ..\scripts\texture_convert ^
+	-i ../assets/creatures.png ^
+	-o ../src/gen/creature_sprites.data.h ^
+	-t Sprite_Render_Texture ^
+	-n Creature_Sprites ^
 	--tile-width 24 ^
 	--tile-height 24
 

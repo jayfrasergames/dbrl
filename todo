@@ -1,15 +1,18 @@
 
 
-* tile rendering:
-  * create compute shader tile blitting/pixel perfect
-
-  * correct pixel sampling (i.e. blend when a pixel overlaps edge of samples)
+* sprite rendering
   * tiles to be rendered with parameters:
     * horiz stretch
     * vertical stretch
     * rotation
     to be applied stretches first
-  * generate anisotropic mips
+  * correct pixel sampling (i.e. blend when a pixel overlaps edge of samples)
+  * generate anisotropic mips (?)
+
+* tile rendering:
+  * create compute shader tile blitting/pixel perfect
+
+  * correct pixel sampling (i.e. blend when a pixel overlaps edge of samples)
 
 * create a proper windows game loop
   * make jfg/input.h to convert input from windows to custom input format
