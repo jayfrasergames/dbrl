@@ -124,5 +124,12 @@ python ..\scripts\texture_convert ^
 	-n Creature_Sprites ^
 	--tile-width 24 ^
 	--tile-height 24
+python ..\scripts\texture_convert ^
+	-i ../assets/creatures.png ^
+	-o ../src/gen/creatures_mouse_map.data.h ^
+	-t Mouse_Map ^
+	-n Creatures ^
+	--tile-width 24 ^
+	--tile-height 24
 
 EXIT /B 0

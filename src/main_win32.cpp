@@ -234,8 +234,16 @@ DWORD __stdcall game_loop(void *uncast_args)
 	get_screen_size(window, &screen_size);
 	prev_screen_size = screen_size;
 	v2_u32 back_buffer_size;
+	Input input;
 	for (u32 frame_number = 0; running; ++frame_number) {
 		get_screen_size(window, &screen_size);
+
+		POINT mouse_pos;
+		if (GetCursorPos(&mouse_pos) && ScreenToClient(window, &mouse_pos)) {
+			if (mouse_pos.x < screen_size.x && mouse_pos.y < screen_size.y) {
+				input.mouse_pos = { (u32)mouse_pos.x, (u32)mouse_pos.y };
+			}
+		}
 
 		if (screen_size.w != prev_screen_size.w || screen_size.h != prev_screen_size.h) {
 			back_buffer_rtv->Release();
@@ -254,7 +262,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 			back_buffer_size.h = back_buffer_desc.Height;
 		}
 
-		process_frame(game, NULL, screen_size);
+		process_frame(game, &input, screen_size);
 
 		imgui_begin(&imgui);
 		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
@@ -283,6 +291,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, INT cmd_show)
 {
+	if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE)) {
+		return 0;
+	}
+
 	const char window_class_name[] = "dbrl_window_class";
 
 	WNDCLASS window_class = {};

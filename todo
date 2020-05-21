@@ -1,4 +1,8 @@
 
+* decision
+  * characters/items/tiles to be rendered pixel perfect (tile shader)
+  * do mouse picking/outlining using this pixel perfect texture
+  * effects/cards should use the fancier shader (sprite shader)
 
 * sprite rendering
   * tiles to be rendered with parameters:

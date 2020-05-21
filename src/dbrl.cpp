@@ -1,9 +1,16 @@
 #include "dbrl.h"
 
+#include "jfg/imgui.h"
 #include "tile_render.h"
 #include "sprite_render.h"
+#include "mouse_map.h"
+
+// XXX - tmp for snprintf
+#include <stdio.h>
+
 #include "gen/background_tiles.data.h"
 #include "gen/creature_sprites.data.h"
+#include "gen/creatures_mouse_map.data.h"
 
 typedef v2_u8 Pos;
 
@@ -29,6 +36,10 @@ struct Game
 	Entity entities[MAX_ENTITIES];
 
 	v2            screen_size;
+	IMGUI_Context imgui;
+	union {
+		IMGUI_D3D11_Context imgui_d3d11;
+	};
 	Sprite_Render creature_render;
 	union {
 		Sprite_Render_D3D11_Context creature_render_d3d11;
@@ -138,12 +149,27 @@ u8 init_game_d3d11(Game* game, ID3D11Device* device)
 	if (!sprite_render_d3d11_init(&game->creature_render_d3d11, &game->creature_render, device)) {
 		return 0;
 	}
+	if (!imgui_d3d11_init(&game->imgui_d3d11, device)) {
+		return 0;
+	}
 	return 1;
 }
 
 void process_frame(Game* game, Input* input, v2_u32 screen_size)
 {
 	game->screen_size = { (f32)screen_size.w, (f32)screen_size.h };
+
+	imgui_begin(&game->imgui);
+	imgui_set_text_cursor(&game->imgui, { 1.0f, 0.0f, 0.0f, 1.0f }, { 5.0f, 5.0f });
+	char buffer[1024];
+	snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Pos: (%u, %u)",
+		input->mouse_pos.x, input->mouse_pos.y);
+	imgui_text(&game->imgui, buffer);
+	if (mouse_map_check((Mouse_Map_Header*)&MOUSE_MAP_CREATURES.header, input->mouse_pos)) {
+		imgui_text(&game->imgui, "Hit!");
+	} else {
+		imgui_text(&game->imgui, "Miss!");
+	}
 }
 
 void render_d3d11(Game* game, ID3D11DeviceContext* dc, ID3D11RenderTargetView* output_rtv)
@@ -151,4 +177,6 @@ void render_d3d11(Game* game, ID3D11DeviceContext* dc, ID3D11RenderTargetView* o
 	tile_render_d3d11_draw(&game->bg_tiles_d3d11, &game->bg_tiles, dc, output_rtv, game->screen_size);
 	sprite_render_d3d11_draw(&game->creature_render_d3d11, &game->creature_render, dc, output_rtv,
 		game->screen_size);
+	v2_u32 screen_size_u32 = { (u32)game->screen_size.x, (u32)game->screen_size.y };
+	imgui_d3d11_draw(&game->imgui, &game->imgui_d3d11, dc, output_rtv, screen_size_u32);
 }
