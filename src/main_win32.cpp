@@ -66,15 +66,41 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 #ifdef DEBUG
 
 #define LIBRARY_NAME "dbrl_d.dll"
+#define LIBRARY_TMP_NAME "dbrl_d_tmp.dll"
+#define SHARED_OBJECT_WRITTEN_NAME "written_library"
 HMODULE game_library;
 
 #define GAME_FUNCTION(return_type, name, ...) static return_type (*name)(__VA_ARGS__) = NULL;
 GAME_FUNCTIONS
 #undef GAME_FUNCTION
 
+u8 was_library_written()
+{
+	u8 result;
+	WIN32_FIND_DATA file_data;
+	HANDLE handle = FindFirstFile(SHARED_OBJECT_WRITTEN_NAME, &file_data);
+	result = handle != INVALID_HANDLE_VALUE;
+	if (result) {
+		DeleteFile(SHARED_OBJECT_WRITTEN_NAME);
+	}
+	return result;
+}
+
 u8 load_game_functions()
 {
-	game_library = LoadLibrary(LIBRARY_NAME);
+	WIN32_FIND_DATA file_data;
+	HANDLE handle = FindFirstFile(LIBRARY_TMP_NAME, &file_data);
+	if (handle != INVALID_HANDLE_VALUE) {
+		if (!DeleteFile(LIBRARY_TMP_NAME)) {
+			return 0;
+		}
+	}
+
+	if (!CopyFile(LIBRARY_NAME, LIBRARY_TMP_NAME, FALSE)) {
+		return 0;
+	}
+
+	game_library = LoadLibrary(LIBRARY_TMP_NAME);
 	if (game_library == NULL) {
 		return 0;
 	}
@@ -227,15 +253,29 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	assert(((uintptr_t)game & (game_size.alignment - 1)) == 0);
 
-	init_game(game);
-	init_game_d3d11(game, device);
-
 	v2_u32 screen_size, prev_screen_size;
 	get_screen_size(window, &screen_size);
 	prev_screen_size = screen_size;
+
+	game_init(game);
+	u8 d3d11_init_success = game_d3d11_init(game, device, screen_size);
+
 	v2_u32 back_buffer_size;
 	Input input;
 	for (u32 frame_number = 0; running; ++frame_number) {
+		if (was_library_written()) {
+			if (game_library != NULL) {
+				game_d3d11_free(game);
+				FreeLibrary(game_library);
+			}
+			load_game_functions();
+			if (game_library != NULL) {
+				d3d11_init_success = game_d3d11_init(game, device, screen_size);
+			} else {
+				d3d11_init_success = 0;
+			}
+		}
+
 		get_screen_size(window, &screen_size);
 
 		POINT mouse_pos;
@@ -262,7 +302,9 @@ DWORD __stdcall game_loop(void *uncast_args)
 			back_buffer_size.h = back_buffer_desc.Height;
 		}
 
-		process_frame(game, &input, screen_size);
+		if (game_library != NULL) {
+			process_frame(game, &input, screen_size);
+		}
 
 		imgui_begin(&imgui);
 		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
@@ -280,7 +322,30 @@ DWORD __stdcall game_loop(void *uncast_args)
 		f32 clear_color[4] = { 0.1f, 0.1f, 0.3f, 1.0f };
 		context->ClearRenderTargetView(back_buffer_rtv, clear_color);
 
-		render_d3d11(game, context, back_buffer_rtv);
+		if (d3d11_init_success) {
+			render_d3d11(game, context, back_buffer_rtv);
+		}
+
+		// render any d3d11 messages we may have
+		{
+			u64 num_messages = info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
+			char buffer[1024] = {};
+			snprintf(buffer,
+			         ARRAY_SIZE(buffer),
+			         "There are %llu D3D11 messages",
+			         num_messages);
+			imgui_text(&imgui, buffer);
+			for (u64 i = 0; i < num_messages; ++i) {
+				size_t message_len;
+				HRESULT hr = info_queue->GetMessage(i, NULL, &message_len);
+				assert(SUCCEEDED(hr));
+				D3D11_MESSAGE *message = (D3D11_MESSAGE*)malloc(message_len);
+				hr = info_queue->GetMessage(i, message, &message_len);
+				assert(SUCCEEDED(hr));
+				imgui_text(&imgui, (char*)message->pDescription);
+				free(message);
+			}
+		}
 
 		imgui_d3d11_draw(&imgui, &imgui_d3d11, context, back_buffer_rtv, screen_size);
 
@@ -293,6 +358,33 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 {
 	if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE)) {
 		return 0;
+	}
+
+	// Set current directory
+	{
+		char file_name_buffer[1024];
+		char directory_buffer[1024];
+		DWORD file_name_len = GetModuleFileName(NULL,
+		                                        file_name_buffer,
+		                                        ARRAY_SIZE(file_name_buffer));
+		if (file_name_len) {
+			
+			DWORD directory_buffer_len = GetFullPathName(file_name_buffer,
+			                                            ARRAY_SIZE(directory_buffer),
+			                                            directory_buffer,
+			                                            NULL);
+			if (directory_buffer_len) {
+				// XXX
+				u32 idx = directory_buffer_len - 1;
+				while (directory_buffer[idx] != '\\') {
+					--idx;
+				}
+				directory_buffer[idx] = '\0';
+				if (!SetCurrentDirectory(directory_buffer)) {
+					return 0;
+				}
+			}
+		}
 	}
 
 	const char window_class_name[] = "dbrl_window_class";

@@ -80,15 +80,20 @@ echo build_shaders
 
 pushd ..\src
 
-fxc /Fh gen\tile_render_dxbc_tile_vertex_shader.data.h ^
-	/E vs_tile /Vn TILE_RENDER_TILE_VS /T vs_5_0 tile_render.hlsl
-fxc /Fh gen\tile_render_dxbc_tile_pixel_shader.data.h  ^
-	/E ps_tile /Vn TILE_RENDER_TILE_PS /T ps_5_0 tile_render.hlsl
+fxc /Fh gen\sprite_sheet_dxbc_vertex_shader.data.h ^
+	/E vs_sprite /Vn SPRITE_SHEET_RENDER_DXBC_VS /T vs_5_0 sprite_sheet.hlsl
+fxc /Fh gen\sprite_sheet_dxbc_pixel_shader.data.h ^
+	/E ps_sprite /Vn SPRITE_SHEET_RENDER_DXBC_PS /T ps_5_0 sprite_sheet.hlsl
+fxc /Fh gen\sprite_sheet_dxbc_clear_sprite_id_compute_shader.data.h ^
+	/E cs_clear_sprite_id /Vn SPRITE_SHEET_CLEAR_SPRITE_ID_CS /T cs_5_0 sprite_sheet.hlsl
 
-fxc /Fh gen\sprite_render_dxbc_sprite_vertex_shader.data.h ^
-	/E vs_sprite /Vn SPRITE_RENDER_SPRITE_VS /T vs_5_0 sprite_render.hlsl
-fxc /Fh gen\sprite_render_dxbc_sprite_pixel_shader.data.h  ^
-	/E ps_sprite /Vn SPRITE_RENDER_SPRITE_PS /T ps_5_0 sprite_render.hlsl
+fxc /Fh gen\pixel_art_upsampler_dxbc_compute_shader.data.h ^
+	/E cs_pixel_art_upsampler /Vn PIXEL_ART_UPSAMPLER_CS /T cs_5_0 pixel_art_upsampler.hlsl
+
+fxc /Fh gen\pass_through_dxbc_vertex_shader.data.h ^
+	/E vs_pass_through /Vn PASS_THROUGH_VS /T vs_5_0 pass_through_output.hlsl
+fxc /Fh gen\pass_through_dxbc_pixel_shader.data.h ^
+	/E ps_pass_through /Vn PASS_THROUGH_PS /T ps_5_0 pass_through_output.hlsl
 
 popd
 
@@ -110,25 +115,16 @@ EXIT /B 0
 :build_assets
 echo build_assets
 
-python ..\scripts\texture_convert ^
-	-i ../assets/tiles.png ^
-	-o ../src/gen/background_tiles.data.h ^
-	-t Tile_Render_Texture ^
-	-n Background_Tiles ^
-	--tile-width 24 ^
-	--tile-height 24
-python ..\scripts\texture_convert ^
+python ..\scripts\make_sprite_sheet.py ^
 	-i ../assets/creatures.png ^
-	-o ../src/gen/creature_sprites.data.h ^
-	-t Sprite_Render_Texture ^
-	-n Creature_Sprites ^
-	--tile-width 24 ^
-	--tile-height 24
-python ..\scripts\texture_convert ^
-	-i ../assets/creatures.png ^
-	-o ../src/gen/creatures_mouse_map.data.h ^
-	-t Mouse_Map ^
+	-o ../src/gen/sprite_sheet_creatures.data.h ^
 	-n Creatures ^
+	--tile-width 24 ^
+	--tile-height 24
+python ..\scripts\make_sprite_sheet.py ^
+	-i ../assets/tiles.png ^
+	-o ../src/gen/sprite_sheet_tiles.data.h ^
+	-n Tiles ^
 	--tile-width 24 ^
 	--tile-height 24
 

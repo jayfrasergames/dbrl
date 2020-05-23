@@ -1,4 +1,25 @@
 
+* tasks:
+  * create mouse picking for entities in tile render
+  * create depth buffer/entity id buffer for sprite sheet renderer
+  * create nice pixel art upscaler
+  * create pixel shader to blit final output texture to screen
+
+* features
+  * game
+    * movement
+    * pretty walls/shadows etc
+    * enemies
+    * cards
+    * spells
+  * library
+    * dll reloading
+      * graphics state reset
+    * logging
+    * random numbers
+    * math functions
+
+
 * decision
   * characters/items/tiles to be rendered pixel perfect (tile shader)
   * do mouse picking/outlining using this pixel perfect texture

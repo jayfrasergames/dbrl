@@ -1,0 +1,639 @@
+#ifndef SPRITE_SHEET_H
+#define SPRITE_SHEET_H
+
+#include "jfg/prelude.h"
+
+// =============================================================================
+// GFX API data defintions
+
+#ifdef JFG_D3D11_H
+
+#ifndef SRPITE_SHEET_DEFINE_GFX
+#define SPRITE_SHEET_DEFINE_GFX
+#endif
+
+struct Sprite_Sheet_D3D11_Instances
+{
+	ID3D11Buffer             *constant_buffer;
+	ID3D11Buffer             *instance_buffer;
+	ID3D11ShaderResourceView *instance_buffer_srv;
+	ID3D11Texture2D          *texture;
+	ID3D11ShaderResourceView *texture_srv;
+};
+
+struct Sprite_Sheet_D3D11_Renderer
+{
+	ID3D11Texture2D           *output;
+	ID3D11RenderTargetView    *output_rtv;
+	ID3D11ShaderResourceView  *output_srv;
+	ID3D11Texture2D           *depth_buffer;
+	ID3D11DepthStencilView    *depth_buffer_dsv;
+	ID3D11DepthStencilState   *depth_stencil_state;
+	ID3D11Texture2D           *sprite_id_buffer;
+	ID3D11RenderTargetView    *sprite_id_buffer_rtv;
+	ID3D11UnorderedAccessView *sprite_id_buffer_uav;
+	ID3D11ShaderResourceView  *sprite_id_buffer_srv;
+	ID3D11ComputeShader       *clear_sprite_id_compute_shader;
+	ID3D11VertexShader        *vertex_shader;
+	ID3D11PixelShader         *pixel_shader;
+	ID3D11RasterizerState     *rasterizer_state;
+};
+#endif
+
+// =============================================================================
+// Sprite_Sheet data defintion
+
+#include "sprite_sheet_gpu_data_types.h"
+
+struct Sprite_Sheet_Data
+{
+	v2_u32 size;
+	v2_u32 sprite_size;
+	u32 *image_data;
+	u8  *mouse_map_data;
+};
+
+#ifdef SPRITE_SHEET_DEFINE_GFX
+struct Sprite_Sheet_Renderer
+{
+	v2_u32 size;
+
+	union {
+	#ifdef JFG_D3D11_H
+		Sprite_Sheet_D3D11_Renderer d3d11;
+	#endif
+	};
+};
+
+#define SPRITE_SHEET_MAX_INSTANCES 10240
+struct Sprite_Sheet_Instances
+{
+	Sprite_Sheet_Data data;
+
+	u32 num_instances;
+	Sprite_Sheet_Instance instances[SPRITE_SHEET_MAX_INSTANCES];
+
+	union {
+	#ifdef JFG_D3D11_H
+		Sprite_Sheet_D3D11_Instances d3d11;
+	#endif
+	};
+};
+#endif
+
+void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer, v2_u32 size);
+
+void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances);
+void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_Instance instance);
+u32 sprite_sheet_instances_id_in_pos(Sprite_Sheet_Instances* instances, v2_u32 pos);
+
+#ifndef JFG_HEADER_ONLY
+// XXX should make own assert some day
+#include <assert.h>
+
+void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer, v2_u32 size)
+{
+	renderer->size = size;
+}
+
+void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances)
+{
+	instances->num_instances = 0;
+}
+
+void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_Instance instance)
+{
+	assert(instances->num_instances < SPRITE_SHEET_MAX_INSTANCES);
+	// XXX - got to get rid of this at some point
+	instance.sprite_id = instances->num_instances;
+	instances->instances[instances->num_instances++] = instance;
+}
+
+u32 sprite_sheet_instances_id_in_pos(Sprite_Sheet_Instances* instances, v2_u32 pos)
+{
+	// TODO - deal with Z ordering
+	u32 num_instances  = instances->num_instances;
+	u32 tex_width      = instances->data.size.w;
+	v2_u32 sprite_size = instances->data.sprite_size;
+	for (u32 i = 0; i < num_instances; ++i) {
+		Sprite_Sheet_Instance *instance = &instances->instances[i];
+		v2_u32 top_left = { ((u32)instance->world_pos.x) * sprite_size.w,
+		                    ((u32)instance->world_pos.y) * sprite_size.h };
+		if (top_left.x > pos.x || top_left.y > pos.y) {
+			continue;
+		}
+		v2_u32 tile_coord = { pos.x - top_left.x, pos.y - top_left.y };
+		if (tile_coord.x >= sprite_size.w || tile_coord.y >= sprite_size.h) {
+			continue;
+		}
+		v2_u32 tex_coord = { ((u32)instance->sprite_pos.x) * sprite_size.w + tile_coord.x,
+		                     ((u32)instance->sprite_pos.y) * sprite_size.h + tile_coord.y };
+		u32 index = tex_coord.y * tex_width + tex_coord.x;
+		u32 array_index = index >> 3;
+		u32 bit_mask = 1 << (index & 7);
+		if (instances->data.mouse_map_data[array_index] & bit_mask) {
+			return instance->sprite_id;
+		}
+	}
+	return 0;
+}
+#endif
+
+// =============================================================================
+// GFX API function definitions
+
+#ifdef JFG_D3D11_H
+#include "gen/sprite_sheet_dxbc_vertex_shader.data.h"
+#include "gen/sprite_sheet_dxbc_pixel_shader.data.h"
+#include "gen/sprite_sheet_dxbc_clear_sprite_id_compute_shader.data.h"
+
+u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
+                                    ID3D11Device*          device);
+void sprite_sheet_renderer_d3d11_free(Sprite_Sheet_D3D11_Renderer* renderer);
+
+u8 sprite_sheet_instances_d3d11_init(Sprite_Sheet_Instances* instances, ID3D11Device* device);
+void sprite_sheet_instances_d3d11_free(Sprite_Sheet_Instances* instances);
+
+void sprite_sheet_renderer_d3d11_begin(Sprite_Sheet_Renderer*  renderer,
+                                       ID3D11DeviceContext*    dc);
+void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
+                                       ID3D11DeviceContext*    dc,
+                                       v2_u32                  screen_size);
+void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
+                                     ID3D11DeviceContext*    dc);
+
+#ifndef JFG_HEADER_ONLY
+
+u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
+                                    ID3D11Device*          device)
+{
+	HRESULT hr;
+	ID3D11VertexShader *vertex_shader;
+	hr = device->CreateVertexShader(SPRITE_SHEET_RENDER_DXBC_VS,
+	                                ARRAY_SIZE(SPRITE_SHEET_RENDER_DXBC_VS),
+	                                NULL,
+	                                &vertex_shader);
+	if (FAILED(hr)) {
+		goto error_init_vertex_shader;
+	}
+
+	ID3D11PixelShader *pixel_shader;
+	hr = device->CreatePixelShader(SPRITE_SHEET_RENDER_DXBC_PS,
+	                               ARRAY_SIZE(SPRITE_SHEET_RENDER_DXBC_PS),
+	                               NULL,
+	                               &pixel_shader);
+	if (FAILED(hr)) {
+		goto error_init_pixel_shader;
+	}
+
+	ID3D11RasterizerState *rasterizer_state;
+	{
+		D3D11_RASTERIZER_DESC desc = {};
+		desc.FillMode = D3D11_FILL_SOLID;
+		desc.CullMode = D3D11_CULL_NONE;
+
+		hr = device->CreateRasterizerState(&desc, &rasterizer_state);
+	}
+	if (FAILED(hr)) {
+		goto error_init_rasterizer_state;
+	}
+
+	ID3D11Texture2D *output;
+	{
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = renderer->size.w;
+		desc.Height = renderer->size.h;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
+
+		hr = device->CreateTexture2D(&desc, NULL, &output);
+	}
+	if (FAILED(hr)) {
+		goto error_init_output;
+	}
+
+	ID3D11RenderTargetView *output_rtv;
+	{
+		D3D11_RENDER_TARGET_VIEW_DESC desc = {};
+		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		desc.Texture2D.MipSlice = 0;
+
+		hr = device->CreateRenderTargetView(output, &desc, &output_rtv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_output_rtv;
+	}
+
+	ID3D11ShaderResourceView *output_srv;
+	{
+		D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
+		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		desc.Texture2D.MostDetailedMip = 0;
+		desc.Texture2D.MipLevels = 1;
+
+		hr = device->CreateShaderResourceView(output, &desc, &output_srv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_output_srv;
+	}
+
+	ID3D11Texture2D *depth_buffer;
+	{
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = renderer->size.w;
+		desc.Height = renderer->size.h;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_D16_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
+
+		hr = device->CreateTexture2D(&desc, NULL, &depth_buffer);
+	}
+	if (FAILED(hr)) {
+		goto error_init_depth_buffer;
+	}
+
+	ID3D11DepthStencilView *depth_buffer_dsv;
+	{
+		D3D11_DEPTH_STENCIL_VIEW_DESC desc = {};
+		desc.Format = DXGI_FORMAT_D16_UNORM;
+		desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+		desc.Flags = 0;
+		desc.Texture2D.MipSlice = 0;
+
+		hr = device->CreateDepthStencilView(depth_buffer, &desc, &depth_buffer_dsv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_depth_buffer_dsv;
+	}
+
+	ID3D11DepthStencilState *depth_stencil_state;
+	{
+		D3D11_DEPTH_STENCIL_DESC desc = {};
+		desc.DepthEnable = TRUE;
+		desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+		desc.DepthFunc = D3D11_COMPARISON_GREATER;
+		desc.StencilEnable = FALSE;
+		
+		hr = device->CreateDepthStencilState(&desc, &depth_stencil_state);
+	}
+	if (FAILED(hr)) {
+		goto error_init_depth_stencil_state;
+	}
+
+	ID3D11Texture2D *sprite_id_buffer;
+	{
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = renderer->size.w;
+		desc.Height = renderer->size.h;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R32_UINT;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET
+		                                            | D3D11_BIND_UNORDERED_ACCESS;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
+
+		hr = device->CreateTexture2D(&desc, NULL, &sprite_id_buffer);
+	}
+	if (FAILED(hr)) {
+		goto error_init_sprite_id_buffer;
+	}
+
+	ID3D11ShaderResourceView *sprite_id_buffer_srv;
+	{
+		D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
+		desc.Format = DXGI_FORMAT_R32_UINT;
+		desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		desc.Texture2D.MostDetailedMip = 0;
+		desc.Texture2D.MipLevels = 1;
+
+		hr = device->CreateShaderResourceView(sprite_id_buffer, &desc, &sprite_id_buffer_srv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_sprite_id_buffer_srv;
+	}
+
+	ID3D11UnorderedAccessView *sprite_id_buffer_uav;
+	{
+		D3D11_UNORDERED_ACCESS_VIEW_DESC desc = {};
+		desc.Format = DXGI_FORMAT_R32_UINT;
+		desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		desc.Texture2D.MipSlice = 0;
+
+		hr = device->CreateUnorderedAccessView(sprite_id_buffer, &desc, &sprite_id_buffer_uav);
+	}
+	if (FAILED(hr)) {
+		goto error_init_sprite_id_buffer_uav;
+	}
+
+	ID3D11RenderTargetView *sprite_id_buffer_rtv;
+	{
+		D3D11_RENDER_TARGET_VIEW_DESC desc = {};
+		desc.Format = DXGI_FORMAT_R32_UINT;
+		desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		desc.Texture2D.MipSlice = 0;
+
+		hr = device->CreateRenderTargetView(sprite_id_buffer, &desc, &sprite_id_buffer_rtv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_sprite_id_buffer_rtv;
+	}
+
+	ID3D11ComputeShader *clear_sprite_id_compute_shader;
+	hr = device->CreateComputeShader(SPRITE_SHEET_CLEAR_SPRITE_ID_CS,
+	                                 ARRAY_SIZE(SPRITE_SHEET_CLEAR_SPRITE_ID_CS),
+	                                 NULL,
+	                                 &clear_sprite_id_compute_shader);
+	if (FAILED(hr)) {
+		goto error_init_clear_sprite_id_compute_shader;
+	}
+
+	renderer->d3d11.output               = output;
+	renderer->d3d11.output_rtv           = output_rtv;
+	renderer->d3d11.output_srv           = output_srv;
+	renderer->d3d11.depth_buffer         = depth_buffer;
+	renderer->d3d11.depth_buffer_dsv     = depth_buffer_dsv;
+	renderer->d3d11.depth_stencil_state  = depth_stencil_state;
+	renderer->d3d11.sprite_id_buffer     = sprite_id_buffer;
+	renderer->d3d11.sprite_id_buffer_srv = sprite_id_buffer_srv;
+	renderer->d3d11.sprite_id_buffer_uav = sprite_id_buffer_uav;
+	renderer->d3d11.sprite_id_buffer_rtv = sprite_id_buffer_rtv;
+	renderer->d3d11.vertex_shader        = vertex_shader;
+	renderer->d3d11.pixel_shader         = pixel_shader;
+	renderer->d3d11.rasterizer_state     = rasterizer_state;
+	renderer->d3d11.clear_sprite_id_compute_shader = clear_sprite_id_compute_shader;
+	return 1;
+
+	clear_sprite_id_compute_shader->Release();
+error_init_clear_sprite_id_compute_shader:
+	sprite_id_buffer_rtv->Release();
+error_init_sprite_id_buffer_rtv:
+	sprite_id_buffer_uav->Release();
+error_init_sprite_id_buffer_uav:
+	sprite_id_buffer_srv->Release();
+error_init_sprite_id_buffer_srv:
+	sprite_id_buffer->Release();
+error_init_sprite_id_buffer:
+	depth_stencil_state->Release();
+error_init_depth_stencil_state:
+	depth_buffer_dsv->Release();
+error_init_depth_buffer_dsv:
+	depth_buffer->Release();
+error_init_depth_buffer:
+	output_srv->Release();
+error_init_output_srv:
+	output_rtv->Release();
+error_init_output_rtv:
+	output->Release();
+error_init_output:
+	rasterizer_state->Release();
+error_init_rasterizer_state:
+	pixel_shader->Release();
+error_init_pixel_shader:
+	vertex_shader->Release();
+error_init_vertex_shader:
+	return 0;
+}
+
+void sprite_sheet_renderer_d3d11_free(Sprite_Sheet_Renderer* renderer)
+{
+	renderer->d3d11.clear_sprite_id_compute_shader->Release();
+	renderer->d3d11.sprite_id_buffer_rtv->Release();
+	renderer->d3d11.sprite_id_buffer_uav->Release();
+	renderer->d3d11.sprite_id_buffer_srv->Release();
+	renderer->d3d11.sprite_id_buffer->Release();
+	renderer->d3d11.depth_stencil_state->Release();
+	renderer->d3d11.depth_buffer_dsv->Release();
+	renderer->d3d11.depth_buffer->Release();
+	renderer->d3d11.output_srv->Release();
+	renderer->d3d11.output_rtv->Release();
+	renderer->d3d11.output->Release();
+	renderer->d3d11.vertex_shader->Release();
+	renderer->d3d11.pixel_shader->Release();
+	renderer->d3d11.rasterizer_state->Release();
+}
+
+u8 sprite_sheet_instances_d3d11_init(Sprite_Sheet_Instances* instances, ID3D11Device* device)
+{
+	HRESULT hr;
+	ID3D11Buffer *constant_buffer;
+	{
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = sizeof(Sprite_Sheet_Constant_Buffer);
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		desc.MiscFlags = 0;
+		desc.StructureByteStride = sizeof(Sprite_Sheet_Constant_Buffer);
+
+		hr = device->CreateBuffer(&desc, NULL, &constant_buffer);
+	}
+	if (FAILED(hr)) {
+		goto error_init_constant_buffer;
+	}
+
+	ID3D11Buffer *instance_buffer;
+	{
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = sizeof(Sprite_Sheet_Instance) * SPRITE_SHEET_MAX_INSTANCES;
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		desc.StructureByteStride = sizeof(Sprite_Sheet_Instance);
+
+		hr = device->CreateBuffer(&desc, NULL, &instance_buffer);
+	}
+	if (FAILED(hr)) {
+		goto error_init_instance_buffer;
+	}
+
+	ID3D11ShaderResourceView *instance_buffer_srv;
+	{
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+		srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+		srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srv_desc.Buffer.ElementOffset = 0;
+		srv_desc.Buffer.ElementWidth = SPRITE_SHEET_MAX_INSTANCES;
+
+		hr = device->CreateShaderResourceView(instance_buffer,
+				&srv_desc, &instance_buffer_srv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_instance_buffer_srv;
+	}
+
+	ID3D11Texture2D *texture;
+	{
+		D3D11_TEXTURE2D_DESC tex_desc = {};
+		tex_desc.Width = instances->data.size.w;
+		tex_desc.Height = instances->data.size.h;
+		tex_desc.MipLevels = 1;
+		tex_desc.ArraySize = 1;
+		tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		tex_desc.SampleDesc.Count = 1;
+		tex_desc.SampleDesc.Quality = 0;
+		tex_desc.Usage = D3D11_USAGE_IMMUTABLE;
+		tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		tex_desc.CPUAccessFlags = 0;
+		tex_desc.MiscFlags = 0;
+
+		D3D11_SUBRESOURCE_DATA data_desc = {};
+		data_desc.pSysMem = instances->data.image_data;
+		data_desc.SysMemPitch = instances->data.size.w * sizeof(u32);
+		data_desc.SysMemSlicePitch = 0;
+
+		hr = device->CreateTexture2D(&tex_desc, &data_desc, &texture);
+	}
+	if (FAILED(hr)) {
+		goto error_init_texture;
+	}
+
+	ID3D11ShaderResourceView *texture_srv;
+	{
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+		srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srv_desc.Texture2D.MostDetailedMip = 0;
+		srv_desc.Texture2D.MipLevels = 1;
+
+		hr = device->CreateShaderResourceView(texture, &srv_desc, &texture_srv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_srv;
+	}
+
+	instances->d3d11.constant_buffer = constant_buffer;
+	instances->d3d11.instance_buffer = instance_buffer;
+	instances->d3d11.instance_buffer_srv = instance_buffer_srv;
+	instances->d3d11.texture = texture;
+	instances->d3d11.texture_srv = texture_srv;
+	return 1;
+
+	texture_srv->Release();
+error_init_srv:
+	texture->Release();
+error_init_texture:
+	instance_buffer_srv->Release();
+error_init_instance_buffer_srv:
+	instance_buffer->Release();
+error_init_instance_buffer:
+	constant_buffer->Release();
+error_init_constant_buffer:
+	return 0;
+}
+
+void sprite_sheet_instances_d3d11_free(Sprite_Sheet_Instances* instances)
+{
+	instances->d3d11.texture_srv->Release();
+	instances->d3d11.texture->Release();
+	instances->d3d11.instance_buffer_srv->Release();
+	instances->d3d11.instance_buffer->Release();
+	instances->d3d11.constant_buffer->Release();
+}
+
+void sprite_sheet_renderer_d3d11_begin(Sprite_Sheet_Renderer*  renderer,
+                                       ID3D11DeviceContext*    dc)
+{
+	// TODO -- set the viewport
+
+	f32 clear_value[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	dc->ClearRenderTargetView(renderer->d3d11.output_rtv, clear_value);
+	dc->ClearDepthStencilView(renderer->d3d11.depth_buffer_dsv, D3D11_CLEAR_DEPTH, 0.0f, 0);
+
+	dc->CSSetShader(renderer->d3d11.clear_sprite_id_compute_shader, NULL, 0);
+	dc->CSSetUnorderedAccessViews(0, 1, &renderer->d3d11.sprite_id_buffer_uav, NULL);
+	dc->Dispatch((renderer->size.w + CLEAR_SPRITE_ID_WIDTH  - 1) / CLEAR_SPRITE_ID_WIDTH,
+	             (renderer->size.h + CLEAR_SPRITE_ID_HEIGHT - 1) / CLEAR_SPRITE_ID_HEIGHT,
+	             1);
+	ID3D11UnorderedAccessView *null_uav = NULL;
+	dc->CSSetUnorderedAccessViews(0, 1, &null_uav, NULL);
+
+	// dc->ClearState();
+	dc->IASetInputLayout(NULL);
+	dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	dc->VSSetShader(renderer->d3d11.vertex_shader, NULL, 0);
+	dc->PSSetShader(renderer->d3d11.pixel_shader, NULL, 0);
+	dc->RSSetState(renderer->d3d11.rasterizer_state);
+
+	dc->OMSetDepthStencilState(renderer->d3d11.depth_stencil_state, 0);
+	ID3D11RenderTargetView *rtvs[] = {
+		renderer->d3d11.output_rtv,
+		renderer->d3d11.sprite_id_buffer_rtv,
+	};
+	dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, renderer->d3d11.depth_buffer_dsv);
+}
+
+void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
+                                       ID3D11DeviceContext*    dc,
+                                       v2_u32                  screen_size)
+{
+	Sprite_Sheet_Constant_Buffer constant_buffer = {};
+	constant_buffer.screen_size = { (f32)screen_size.w, (f32)screen_size.h };
+	constant_buffer.sprite_size = { (f32)instances->data.sprite_size.w,
+	                                (f32)instances->data.sprite_size.h };
+	constant_buffer.tex_size = { (f32)instances->data.size.w,
+	                             (f32)instances->data.size.h };
+
+	D3D11_MAPPED_SUBRESOURCE mapped_buffer = {};
+
+	HRESULT hr;
+	hr = dc->Map(instances->d3d11.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_buffer);
+	assert(SUCCEEDED(hr));
+	memcpy(mapped_buffer.pData,
+	       &instances->instances,
+	       sizeof(Sprite_Sheet_Instance) * instances->num_instances);
+	dc->Unmap(instances->d3d11.instance_buffer, 0);
+
+	hr = dc->Map(instances->d3d11.constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
+		&mapped_buffer);
+	assert(SUCCEEDED(hr));
+	memcpy(mapped_buffer.pData, &constant_buffer, sizeof(constant_buffer));
+	dc->Unmap(instances->d3d11.constant_buffer, 0);
+
+	dc->PSSetShaderResources(0, 1, &instances->d3d11.texture_srv);
+	dc->PSSetConstantBuffers(0, 1, &instances->d3d11.constant_buffer);
+	dc->VSSetShaderResources(0, 1, &instances->d3d11.instance_buffer_srv);
+	dc->VSSetConstantBuffers(0, 1, &instances->d3d11.constant_buffer);
+
+	dc->DrawInstanced(6, instances->num_instances, 0, 0);
+}
+
+void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
+                                     ID3D11DeviceContext*    dc)
+{
+	// TODO -- set the viewport
+
+	dc->VSSetShader(NULL, NULL, 0);
+	dc->PSSetShader(NULL, NULL, 0);
+
+	ID3D11RenderTargetView *rtvs[] = { NULL, NULL };
+	dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, NULL);
+	ID3D11ShaderResourceView *null_srv = NULL;
+	dc->VSSetShaderResources(0, 1, &null_srv);
+	dc->PSSetShaderResources(0, 1, &null_srv);
+}
+
+#endif // JFG_HEADER_ONLY
+#endif // JFG_D3D11_H
+
+#endif
