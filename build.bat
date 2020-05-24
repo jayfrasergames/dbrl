@@ -86,6 +86,8 @@ fxc /Fh gen\sprite_sheet_dxbc_pixel_shader.data.h ^
 	/E ps_sprite /Vn SPRITE_SHEET_RENDER_DXBC_PS /T ps_5_0 sprite_sheet.hlsl
 fxc /Fh gen\sprite_sheet_dxbc_clear_sprite_id_compute_shader.data.h ^
 	/E cs_clear_sprite_id /Vn SPRITE_SHEET_CLEAR_SPRITE_ID_CS /T cs_5_0 sprite_sheet.hlsl
+fxc /Fh gen\sprite_sheet_dxbc_highlight_sprite_compute_shader.data.h ^
+	/E cs_highlight_sprite /Vn SPRITE_SHEET_HIGHLIGHT_CS /T cs_5_0 sprite_sheet.hlsl
 
 fxc /Fh gen\pixel_art_upsampler_dxbc_compute_shader.data.h ^
 	/E cs_pixel_art_upsampler /Vn PIXEL_ART_UPSAMPLER_CS /T cs_5_0 pixel_art_upsampler.hlsl

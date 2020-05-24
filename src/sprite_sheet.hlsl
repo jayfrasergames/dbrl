@@ -4,9 +4,13 @@
 // =============================================================================
 // Sprite blitter
 
-Sprite_Sheet_Constant_Buffer            constants : register(b0);
-StructuredBuffer<Sprite_Sheet_Instance> instances : register(t0);
-Texture2D<float4>                       tex       : register(t0);
+cbuffer blitter_constants : register(b0)
+{
+	Sprite_Sheet_Constant_Buffer constants;
+};
+// ConstantBuffer<Sprite_Sheet_Constant_Buffer> constants : register(b0);
+StructuredBuffer<Sprite_Sheet_Instance>      instances : register(t0);
+Texture2D<float4>                            tex       : register(t0);
 
 struct VS_Sprite_Output
 {
@@ -92,4 +96,34 @@ RWTexture2D<uint> sprite_id_tex : register(u0);
 void cs_clear_sprite_id(uint2 tid : SV_DispatchThreadID)
 {
 	sprite_id_tex[tid] = 0;
+}
+
+
+// =============================================================================
+// Sprite highlight ID
+
+cbuffer highlight_constants : register(b0)
+{
+	Sprite_Sheet_Highlight_Constant_Buffer highlight_constants;
+}
+// ConstantBuffer<Sprite_Sheet_Highlight_Constant_Buffer> highlight_constants     : register(b0);
+Texture2D<uint>                                        highlight_sprite_id_tex : register(t0);
+RWTexture2D<float4>                                    highlight_color_tex     : register(u0);
+
+[numthreads(HIGHLIGHT_SPRITE_WIDTH, HIGHLIGHT_SPRITE_HEIGHT, 1)]
+void cs_highlight_sprite(uint2 tid : SV_DispatchThreadID)
+{
+	uint center = highlight_sprite_id_tex[tid];
+	uint top    = highlight_sprite_id_tex[tid + uint2( 0, -1)];
+	uint bottom = highlight_sprite_id_tex[tid + uint2( 0,  1)];
+	uint left   = highlight_sprite_id_tex[tid + uint2(-1,  0)];
+	uint right  = highlight_sprite_id_tex[tid + uint2( 1,  0)];
+	if (center != highlight_constants.sprite_id
+	    && (top    == highlight_constants.sprite_id ||
+	        bottom == highlight_constants.sprite_id ||
+	        left   == highlight_constants.sprite_id ||
+	        right  == highlight_constants.sprite_id))
+	{
+		highlight_color_tex[tid] = highlight_constants.highlight_color;
+	}
 }

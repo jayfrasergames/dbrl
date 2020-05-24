@@ -6,6 +6,9 @@
 #define CLEAR_SPRITE_ID_WIDTH  8
 #define CLEAR_SPRITE_ID_HEIGHT 8
 
+#define HIGHLIGHT_SPRITE_WIDTH  8
+#define HIGHLIGHT_SPRITE_HEIGHT 8
+
 struct Sprite_Sheet_Constant_Buffer
 {
 	F2 screen_size;
@@ -22,6 +25,15 @@ struct Sprite_Sheet_Instance
 
 	U1 sprite_id;
 	F1 depth_offset;
+};
+
+struct Sprite_Sheet_Highlight_Constant_Buffer
+{
+	F4 highlight_color;
+
+	U1 sprite_id;
+	U1 _dummy0;
+	U2 _dummy1;
 };
 
 #endif

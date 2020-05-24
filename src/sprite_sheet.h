@@ -25,6 +25,7 @@ struct Sprite_Sheet_D3D11_Renderer
 {
 	ID3D11Texture2D           *output;
 	ID3D11RenderTargetView    *output_rtv;
+	ID3D11UnorderedAccessView *output_uav;
 	ID3D11ShaderResourceView  *output_srv;
 	ID3D11Texture2D           *depth_buffer;
 	ID3D11DepthStencilView    *depth_buffer_dsv;
@@ -34,6 +35,8 @@ struct Sprite_Sheet_D3D11_Renderer
 	ID3D11UnorderedAccessView *sprite_id_buffer_uav;
 	ID3D11ShaderResourceView  *sprite_id_buffer_srv;
 	ID3D11ComputeShader       *clear_sprite_id_compute_shader;
+	ID3D11ComputeShader       *highlight_sprite_compute_shader;
+	ID3D11Buffer              *highlight_constant_buffer;
 	ID3D11VertexShader        *vertex_shader;
 	ID3D11PixelShader         *pixel_shader;
 	ID3D11RasterizerState     *rasterizer_state;
@@ -54,17 +57,6 @@ struct Sprite_Sheet_Data
 };
 
 #ifdef SPRITE_SHEET_DEFINE_GFX
-struct Sprite_Sheet_Renderer
-{
-	v2_u32 size;
-
-	union {
-	#ifdef JFG_D3D11_H
-		Sprite_Sheet_D3D11_Renderer d3d11;
-	#endif
-	};
-};
-
 #define SPRITE_SHEET_MAX_INSTANCES 10240
 struct Sprite_Sheet_Instances
 {
@@ -79,21 +71,87 @@ struct Sprite_Sheet_Instances
 	#endif
 	};
 };
+
+struct Sprite_Sheet_Renderer
+{
+	v2_u32 size;
+	u32                     highlighted_sprite;
+	u32                     num_instance_buffers;
+	Sprite_Sheet_Instances* instance_buffers;
+
+	union {
+	#ifdef JFG_D3D11_H
+		Sprite_Sheet_D3D11_Renderer d3d11;
+	#endif
+	};
+};
 #endif
 
-void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer, v2_u32 size);
+void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer,
+                                Sprite_Sheet_Instances* instance_buffers,
+                                u32 num_instance_buffers,
+                                v2_u32 size);
+u32 sprite_sheet_renderer_id_in_pos(Sprite_Sheet_Renderer* renderer, v2_u32 pos);
+void sprite_sheet_renderer_highlight_sprite(Sprite_Sheet_Renderer* renderer, u32 sprite_id);
 
 void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances);
 void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_Instance instance);
-u32 sprite_sheet_instances_id_in_pos(Sprite_Sheet_Instances* instances, v2_u32 pos);
 
 #ifndef JFG_HEADER_ONLY
-// XXX should make own assert some day
-#include <assert.h>
 
-void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer, v2_u32 size)
+void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer,
+                                Sprite_Sheet_Instances* instance_buffers,
+                                u32 num_instance_buffers,
+                                v2_u32 size)
 {
 	renderer->size = size;
+	renderer->num_instance_buffers = num_instance_buffers;
+	renderer->instance_buffers = instance_buffers;
+}
+
+u32 sprite_sheet_renderer_id_in_pos(Sprite_Sheet_Renderer* renderer, v2_u32 pos)
+{
+	u32 best_id = 0;
+	f32 best_depth = 0.0f;
+	for (u32 i = 0; i < renderer->num_instance_buffers; ++i) {
+		Sprite_Sheet_Instances* instances = &renderer->instance_buffers[i];
+		u32 num_instances  = instances->num_instances;
+		u32 tex_width      = instances->data.size.w;
+		v2_u32 sprite_size = instances->data.sprite_size;
+		for (u32 j = 0; j < num_instances; ++j) {
+			Sprite_Sheet_Instance *instance = &instances->instances[j];
+			v2_u32 top_left = { ((u32)instance->world_pos.x) * sprite_size.w,
+					    ((u32)instance->world_pos.y) * sprite_size.h };
+			if (top_left.x > pos.x || top_left.y > pos.y) {
+				continue;
+			}
+			v2_u32 tile_coord = { pos.x - top_left.x, pos.y - top_left.y };
+			if (tile_coord.x >= sprite_size.w || tile_coord.y >= sprite_size.h) {
+				continue;
+			}
+			v2_u32 tex_coord = {
+				((u32)instance->sprite_pos.x) * sprite_size.w + tile_coord.x,
+				((u32)instance->sprite_pos.y) * sprite_size.h + tile_coord.y
+			};
+			u32 index = tex_coord.y * tex_width + tex_coord.x;
+			u32 array_index = index >> 3;
+			u32 bit_mask = 1 << (index & 7);
+			if (!(instances->data.mouse_map_data[array_index] & bit_mask)) {
+				continue;
+			}
+			f32 depth = instance->depth_offset + instance->world_pos.y;
+			if (depth > best_depth) {
+				best_id = instance->sprite_id;
+				best_depth = depth;
+			}
+		}
+	}
+	return best_id;
+}
+
+void sprite_sheet_renderer_highlight_sprite(Sprite_Sheet_Renderer* renderer, u32 sprite_id)
+{
+	renderer->highlighted_sprite = sprite_id;
 }
 
 void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances)
@@ -103,40 +161,10 @@ void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances)
 
 void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_Instance instance)
 {
-	assert(instances->num_instances < SPRITE_SHEET_MAX_INSTANCES);
-	// XXX - got to get rid of this at some point
-	instance.sprite_id = instances->num_instances;
+	ASSERT(instances->num_instances < SPRITE_SHEET_MAX_INSTANCES);
 	instances->instances[instances->num_instances++] = instance;
 }
 
-u32 sprite_sheet_instances_id_in_pos(Sprite_Sheet_Instances* instances, v2_u32 pos)
-{
-	// TODO - deal with Z ordering
-	u32 num_instances  = instances->num_instances;
-	u32 tex_width      = instances->data.size.w;
-	v2_u32 sprite_size = instances->data.sprite_size;
-	for (u32 i = 0; i < num_instances; ++i) {
-		Sprite_Sheet_Instance *instance = &instances->instances[i];
-		v2_u32 top_left = { ((u32)instance->world_pos.x) * sprite_size.w,
-		                    ((u32)instance->world_pos.y) * sprite_size.h };
-		if (top_left.x > pos.x || top_left.y > pos.y) {
-			continue;
-		}
-		v2_u32 tile_coord = { pos.x - top_left.x, pos.y - top_left.y };
-		if (tile_coord.x >= sprite_size.w || tile_coord.y >= sprite_size.h) {
-			continue;
-		}
-		v2_u32 tex_coord = { ((u32)instance->sprite_pos.x) * sprite_size.w + tile_coord.x,
-		                     ((u32)instance->sprite_pos.y) * sprite_size.h + tile_coord.y };
-		u32 index = tex_coord.y * tex_width + tex_coord.x;
-		u32 array_index = index >> 3;
-		u32 bit_mask = 1 << (index & 7);
-		if (instances->data.mouse_map_data[array_index] & bit_mask) {
-			return instance->sprite_id;
-		}
-	}
-	return 0;
-}
 #endif
 
 // =============================================================================
@@ -146,6 +174,7 @@ u32 sprite_sheet_instances_id_in_pos(Sprite_Sheet_Instances* instances, v2_u32 p
 #include "gen/sprite_sheet_dxbc_vertex_shader.data.h"
 #include "gen/sprite_sheet_dxbc_pixel_shader.data.h"
 #include "gen/sprite_sheet_dxbc_clear_sprite_id_compute_shader.data.h"
+#include "gen/sprite_sheet_dxbc_highlight_sprite_compute_shader.data.h"
 
 u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
                                     ID3D11Device*          device);
@@ -209,7 +238,8 @@ u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
 		desc.SampleDesc.Count = 1;
 		desc.SampleDesc.Quality = 0;
 		desc.Usage = D3D11_USAGE_DEFAULT;
-		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET
+		                                            | D3D11_BIND_UNORDERED_ACCESS;
 		desc.CPUAccessFlags = 0;
 		desc.MiscFlags = 0;
 
@@ -230,6 +260,12 @@ u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
 	}
 	if (FAILED(hr)) {
 		goto error_init_output_rtv;
+	}
+
+	ID3D11UnorderedAccessView *output_uav;
+	hr = device->CreateUnorderedAccessView(output, NULL, &output_uav);
+	if (FAILED(hr)) {
+		goto error_init_output_uav;
 	}
 
 	ID3D11ShaderResourceView *output_srv;
@@ -366,8 +402,34 @@ u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
 		goto error_init_clear_sprite_id_compute_shader;
 	}
 
+	ID3D11ComputeShader *highlight_sprite_compute_shader;
+	hr = device->CreateComputeShader(SPRITE_SHEET_HIGHLIGHT_CS,
+	                                 ARRAY_SIZE(SPRITE_SHEET_HIGHLIGHT_CS),
+	                                 NULL,
+	                                 &highlight_sprite_compute_shader);
+	if (FAILED(hr)) {
+		goto error_init_highlight_sprite_compute_shader;
+	}
+
+	ID3D11Buffer *highlight_constant_buffer;
+	{
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = sizeof(Sprite_Sheet_Highlight_Constant_Buffer);
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		desc.MiscFlags = 0;
+		desc.StructureByteStride = sizeof(Sprite_Sheet_Constant_Buffer);
+
+		hr = device->CreateBuffer(&desc, NULL, &highlight_constant_buffer);
+	}
+	if (FAILED(hr)) {
+		goto error_init_highlight_constant_buffer;
+	}
+
 	renderer->d3d11.output               = output;
 	renderer->d3d11.output_rtv           = output_rtv;
+	renderer->d3d11.output_uav           = output_uav;
 	renderer->d3d11.output_srv           = output_srv;
 	renderer->d3d11.depth_buffer         = depth_buffer;
 	renderer->d3d11.depth_buffer_dsv     = depth_buffer_dsv;
@@ -380,8 +442,14 @@ u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
 	renderer->d3d11.pixel_shader         = pixel_shader;
 	renderer->d3d11.rasterizer_state     = rasterizer_state;
 	renderer->d3d11.clear_sprite_id_compute_shader = clear_sprite_id_compute_shader;
+	renderer->d3d11.highlight_sprite_compute_shader = highlight_sprite_compute_shader;
+	renderer->d3d11.highlight_constant_buffer = highlight_constant_buffer;
 	return 1;
 
+	highlight_constant_buffer->Release();
+error_init_highlight_constant_buffer:
+	highlight_sprite_compute_shader->Release();
+error_init_highlight_sprite_compute_shader:
 	clear_sprite_id_compute_shader->Release();
 error_init_clear_sprite_id_compute_shader:
 	sprite_id_buffer_rtv->Release();
@@ -400,6 +468,8 @@ error_init_depth_buffer_dsv:
 error_init_depth_buffer:
 	output_srv->Release();
 error_init_output_srv:
+	output_uav->Release();
+error_init_output_uav:
 	output_rtv->Release();
 error_init_output_rtv:
 	output->Release();
@@ -415,6 +485,8 @@ error_init_vertex_shader:
 
 void sprite_sheet_renderer_d3d11_free(Sprite_Sheet_Renderer* renderer)
 {
+	renderer->d3d11.highlight_constant_buffer->Release();
+	renderer->d3d11.highlight_sprite_compute_shader->Release();
 	renderer->d3d11.clear_sprite_id_compute_shader->Release();
 	renderer->d3d11.sprite_id_buffer_rtv->Release();
 	renderer->d3d11.sprite_id_buffer_uav->Release();
@@ -424,6 +496,7 @@ void sprite_sheet_renderer_d3d11_free(Sprite_Sheet_Renderer* renderer)
 	renderer->d3d11.depth_buffer_dsv->Release();
 	renderer->d3d11.depth_buffer->Release();
 	renderer->d3d11.output_srv->Release();
+	renderer->d3d11.output_uav->Release();
 	renderer->d3d11.output_rtv->Release();
 	renderer->d3d11.output->Release();
 	renderer->d3d11.vertex_shader->Release();
@@ -598,7 +671,7 @@ void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
 
 	HRESULT hr;
 	hr = dc->Map(instances->d3d11.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_buffer);
-	assert(SUCCEEDED(hr));
+	ASSERT(SUCCEEDED(hr));
 	memcpy(mapped_buffer.pData,
 	       &instances->instances,
 	       sizeof(Sprite_Sheet_Instance) * instances->num_instances);
@@ -606,7 +679,7 @@ void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
 
 	hr = dc->Map(instances->d3d11.constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
 		&mapped_buffer);
-	assert(SUCCEEDED(hr));
+	ASSERT(SUCCEEDED(hr));
 	memcpy(mapped_buffer.pData, &constant_buffer, sizeof(constant_buffer));
 	dc->Unmap(instances->d3d11.constant_buffer, 0);
 
@@ -631,6 +704,34 @@ void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
 	ID3D11ShaderResourceView *null_srv = NULL;
 	dc->VSSetShaderResources(0, 1, &null_srv);
 	dc->PSSetShaderResources(0, 1, &null_srv);
+
+	Sprite_Sheet_Highlight_Constant_Buffer constant_buffer = {};
+	constant_buffer.highlight_color = { 1.0f, 0.0f, 0.0f, 1.0f };
+	constant_buffer.sprite_id = renderer->highlighted_sprite;
+
+	HRESULT hr;
+	D3D11_MAPPED_SUBRESOURCE mapped_resource;
+	hr = dc->Map(renderer->d3d11.highlight_constant_buffer,
+	             0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource);
+	ASSERT(SUCCEEDED(hr));
+	memcpy(mapped_resource.pData, &constant_buffer, sizeof(constant_buffer));
+	dc->Unmap(renderer->d3d11.highlight_constant_buffer, 0);
+
+	dc->CSSetConstantBuffers(0, 1, &renderer->d3d11.highlight_constant_buffer);
+	dc->CSSetShaderResources(0, 1, &renderer->d3d11.sprite_id_buffer_srv);
+	dc->CSSetUnorderedAccessViews(0, 1, &renderer->d3d11.output_uav, NULL);
+	dc->CSSetShader(renderer->d3d11.highlight_sprite_compute_shader, NULL, 0);
+
+	dc->Dispatch((renderer->size.w + HIGHLIGHT_SPRITE_WIDTH  - 1) / HIGHLIGHT_SPRITE_WIDTH,
+	             (renderer->size.h + HIGHLIGHT_SPRITE_HEIGHT - 1) / HIGHLIGHT_SPRITE_HEIGHT,
+	             1);
+
+	ID3D11Buffer *null_cb = NULL;
+	dc->CSSetConstantBuffers(0, 1, &null_cb);
+	dc->CSSetShaderResources(0, 1, &null_srv);
+	ID3D11UnorderedAccessView *null_uav = NULL;
+	dc->CSSetUnorderedAccessViews(0, 1, &null_uav, NULL);
+	dc->CSSetShader(NULL, NULL, 0);
 }
 
 #endif // JFG_HEADER_ONLY

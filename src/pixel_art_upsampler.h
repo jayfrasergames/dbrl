@@ -45,8 +45,6 @@ void pixel_art_upsampler_d3d11_draw(Pixel_Art_Upsampler*       pixel_art_upsampl
                                     v2_u32 output_offset);
 
 #ifndef JFG_HEADER_ONLY
-// XXX -- should define own assert
-#include <assert.h>
 #include "gen/pixel_art_upsampler_dxbc_compute_shader.data.h"
 
 u8 pixel_art_upsampler_d3d11_init(Pixel_Art_Upsampler* pixel_art_upsampler, ID3D11Device* device)
@@ -99,9 +97,9 @@ void pixel_art_upsampler_d3d11_draw(Pixel_Art_Upsampler*       pixel_art_upsampl
                                     ID3D11ShaderResourceView*  input_srv,
                                     ID3D11UnorderedAccessView* output_uav,
                                     v2_u32 input_size,
-                                    v2_u32 input_offset,
+                                    v2_i32 input_offset,
                                     v2_u32 output_size,
-                                    v2_u32 output_offset)
+                                    v2_i32 output_offset)
 {
 	Pixel_Art_Upsampler_D3D11 *pau_d3d11 = &pixel_art_upsampler->d3d11;
 	Pixel_Art_Upsampler_Constant_Buffer constant_buffer = {};
@@ -113,7 +111,7 @@ void pixel_art_upsampler_d3d11_draw(Pixel_Art_Upsampler*       pixel_art_upsampl
 	HRESULT hr;
 	D3D11_MAPPED_SUBRESOURCE mapped_buffer;
 	hr = dc->Map(pau_d3d11->constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_buffer);
-	assert(SUCCEEDED(hr));
+	ASSERT(SUCCEEDED(hr));
 	memcpy(mapped_buffer.pData, &constant_buffer, sizeof(constant_buffer));
 	dc->Unmap(pau_d3d11->constant_buffer, 0);
 

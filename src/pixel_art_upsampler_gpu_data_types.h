@@ -11,8 +11,8 @@ struct Pixel_Art_Upsampler_Constant_Buffer
 	U2 input_size;
 	U2 output_size;
 
-	U2 input_offset;
-	U2 output_offset;
+	I2 input_offset;
+	I2 output_offset;
 };
 
 #endif

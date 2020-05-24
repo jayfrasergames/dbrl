@@ -12,7 +12,6 @@
 
 #include <math.h>
 #include <stdio.h>
-#include <assert.h>
 
 #include "dbrl.h"
 
@@ -26,16 +25,51 @@ void show_debug_messages(HWND window, ID3D11InfoQueue *info_queue)
 	for (u64 i = 0; i < num_messages; ++i) {
 		size_t message_len;
 		HRESULT hr = info_queue->GetMessage(i, NULL, &message_len);
-		assert(SUCCEEDED(hr));
+		ASSERT(SUCCEEDED(hr));
 		D3D11_MESSAGE *message = (D3D11_MESSAGE*)malloc(message_len);
 		hr = info_queue->GetMessage(i, message, &message_len);
-		assert(SUCCEEDED(hr));
+		ASSERT(SUCCEEDED(hr));
 		MessageBox(window, message->pDescription, "DBRL", MB_OK);
 		free(message);
 	}
 }
 
 static u8 running = 1;
+static Input input_buffers[2];
+static Input *input_front_buffer, *input_back_buffer;
+static volatile LONG input_buffer_pointer_lock;
+
+void swap_input_buffers()
+{
+	while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
+	Input *tmp = input_front_buffer;
+	input_front_buffer = input_back_buffer;
+	input_back_buffer = tmp;
+	memcpy(input_back_buffer, input_front_buffer, sizeof(*input_front_buffer));
+	input_reset(input_back_buffer);
+	ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+}
+
+void input_push_event_to_back_buffer(Input_Event input_event)
+{
+	while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
+	input_push(input_back_buffer, input_event);
+	ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+}
+
+void input_back_buffer_button_down(Input_Button button)
+{
+	while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
+	input_button_down(input_back_buffer, button);
+	ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+}
+
+void input_back_buffer_button_up(Input_Button button)
+{
+	while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
+	input_button_up(input_back_buffer, button);
+	ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+}
 
 void get_screen_size(HWND window, v2_u32* screen_size)
 {
@@ -45,6 +79,7 @@ void get_screen_size(HWND window, v2_u32* screen_size)
 	screen_size->h = rect.bottom;
 }
 
+static v2_i16 prev_mouse_pos;
 LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam)
 {
 	switch (msg) {
@@ -59,6 +94,35 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 		EndPaint(window, &ps);
 		return 0;
 	}
+	case WM_MOUSEWHEEL: {
+		i32 delta = GET_WHEEL_DELTA_WPARAM(wparam);
+		while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
+		if (delta > 0) {
+			++input_back_buffer->mouse_wheel_delta;
+		} else {
+			--input_back_buffer->mouse_wheel_delta;
+		}
+		ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+		return 0;
+	}
+	case WM_LBUTTONDOWN:
+		input_back_buffer_button_down(INPUT_BUTTON_MOUSE_LEFT);
+		return 0;
+	case WM_MBUTTONDOWN:
+		input_back_buffer_button_down(INPUT_BUTTON_MOUSE_MIDDLE);
+		return 0;
+	case WM_RBUTTONDOWN:
+		input_back_buffer_button_down(INPUT_BUTTON_MOUSE_RIGHT);
+		return 0;
+	case WM_LBUTTONUP:
+		input_back_buffer_button_up(INPUT_BUTTON_MOUSE_LEFT);
+		return 0;
+	case WM_MBUTTONUP:
+		input_back_buffer_button_up(INPUT_BUTTON_MOUSE_MIDDLE);
+		return 0;
+	case WM_RBUTTONUP:
+		input_back_buffer_button_up(INPUT_BUTTON_MOUSE_RIGHT);
+		return 0;
 	}
 	return DefWindowProc(window, msg, wparam, lparam);
 }
@@ -242,8 +306,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	viewport.MaxDepth = 1.0f;
 
 	IMGUI_Context imgui;
-	IMGUI_D3D11_Context imgui_d3d11;
-	if (!imgui_d3d11_init(&imgui_d3d11, device)) {
+	if (!imgui_d3d11_init(&imgui, device)) {
 		show_debug_messages(window, info_queue);
 		return 0;
 	}
@@ -251,7 +314,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	Memory_Spec game_size = get_game_size();
 	Game* game = (Game*)malloc(game_size.size);
 
-	assert(((uintptr_t)game & (game_size.alignment - 1)) == 0);
+	ASSERT(((uintptr_t)game & (game_size.alignment - 1)) == 0);
 
 	v2_u32 screen_size, prev_screen_size;
 	get_screen_size(window, &screen_size);
@@ -261,7 +324,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	u8 d3d11_init_success = game_d3d11_init(game, device, screen_size);
 
 	v2_u32 back_buffer_size;
-	Input input;
+	v2_u32 mouse_pos, prev_mouse_pos;
 	for (u32 frame_number = 0; running; ++frame_number) {
 		if (was_library_written()) {
 			if (game_library != NULL) {
@@ -278,21 +341,14 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		get_screen_size(window, &screen_size);
 
-		POINT mouse_pos;
-		if (GetCursorPos(&mouse_pos) && ScreenToClient(window, &mouse_pos)) {
-			if (mouse_pos.x < screen_size.x && mouse_pos.y < screen_size.y) {
-				input.mouse_pos = { (u32)mouse_pos.x, (u32)mouse_pos.y };
-			}
-		}
-
 		if (screen_size.w != prev_screen_size.w || screen_size.h != prev_screen_size.h) {
 			back_buffer_rtv->Release();
 			back_buffer->Release();
 			hr = swap_chain->ResizeBuffers(2, screen_size.w, screen_size.h,
 				DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
-			assert(SUCCEEDED(hr));
+			ASSERT(SUCCEEDED(hr));
 			hr = swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
-			assert(SUCCEEDED(hr));
+			ASSERT(SUCCEEDED(hr));
 			back_buffer->GetDesc(&back_buffer_desc);
 			back_buffer_rtv_desc.Format = back_buffer_desc.Format;
 			hr = device->CreateRenderTargetView(back_buffer, &back_buffer_rtv_desc,
@@ -302,8 +358,27 @@ DWORD __stdcall game_loop(void *uncast_args)
 			back_buffer_size.h = back_buffer_desc.Height;
 		}
 
+		swap_input_buffers();
+
+		POINT point;
+		if (GetCursorPos(&point) && ScreenToClient(window, &point)) {
+			if (point.x < screen_size.x && point.y < screen_size.y) {
+				mouse_pos = { (u32)point.x, (u32)point.y };
+			} else {
+				mouse_pos = prev_mouse_pos;
+			}
+		} else {
+			mouse_pos = prev_mouse_pos;
+		}
+		input_front_buffer->mouse_pos = mouse_pos;
+		input_front_buffer->mouse_delta = {
+			(i32)mouse_pos.x - (i32)prev_mouse_pos.x,
+			(i32)mouse_pos.y - (i32)prev_mouse_pos.y
+		};
+		prev_mouse_pos = mouse_pos;
+
 		if (game_library != NULL) {
-			process_frame(game, &input, screen_size);
+			process_frame(game, input_front_buffer, screen_size);
 		}
 
 		imgui_begin(&imgui);
@@ -323,6 +398,9 @@ DWORD __stdcall game_loop(void *uncast_args)
 		context->ClearRenderTargetView(back_buffer_rtv, clear_color);
 
 		if (d3d11_init_success) {
+			if (!game_d3d11_set_screen_size(game, device, screen_size)) {
+				imgui_text(&imgui, "Failed to set screen size.");
+			}
 			render_d3d11(game, context, back_buffer_rtv);
 		}
 
@@ -338,16 +416,16 @@ DWORD __stdcall game_loop(void *uncast_args)
 			for (u64 i = 0; i < num_messages; ++i) {
 				size_t message_len;
 				HRESULT hr = info_queue->GetMessage(i, NULL, &message_len);
-				assert(SUCCEEDED(hr));
+				ASSERT(SUCCEEDED(hr));
 				D3D11_MESSAGE *message = (D3D11_MESSAGE*)malloc(message_len);
 				hr = info_queue->GetMessage(i, message, &message_len);
-				assert(SUCCEEDED(hr));
+				ASSERT(SUCCEEDED(hr));
 				imgui_text(&imgui, (char*)message->pDescription);
 				free(message);
 			}
 		}
 
-		imgui_d3d11_draw(&imgui, &imgui_d3d11, context, back_buffer_rtv, screen_size);
+		imgui_d3d11_draw(&imgui, context, back_buffer_rtv, screen_size);
 
 		swap_chain->Present(1, 0);
 	}
@@ -427,6 +505,10 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 
 	Game_Loop_Args game_loop_args = {};
 	game_loop_args.window = window;
+
+	input_buffer_pointer_lock = 0;
+	input_front_buffer = &input_buffers[0];
+	input_back_buffer  = &input_buffers[1];
 
 	HANDLE game_thread = CreateThread(
 		NULL,
