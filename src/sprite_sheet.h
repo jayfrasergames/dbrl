@@ -120,8 +120,8 @@ u32 sprite_sheet_renderer_id_in_pos(Sprite_Sheet_Renderer* renderer, v2_u32 pos)
 		v2_u32 sprite_size = instances->data.sprite_size;
 		for (u32 j = 0; j < num_instances; ++j) {
 			Sprite_Sheet_Instance *instance = &instances->instances[j];
-			v2_u32 top_left = { ((u32)instance->world_pos.x) * sprite_size.w,
-					    ((u32)instance->world_pos.y) * sprite_size.h };
+			v2_u32 top_left = { (u32)(instance->world_pos.x * (f32)sprite_size.w),
+					    (u32)(instance->world_pos.y * (f32)sprite_size.h) };
 			if (top_left.x > pos.x || top_left.y > pos.y) {
 				continue;
 			}

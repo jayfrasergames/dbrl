@@ -129,5 +129,13 @@ python ..\scripts\make_sprite_sheet.py ^
 	-n Tiles ^
 	--tile-width 24 ^
 	--tile-height 24
+python ..\scripts\make_sprite_sheet.py ^
+	-i ../assets/water_edges.png ^
+	-o ../src/gen/sprite_sheet_water_edges.data.h ^
+	-n Water_Edges ^
+	--tile-width 24 ^
+	--tile-height 24
+python ..\assets\make_metadata_header.py ^
+	-o ../src/gen/appearance.data.h
 
 EXIT /B 0

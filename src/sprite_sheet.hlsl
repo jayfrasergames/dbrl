@@ -18,6 +18,7 @@ struct VS_Sprite_Output
 	float2 tex_coord  : TEXCOORD;
 	uint   id         : SPRITE_ID;
 	float  depth      : DEPTH;
+	float4 color_mod  : COLOR_MOD;
 };
 
 struct PS_Sprite_Input
@@ -25,6 +26,7 @@ struct PS_Sprite_Input
 	float2 tex_coord  : TEXCOORD;
 	uint   id         : SPRITE_ID;
 	float  depth      : DEPTH;
+	float4 color_mod  : COLOR_MOD;
 };
 
 struct PS_Sprite_Output
@@ -65,6 +67,7 @@ VS_Sprite_Output vs_sprite(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 	output.tex_coord  = sprite_pos * constants.sprite_size  / constants.tex_size;
 	output.id         = instance.sprite_id;
 	output.depth      = (1.0f + instance.world_pos.y + instance.depth_offset) / 512.0f;
+	output.color_mod  = instance.color_mod;
 
 	return output;
 }
@@ -80,7 +83,7 @@ PS_Sprite_Output ps_sprite(VS_Sprite_Output input)
 		discard;
 	}
 
-	output.color = tex_color;
+	output.color = tex_color * input.color_mod;
 	output.id    = input.id;
 	output.depth = input.depth;
 

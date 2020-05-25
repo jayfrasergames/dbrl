@@ -8,6 +8,8 @@
   * game
     * movement
     * pretty walls/shadows etc
+      * shadows beneath walls
+      * water edges
     * enemies
     * cards
     * spells
@@ -21,6 +23,10 @@
     * global context/global error message
     * global context
         * thread local global context
+
+* bugs
+  * events not sent if mouse leaves window - need to turn off map dragging mode when re-entering the
+    window
 
 
 * decision

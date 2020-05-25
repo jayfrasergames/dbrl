@@ -311,29 +311,29 @@ DWORD __stdcall game_loop(void *uncast_args)
 		return 0;
 	}
 
-	Memory_Spec game_size = get_game_size();
-	Game* game = (Game*)malloc(game_size.size);
+	Memory_Spec program_size = get_program_size();
+	Program* program = (Program*)malloc(program_size.size);
 
-	ASSERT(((uintptr_t)game & (game_size.alignment - 1)) == 0);
+	ASSERT(((uintptr_t)program & (program_size.alignment - 1)) == 0);
 
 	v2_u32 screen_size, prev_screen_size;
 	get_screen_size(window, &screen_size);
 	prev_screen_size = screen_size;
 
-	game_init(game);
-	u8 d3d11_init_success = game_d3d11_init(game, device, screen_size);
+	program_init(program);
+	u8 d3d11_init_success = program_d3d11_init(program, device, screen_size);
 
 	v2_u32 back_buffer_size;
-	v2_u32 mouse_pos, prev_mouse_pos;
+	v2_u32 mouse_pos = { 0, 0 }, prev_mouse_pos = { 0, 0 };
 	for (u32 frame_number = 0; running; ++frame_number) {
 		if (was_library_written()) {
 			if (game_library != NULL) {
-				game_d3d11_free(game);
+				program_d3d11_free(program);
 				FreeLibrary(game_library);
 			}
 			load_game_functions();
 			if (game_library != NULL) {
-				d3d11_init_success = game_d3d11_init(game, device, screen_size);
+				d3d11_init_success = program_d3d11_init(program, device, screen_size);
 			} else {
 				d3d11_init_success = 0;
 			}
@@ -378,7 +378,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 		prev_mouse_pos = mouse_pos;
 
 		if (game_library != NULL) {
-			process_frame(game, input_front_buffer, screen_size);
+			process_frame(program, input_front_buffer, screen_size);
 		}
 
 		imgui_begin(&imgui);
@@ -398,10 +398,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 		context->ClearRenderTargetView(back_buffer_rtv, clear_color);
 
 		if (d3d11_init_success) {
-			if (!game_d3d11_set_screen_size(game, device, screen_size)) {
+			if (!program_d3d11_set_screen_size(program, device, screen_size)) {
 				imgui_text(&imgui, "Failed to set screen size.");
 			}
-			render_d3d11(game, context, back_buffer_rtv);
+			render_d3d11(program, context, back_buffer_rtv);
 		}
 
 		// render any d3d11 messages we may have

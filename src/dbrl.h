@@ -7,17 +7,17 @@
 
 #include "jfg/jfg_d3d11.h"
 
-struct Game;
+struct Program;
 
 #define GAME_FUNCTIONS \
 	/* start list */ \
-	GAME_FUNCTION(Memory_Spec, get_game_size) \
-	GAME_FUNCTION(void, game_init, Game *game) \
-	GAME_FUNCTION(u8, game_d3d11_init, Game *game, ID3D11Device *device, v2_u32 screen_size) \
-	GAME_FUNCTION(void, game_d3d11_free, Game *game) \
-	GAME_FUNCTION(u8, game_d3d11_set_screen_size, Game *game, ID3D11Device* device, v2_u32 screen_size) \
-	GAME_FUNCTION(void, process_frame, Game *game, Input *input, v2_u32 screen_size) \
-	GAME_FUNCTION(void, render_d3d11, Game *game, ID3D11DeviceContext *dc, ID3D11RenderTargetView* output_rtv) \
+	GAME_FUNCTION(Memory_Spec, get_program_size) \
+	GAME_FUNCTION(void, program_init, Program *program) \
+	GAME_FUNCTION(u8, program_d3d11_init, Program *program, ID3D11Device *device, v2_u32 screen_size) \
+	GAME_FUNCTION(void, program_d3d11_free, Program *program) \
+	GAME_FUNCTION(u8, program_d3d11_set_screen_size, Program *program, ID3D11Device* device, v2_u32 screen_size) \
+	GAME_FUNCTION(void, process_frame, Program *program, Input *input, v2_u32 screen_size) \
+	GAME_FUNCTION(void, render_d3d11, Program *program, ID3D11DeviceContext *dc, ID3D11RenderTargetView* output_rtv) \
 	/* end list */
 
 

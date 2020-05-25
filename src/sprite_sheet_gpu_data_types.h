@@ -25,6 +25,8 @@ struct Sprite_Sheet_Instance
 
 	U1 sprite_id;
 	F1 depth_offset;
+
+	F4 color_mod;
 };
 
 struct Sprite_Sheet_Highlight_Constant_Buffer
