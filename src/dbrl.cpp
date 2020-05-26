@@ -28,20 +28,100 @@ typedef u16 Entity_ID;
 // =============================================================================
 // game
 
+enum Brain_Type
+{
+	BRAIN_TYPE_NONE,
+	BRAIN_TYPE_PLAYER,
+	BRAIN_TYPE_RANDOM,
+};
+
+struct Brain
+{
+	Brain_Type type;
+};
+
+#define MAX_CHOICES 32
+
+enum Choice_Type
+{
+	CHOICE_START_TURN,
+};
+
+struct Choice
+{
+	Choice_Type type;
+	Entity_ID   entity_id;
+};
+
+enum Action_Type
+{
+	ACTION_NONE,
+	ACTION_MOVE,
+	ACTION_WAIT,
+};
+
+struct Action
+{
+	Action_Type type;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Pos start, end;
+		} move;
+	};
+};
+
+// Transactions
+
+enum Event_Type
+{
+	EVENT_MOVE,
+};
+
+struct Event
+{
+	Event_Type type;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Pos start, end;
+		} move;
+	};
+};
+
+#define MAX_EVENTS 10240
+struct Event_Buffer
+{
+	u32 num_events;
+	Event events[MAX_EVENTS];
+};
+
+enum Block_Flag
+{
+	BLOCK_WALK = 1 << 0,
+	BLOCK_SWIM = 1 << 1,
+	BLOCK_FLY  = 1 << 2,
+};
+
 struct Entity
 {
 	Entity_ID  id;
+	u16        block_mask;
 	Pos        pos;
 	Appearance appearance;
+	Brain      brain;
 };
 
-struct Game_State
+struct Game
 {
+	u32 current_entity;
 	u32 num_entities;
 	Entity entities[MAX_ENTITIES];
+	u32 choice_stack_idx;
+	Choice choice_stack[MAX_CHOICES];
 };
 
-void game_build_from_string(Game_State* game, char* str)
+void game_build_from_string(Game* game, char* str)
 {
 	Pos cur_pos = { 1, 1 };
 	u32 idx = 0;
@@ -52,30 +132,194 @@ void game_build_from_string(Game_State* game, char* str)
 			cur_pos.x = 1;
 			++cur_pos.y;
 			continue;
-		case '#':
-			game->entities[idx++] = { e_id++, cur_pos, APPEARANCE_WALL_WOOD };
+		case '#': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_WALL_WOOD;
+			e.brain.type = BRAIN_TYPE_NONE;
+			game->entities[idx++] = e;
 			break;
-		case 'x':
-			game->entities[idx++] = { e_id++, cur_pos, APPEARANCE_WALL_FANCY };
+		}
+		case 'x': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_WALL_FANCY;
+			e.brain.type = BRAIN_TYPE_NONE;
+			game->entities[idx++] = e;
 			break;
-		case '.':
-			game->entities[idx++] = { e_id++, cur_pos, APPEARANCE_FLOOR_ROCK };
+		}
+		case '.': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_SWIM;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_FLOOR_ROCK;
+			e.brain.type = BRAIN_TYPE_NONE;
+			game->entities[idx++] = e;
 			break;
-		case '@':
-			game->entities[idx++] = { e_id++, cur_pos, APPEARANCE_FLOOR_ROCK };
-			game->entities[idx++] = { e_id++, cur_pos, APPEARANCE_CREATURE_MALE_WIZARD };
+		}
+		case '@': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_SWIM;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_FLOOR_ROCK;
+			e.brain.type = BRAIN_TYPE_NONE;
+			game->entities[idx++] = e;
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.appearance = APPEARANCE_CREATURE_MALE_BERSERKER;
+			e.brain.type = BRAIN_TYPE_PLAYER;
+			game->entities[idx++] = e;
 			break;
-		case 'b':
-			game->entities[idx++] = { e_id++, cur_pos, APPEARANCE_FLOOR_ROCK };
-			game->entities[idx++] = { e_id++, cur_pos, APPEARANCE_CREATURE_BLACK_BAT };
+		}
+		case 'b': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_SWIM;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_FLOOR_ROCK;
+			e.brain.type = BRAIN_TYPE_NONE;
+			game->entities[idx++] = e;
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.appearance = APPEARANCE_CREATURE_RED_BAT;
+			e.brain.type = BRAIN_TYPE_RANDOM;
+			game->entities[idx++] = e;
 			break;
-		case '~':
-			game->entities[idx++] = { e_id++, cur_pos, APPEARANCE_LIQUID_WATER };
+		}
+		case '~': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_LIQUID_WATER;
+			e.brain.type = BRAIN_TYPE_NONE;
+			game->entities[idx++] = e;
 			break;
+		}
 		}
 		++cur_pos.x;
 	}
 	game->num_entities = idx;
+}
+
+Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
+{
+	for (u32 i = 0; i < game->num_entities; ++i) {
+		if (game->entities[i].id == entity_id) {
+			return &game->entities[i];
+		}
+	}
+}
+
+u8 game_is_passable(Game* game, Pos pos, u16 block_flag)
+{
+	u32 num_entities = game->num_entities;
+	Entity *e = game->entities;
+	u8 result = 0;
+	for (u32 i = 0; i < num_entities; ++i, ++e) {
+		if (e->pos.x == pos.x && e->pos.y == pos.y) {
+			if (e->block_mask & block_flag) {
+				return 0;
+			}
+			result = 1;
+		}
+	}
+	return result;
+}
+
+void game_do_action(Game* game, Action action, Event_Buffer* event_buffer)
+{
+	// maybe assert that the action matches the current choice?
+	switch (action.type) {
+	case ACTION_NONE:
+		break;
+	case ACTION_MOVE: {
+		Entity *e;
+		for (u32 i = 0; i < game->num_entities; ++i) {
+			e = &game->entities[i];
+			if (e->id == action.move.entity_id) {
+				break;
+			}
+		}
+		ASSERT(e->id == action.move.entity_id);
+		ASSERT(e->pos.x == action.move.start.x && e->pos.y == action.move.start.y);
+		e->pos = action.move.end;
+		Event event = {};
+		event.type = EVENT_MOVE;
+		event.move.entity_id = action.move.entity_id;
+		event.move.start = action.move.start;
+		event.move.end = action.move.end;
+		event_buffer->events[event_buffer->num_events++] = event;
+		--game->choice_stack_idx;
+		break;
+	}
+	case ACTION_WAIT:
+		--game->choice_stack_idx;
+		break;
+	}
+}
+
+void game_play_until_input_required(Game* game, Event_Buffer* event_buffer)
+{
+	u32 cur_entity = game->current_entity;
+	for (;;) {
+		Entity *e = &game->entities[cur_entity];
+		if (game->choice_stack_idx) {
+			switch (e->brain.type) {
+			case BRAIN_TYPE_NONE:
+				ASSERT(0);
+				break;
+			case BRAIN_TYPE_PLAYER:
+				goto need_player_input;
+			case BRAIN_TYPE_RANDOM: {
+				Choice choice = game->choice_stack[game->choice_stack_idx - 1];
+				ASSERT(choice.type == CHOICE_START_TURN);
+				Action action = {};
+				u32 num_poss = 0;
+				Pos poss[8] = {};
+				for (i8 dy = -1; dy <= 1; ++dy) {
+					for (i8 dx = -1; dx <= 1; ++dx) {
+						Pos new_pos = {};
+						new_pos.x = e->pos.x + dx;
+						new_pos.y = e->pos.y + dy;
+						if (game_is_passable(game, new_pos, BLOCK_FLY)) {
+							poss[num_poss++] = new_pos;
+						}
+					}
+				}
+				if (num_poss) {
+					action.type = ACTION_MOVE;
+					action.move.entity_id = choice.entity_id;
+					action.move.start = e->pos;
+					action.move.end = poss[rand() % num_poss];
+				} else {
+					Action action = {};
+					action.type = ACTION_WAIT;
+				}
+				game_do_action(game, action, event_buffer);
+				break;
+			}
+			}
+		}
+
+		do {
+			cur_entity = (cur_entity + 1) % game->num_entities;
+			e = &game->entities[cur_entity];
+		} while (!e->brain.type);
+		Choice choice = {};
+		choice.type = CHOICE_START_TURN;
+		choice.entity_id = e->id;
+		game->choice_stack[0] = choice;
+		game->choice_stack_idx = 1;
+	}
+need_player_input:
+	game->current_entity = cur_entity;
 }
 
 // =============================================================================
@@ -104,6 +348,7 @@ enum Anim_Type
 	ANIM_TILE_STATIC,
 	ANIM_WATER_EDGE,
 	ANIM_CREATURE_IDLE,
+	ANIM_MOVE,
 };
 
 struct Anim
@@ -117,6 +362,12 @@ struct Anim
 		struct {
 			v4_u8 color;
 		} water_edge;
+		struct {
+			f32 duration;
+			f32 start_time;
+			v2 start;
+			v2 end;
+		} move;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -132,7 +383,32 @@ struct World_Anim_State
 	Anim anims[MAX_ANIMS];
 };
 
-void world_anim_init(World_Anim_State* world_anim, Game_State* game)
+void world_anim_do_events(World_Anim_State* world_anim, Event_Buffer* event_buffer, f32 time)
+{
+	u32 num_anims = world_anim->num_anims;
+	u32 num_events = event_buffer->num_events;
+	for (u32 i = 0; i < num_events; ++i) {
+		Event *event = &event_buffer->events[i];
+		switch (event->type) {
+		case EVENT_MOVE:
+			for (u32 i = 0; i < num_anims; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->move.entity_id) {
+					anim->type = ANIM_MOVE;
+					anim->move.duration = 1.0f;
+					anim->move.start_time = time;
+					anim->move.start.x = (f32)event->move.start.x;
+					anim->move.start.y = (f32)event->move.start.y;
+					anim->move.end.x   = (f32)event->move.end.x;
+					anim->move.end.y   = (f32)event->move.end.y;
+				}
+			}
+			break;
+		}
+	}
+}
+
+void world_anim_init(World_Anim_State* world_anim, Game* game)
 {
 	u32 anim_idx = 0;
 
@@ -285,6 +561,21 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 	sprite_sheet_instances_reset(&draw->creatures);
 	sprite_sheet_instances_reset(&draw->water_edges);
 
+	// clear up finished animations
+	for (u32 i = 0; i < world_anim->num_anims; ++i) {
+		Anim *anim = &world_anim->anims[i];
+		switch (anim->type) {
+		case ANIM_MOVE:
+			if (anim->move.start_time + anim->move.duration <= time) {
+				anim->world_coords = anim->move.end;
+				anim->type = ANIM_CREATURE_IDLE;
+				anim->idle.offset = time;
+				anim->idle.duration = 0.8f + 0.4f * ((f32)rand()/(f32)RAND_MAX);
+			}
+			break;
+		}
+	}
+
 	// draw tile animations
 	for (u32 i = 0; i < world_anim->num_anims; ++i) {
 		Anim *anim = &world_anim->anims[i];
@@ -341,6 +632,37 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			sprite_sheet_instances_add(&draw->water_edges, water_edge);
 			break;
 		}
+		case ANIM_MOVE: {
+			f32 dt = (time - anim->move.start_time) / anim->move.duration;
+			v2 start = anim->move.start;
+			v2 end = anim->move.end;
+			v2 world_pos = {};
+			world_pos.x = start.x + (end.x - start.x) * dt;
+			world_pos.y = start.y + (end.y - start.y) * dt + (1.0f) * dt*(dt - 1.0f);
+
+			Sprite_Sheet_Instance ci = {};
+
+			world_pos.y -= 3.0f / 24.0f;
+			ci.sprite_pos = { 4.0f, 22.0f };
+			ci.world_pos = world_pos;
+			ci.sprite_id = anim->entity_id;
+			ci.depth_offset = anim->depth_offset;
+			ci.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
+			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			v2 sprite_pos = anim->sprite_coords;
+			if (dt > 0.5f) {
+				sprite_pos.y += 1.0f;
+			}
+			ci.sprite_pos = sprite_pos;
+			world_pos.y -= 3.0f / 24.0f;
+			ci.world_pos = world_pos;
+			ci.depth_offset += 1.0f;
+
+			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			break;
+		}
 		}
 	}
 }
@@ -356,7 +678,7 @@ enum Program_Input_State
 
 struct Program
 {
-	Game_State          game;
+	Game                game;
 	Program_Input_State program_input_state;
 	World_Anim_State    world_anim;
 	Draw                draw;
@@ -436,6 +758,9 @@ void program_init(Program* program)
 	world_anim_init(&program->world_anim, &program->game);
 	program->draw.camera.zoom = 4.0f;
 	program->draw.camera.world_center = { 0.0f, 0.0f };
+
+	Event_Buffer tmp_buffer = {};
+	game_play_until_input_required(&program->game, &tmp_buffer);
 }
 
 u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size)
@@ -681,6 +1006,38 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	f32 time = (f32)program->frame_number / 60.0f;
 	world_anim_draw(&program->world_anim, &program->draw, time);
 
+	v2_i32 world_mouse_pos = screen_pos_to_world_pos(&program->draw.camera,
+	                                                 screen_size,
+	                                                 input->mouse_pos);
+	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw.renderer,
+	                                                { (u32)world_mouse_pos.x,
+	                                                  (u32)world_mouse_pos.y });
+
+	Event_Buffer event_buffer = {};
+
+	Choice current_choice = program->game.choice_stack[program->game.choice_stack_idx - 1];
+	switch (current_choice.type) {
+	case CHOICE_START_TURN: {
+		Input_Button_Frame_Data lmb_data = input->button_data[INPUT_BUTTON_MOUSE_LEFT];
+		if (!(lmb_data.flags & INPUT_BUTTON_FLAG_ENDED_DOWN) && lmb_data.num_transitions) {
+			Entity *mover = game_get_entity_by_id(&program->game, current_choice.entity_id);
+			Entity *target = game_get_entity_by_id(&program->game, sprite_id);
+			Pos start = mover->pos;
+			Pos end = target->pos;
+			Action action = {};
+			action.type = ACTION_MOVE;
+			action.move.entity_id = current_choice.entity_id;
+			action.move.start = start;
+			action.move.end = end;
+			game_do_action(&program->game, action, &event_buffer);
+			game_play_until_input_required(&program->game, &event_buffer);
+			world_anim_do_events(&program->world_anim, &event_buffer, time);
+		}
+		break;
+	}
+	}
+
+
 	// do stuff
 	imgui_begin(&program->imgui);
 	imgui_set_text_cursor(&program->imgui, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
@@ -691,15 +1048,9 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Delta: (%d, %d)",
 	         input->mouse_delta.x, input->mouse_delta.y);
 	imgui_text(&program->imgui, buffer);
-	v2_i32 world_mouse_pos = screen_pos_to_world_pos(&program->draw.camera,
-	                                                 screen_size,
-	                                                 input->mouse_pos);
 	snprintf(buffer, ARRAY_SIZE(buffer), "Mouse world pos: (%d, %d)",
 	         world_mouse_pos.x, world_mouse_pos.y);
 	imgui_text(&program->imgui, buffer);
-	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw.renderer,
-	                                                { (u32)world_mouse_pos.x,
-	                                                  (u32)world_mouse_pos.y });
 	sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
 	snprintf(buffer, ARRAY_SIZE(buffer), "Sprite ID: %u", sprite_id);
 	imgui_text(&program->imgui, buffer);
