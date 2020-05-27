@@ -1,25 +1,20 @@
 
 * tasks:
-  * player move should respect walls
-  * character shadow shouldn't bounce in move
   * make constants (e.g. bounce duration) tunable with IMGUI in something like constants.edit.h
-  * Z ordering for player being drawn behind wall
   * game state animating - block input
   * transactions (can leave till later)
 
 
 * features
   * game
-    * movement
     * pretty walls/shadows etc
-      * shadows beneath walls
-      * water edges
-    * enemies
+      * shadows from floor to water
     * cards
     * spells
   * library
+    * imgui
+      * display log
     * input
-    * logging
     * random numbers
     * math functions
     * dll reloading - don't reload if compile unsuccessful (i.e. don't write "written_library" in that case)
