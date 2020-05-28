@@ -85,12 +85,15 @@ struct Action
 
 enum Event_Type
 {
+	EVENT_NONE,
 	EVENT_MOVE,
 };
 
 struct Event
 {
 	Event_Type type;
+	f32 time;
+	u32 block_id;
 	union {
 		struct {
 			Entity_ID entity_id;
@@ -102,9 +105,19 @@ struct Event
 #define MAX_EVENTS 10240
 struct Event_Buffer
 {
-	u32 num_events;
+	u32   num_events;
 	Event events[MAX_EVENTS];
 };
+
+u8 event_type_is_blocking(Event_Type type)
+{
+	switch (type) {
+	case EVENT_NONE: return 0;
+	case EVENT_MOVE: return 0;
+	}
+	ASSERT(0);
+	return 1;
+}
 
 enum Block_Flag
 {
@@ -123,9 +136,12 @@ struct Entity
 	Brain      brain;
 };
 
+// maybe better called "world state"?
 struct Game
 {
 	u32 current_entity;
+	u32 cur_block_id;
+	f32 block_time;
 	u32 num_entities;
 	Entity entities[MAX_ENTITIES];
 	u32 choice_stack_idx;
@@ -274,6 +290,8 @@ u8 game_do_action(Game* game, Action action, Event_Buffer* event_buffer)
 		}
 		e->pos = action.move.end;
 		Event event = {};
+		event.time = game->block_time;
+		event.block_id = game->cur_block_id;
 		event.type = EVENT_MOVE;
 		event.move.entity_id = action.move.entity_id;
 		event.move.start = action.move.start;
@@ -333,6 +351,9 @@ void game_play_until_input_required(Game* game, Event_Buffer* event_buffer)
 			}
 		}
 
+		// advance to next turn
+		++game->cur_block_id;
+		game->block_time = 0.0f;
 		do {
 			cur_entity = (cur_entity + 1) % game->num_entities;
 			e = &game->entities[cur_entity];
@@ -401,12 +422,80 @@ struct Anim
 };
 
 #define MAX_ANIMS (5 * MAX_ENTITIES)
+#define MAX_ANIM_BLOCKS 1024
 
 struct World_Anim_State
 {
-	u32  num_anims;
-	Anim anims[MAX_ANIMS];
+	u32          num_anims;
+	u32          num_active_anims;
+	Anim         anims[MAX_ANIMS];
+	f32          dynamic_anim_start_time;
+	u32          anim_block_number;
+	u32          total_anim_blocks;
+	u32          event_buffer_idx;
+	Event_Buffer events_to_be_animated;
 };
+
+void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Event_Buffer* event_buffer)
+{
+	u32 num_events = event_buffer->num_events;
+	u32 cur_block_number = 0;
+	Event_Buffer *dest = &world_anim->events_to_be_animated;
+	u8 prev_event_is_blocking = 1;
+	for (u32 i = 0; i < num_events; ++i) {
+		Event *cur_event = &event_buffer->events[i];
+		u8 create_new_block = prev_event_is_blocking || event_type_is_blocking(cur_event->type);
+		prev_event_is_blocking = event_type_is_blocking(cur_event->type);
+		if (create_new_block) {
+			++cur_block_number;
+		}
+		dest->events[i] = *cur_event;
+		dest->events[i].block_id = cur_block_number;
+	}
+	world_anim->anim_block_number = 1;
+	world_anim->total_anim_blocks = cur_block_number;
+	world_anim->event_buffer_idx = 0;
+	dest->num_events = num_events;
+}
+
+void world_anim_animate_next_event_block(World_Anim_State* world_anim)
+{
+	u32 num_anims = world_anim->num_anims;
+	u32 event_idx = world_anim->event_buffer_idx;
+	u32 num_events = world_anim->events_to_be_animated.num_events;
+	u32 cur_block_id = world_anim->anim_block_number++;
+	Event *events = world_anim->events_to_be_animated.events;
+
+	while (event_idx < num_events && events[event_idx].block_id == cur_block_id) {
+		Event *event = &events[event_idx];
+		switch (event->type) {
+		case EVENT_MOVE:
+			for (u32 i = 0; i < num_anims; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->move.entity_id) {
+					anim->type = ANIM_MOVE;
+					anim->move.duration = ANIM_MOVE_DURATION;
+					anim->move.start_time = event->time;
+					anim->move.start.x = (f32)event->move.start.x;
+					anim->move.start.y = (f32)event->move.start.y;
+					anim->move.end.x   = (f32)event->move.end.x;
+					anim->move.end.y   = (f32)event->move.end.y;
+					++world_anim->num_active_anims;
+				}
+			}
+			break;
+		}
+		++event_idx;
+	}
+
+	world_anim->event_buffer_idx = event_idx;
+}
+
+u8 world_anim_is_animating(World_Anim_State* world_anim)
+{
+	return world_anim->num_active_anims
+	    || world_anim->anim_block_number < world_anim->total_anim_blocks;
+}
 
 void world_anim_do_events(World_Anim_State* world_anim, Event_Buffer* event_buffer, f32 time)
 {
@@ -593,20 +682,32 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 	sprite_sheet_instances_reset(&draw->creatures);
 	sprite_sheet_instances_reset(&draw->water_edges);
 
+	f32 dyn_time = time - world_anim->dynamic_anim_start_time;
+
 	// clear up finished animations
 	for (u32 i = 0; i < world_anim->num_anims; ++i) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
 		case ANIM_MOVE:
-			if (anim->move.start_time + anim->move.duration <= time) {
+			if (anim->move.start_time + anim->move.duration <= dyn_time) {
 				anim->world_coords = anim->move.end;
 				anim->type = ANIM_CREATURE_IDLE;
 				anim->idle.offset = time;
 				anim->idle.duration = 0.8f + 0.4f * ((f32)rand()/(f32)RAND_MAX);
+				--world_anim->num_active_anims;
 			}
 			break;
 		}
 	}
+
+	// prepare next events if we're still animating
+	if (world_anim->num_active_anims == 0
+	    && world_anim->anim_block_number <= world_anim->total_anim_blocks) {
+		world_anim_animate_next_event_block(world_anim);
+		world_anim->dynamic_anim_start_time = time;
+		dyn_time = 0.0f;
+	}
+
 
 	// draw tile animations
 	for (u32 i = 0; i < world_anim->num_anims; ++i) {
@@ -665,7 +766,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			break;
 		}
 		case ANIM_MOVE: {
-			f32 dt = (time - anim->move.start_time) / anim->move.duration;
+			f32 dt = (dyn_time - anim->move.start_time) / anim->move.duration;
 			v2 start = anim->move.start;
 			v2 end = anim->move.end;
 			v2 world_pos = {};
@@ -755,45 +856,46 @@ void program_init(Program* program)
 
 	game_build_from_string(&program->game,
 		"##########################################\n"
-		"#.............#..........................#\n"
-		"#..@...#...b..#....b.....................#\n"
+		"#.b.b.........#..........................#\n"
+		"#..@...#......#..........................#\n"
 		"#.....###.....#.........###..............#\n"
-		"#....#####....#.........#x#.......b......#\n"
+		"#....#####....#.........#x#..............#\n"
 		"#...##.#.##...#.......###x#.#............#\n"
 		"#..##..#..##..#.......#xxxxx#............#\n"
 		"#......#......#.......###x###............#\n"
 		"#......#......#.........#x#..............#\n"
-		"#...b..#...b............###..............#\n"
+		"#......#................###..............#\n"
 		"#......#......#..........................#\n"
-		"#......#......#....b.......#.............#\n"
+		"#......#......#............#.............#\n"
 		"#......#......#..........................#\n"
 		"#~~~...#.....x#..............#...........#\n"
 		"#~~~~..#.....x#..........................#\n"
 		"#~~~~~~..xxxxx#............#...#.........#\n"
 		"##########x####..........................#\n"
 		"#.........x...#........#.................#\n"
-		"#......b..x...#.......##.................#\n"
+		"#.........x...#.......##.................#\n"
 		"#.............#......##.##...............#\n"
 		"#.............#.......##.................#\n"
 		"#.............#........#.................#\n"
-		"#...b......b.................b...........#\n"
+		"#........................~~..............#\n"
+		"#.............#.........~~~~~............#\n"
+		"#.............#.........~...~~~..........#\n"
+		"#.............#.........~~.~~.~..........#\n"
+		"#.............#............~.~...........#\n"
+		"#.............#...........~~~~...........#\n"
 		"#.............#..........................#\n"
-		"#.............#...b...............b......#\n"
-		"#.............#..........................#\n"
-		"#......b......#..........................#\n"
-		"#.............#...b......................#\n"
-		"#.............#..............b...........#\n"
 		"#.............#..........................#\n"
 		"#.............#..........................#\n"
 		"#.............#..........................#\n"
 		"##########################################\n");
 
-	world_anim_init(&program->world_anim, &program->game);
 	program->draw.camera.zoom = 4.0f;
 	program->draw.camera.world_center = { 0.0f, 0.0f };
 
 	Event_Buffer tmp_buffer = {};
 	game_play_until_input_required(&program->game, &tmp_buffer);
+
+	world_anim_init(&program->world_anim, &program->game);
 }
 
 u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size)
@@ -1048,29 +1150,33 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 
 	Event_Buffer event_buffer = {};
 
-	Choice current_choice = program->game.choice_stack[program->game.choice_stack_idx - 1];
-	switch (current_choice.type) {
-	case CHOICE_START_TURN: {
-		Input_Button_Frame_Data lmb_data = input->button_data[INPUT_BUTTON_MOUSE_LEFT];
-		if (!(lmb_data.flags & INPUT_BUTTON_FLAG_ENDED_DOWN) && lmb_data.num_transitions
-		    && sprite_id) {
-			Entity *mover = game_get_entity_by_id(&program->game, current_choice.entity_id);
-			Entity *target = game_get_entity_by_id(&program->game, sprite_id);
-			Pos start = mover->pos;
-			Pos end = target->pos;
-			Action action = {};
-			action.type = ACTION_MOVE;
-			action.move.entity_id = current_choice.entity_id;
-			action.move.start = start;
-			action.move.end = end;
-			u8 did_action = game_do_action(&program->game, action, &event_buffer);
-			if (did_action) {
-				game_play_until_input_required(&program->game, &event_buffer);
-				world_anim_do_events(&program->world_anim, &event_buffer, time);
+	if (!world_anim_is_animating(&program->world_anim)) {
+		Choice current_choice = program->game.choice_stack[program->game.choice_stack_idx - 1];
+		switch (current_choice.type) {
+		case CHOICE_START_TURN: {
+			Input_Button_Frame_Data lmb_data = input->button_data[INPUT_BUTTON_MOUSE_LEFT];
+			if (!(lmb_data.flags & INPUT_BUTTON_FLAG_ENDED_DOWN) && lmb_data.num_transitions
+			    && sprite_id) {
+				Entity *mover = game_get_entity_by_id(&program->game,
+				                                      current_choice.entity_id);
+				Entity *target = game_get_entity_by_id(&program->game, sprite_id);
+				Pos start = mover->pos;
+				Pos end = target->pos;
+				Action action = {};
+				action.type = ACTION_MOVE;
+				action.move.entity_id = current_choice.entity_id;
+				action.move.start = start;
+				action.move.end = end;
+				u8 did_action = game_do_action(&program->game, action, &event_buffer);
+				if (did_action) {
+					game_play_until_input_required(&program->game, &event_buffer);
+					world_anim_build_events_to_be_animated(&program->world_anim,
+					                                       &event_buffer);
+				}
 			}
+			break;
 		}
-		break;
-	}
+		}
 	}
 
 

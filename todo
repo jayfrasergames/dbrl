@@ -1,9 +1,19 @@
 
 * tasks:
   * make constants (e.g. bounce duration) tunable with IMGUI in something like constants.edit.h
-  * game state animating - block input
-  * transactions (can leave till later)
 
+
+  * card interface
+  * sound
+
+* scenarios
+  * fireball hits barrels, chain reaction
+  * movement
+    * enter trap (trap explodes once fully entered)
+    * stuck in web (game allows "move action", web prevents movement)
+    * hit invisible wall (game allows "move action", player gets knocked back)
+    * tile falls after leaving space
+  * draw card and take poison damage
 
 * features
   * game
