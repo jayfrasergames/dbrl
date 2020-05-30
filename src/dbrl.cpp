@@ -4,6 +4,7 @@
 #include "jfg/jfg_math.h"
 #include "jfg/log.h"
 #include "sprite_sheet.h"
+#include "card_render.h"
 #include "pixel_art_upsampler.h"
 
 #include <stdio.h>  // XXX - for snprintf
@@ -369,6 +370,53 @@ need_player_input:
 }
 
 // =============================================================================
+// cards
+
+struct Hand_Params
+{
+	// in
+	f32 height;
+	f32 border;
+	f32 bottom;
+	f32 top;
+	f32 separation;
+	f32 num_cards;
+
+	// out
+	f32 radius;
+	f32 theta;
+	v2  center;
+};
+
+void hand_params_calc(Hand_Params* params)
+{
+	f32 h = params->bottom - params->top;
+	f32 target = ((params->num_cards - 1.0f) * params->separation) / h;
+
+	f32 theta_low = 0;
+	f32 theta_high = PI / 2.0f;
+	while (theta_high - theta_low > 1e-6f) {
+		f32 theta_mid = (theta_high + theta_low) / 2.0f;
+		f32 val = theta_mid / (1.0f - sinf(theta_mid / 2.0f));
+		if (val > target) {
+			theta_high = theta_mid;
+		} else {
+			theta_low = theta_mid;
+		}
+	}
+	f32 theta = (theta_low + theta_high) / 2.0f;
+	f32 radius = ((params->num_cards - 1.0f) * params->separation) / theta;
+
+	v2 center = {};
+	center.x = 0.0f;
+	center.y = radius + params->top;
+
+	params->radius = radius;
+	params->theta  = theta;
+	params->center = center;
+}
+
+// =============================================================================
 // draw
 
 struct Camera
@@ -384,6 +432,7 @@ struct Draw
 	Sprite_Sheet_Instances tiles;
 	Sprite_Sheet_Instances creatures;
 	Sprite_Sheet_Instances water_edges;
+	Card_Render card_render;
 };
 
 // =============================================================================
@@ -977,6 +1026,10 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 		goto error_init_imgui;
 	}
 
+	if (!card_render_d3d11_init(&program->draw.card_render, device)) {
+		goto error_init_card_render;
+	}
+
 	program->max_screen_size      = screen_size;
 	program->d3d11.output_texture = output_texture;
 	program->d3d11.output_uav     = output_uav;
@@ -987,6 +1040,8 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 
 	return 1;
 
+	card_render_d3d11_free(&program->draw.card_render);
+error_init_card_render:
 	imgui_d3d11_free(&program->imgui);
 error_init_imgui:
 	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
@@ -1016,6 +1071,7 @@ error_init_output_texture:
 
 void program_d3d11_free(Program* program)
 {
+	card_render_d3d11_free(&program->draw.card_render);
 	imgui_d3d11_free(&program->imgui);
 	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
 	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
@@ -1180,6 +1236,41 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 
+	// deal with card GUI
+	{
+		card_render_reset(&program->draw.card_render);
+
+		f32 t = time;
+
+		u32 num_cards = 10;
+
+		Hand_Params params = {};
+		params.height = 1.0f;
+		params.border = 0.1f;
+		params.top = 0.1f;
+		params.bottom = 0.9f;
+		params.separation = 0.2f;
+		params.num_cards = (f32)num_cards;
+
+		hand_params_calc(&params);
+
+		for (u32 i = 0; i < num_cards; ++i) {
+			v2 card_pos = {};
+			f32 angle = PI / 2.0f + params.theta * (0.5f - ((f32)i / (f32)(num_cards - 1)));
+			card_pos.x = params.radius * cosf(angle) + params.center.x;
+			card_pos.y = params.radius * sinf(angle) - params.center.y;
+
+			Card_Render_Instance instance = {};
+			instance.screen_rotation = angle - PI / 2.0f;
+			instance.screen_pos = card_pos;
+			instance.card_pos = { 1.0f, 0.0f };
+			card_render_add_instance(&program->draw.card_render, instance);
+		}
+
+		card_render_z_sort(&program->draw.card_render);
+	}
+
+
 	// do stuff
 	imgui_begin(&program->imgui);
 	imgui_set_text_cursor(&program->imgui, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
@@ -1229,6 +1320,11 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	                               world_tl,
 	                               screen_size_u32,
 	                               { 0, 0 });
+
+	card_render_d3d11_draw(&program->draw.card_render,
+	                       dc,
+	                       screen_size_u32,
+	                       program->d3d11.output_rtv);
 
 	imgui_d3d11_draw(&program->imgui, dc, program->d3d11.output_rtv, screen_size_u32);
 

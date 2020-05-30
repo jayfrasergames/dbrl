@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include "jfg/jfg_d3d11.h"
+#include "jfg/log.h"
 #include "jfg/imgui.h"
 
 #include <dxgi1_2.h>
@@ -325,6 +326,9 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	v2_u32 back_buffer_size;
 	v2_u32 mouse_pos = { 0, 0 }, prev_mouse_pos = { 0, 0 };
+
+	Log d3d11_log = {};
+
 	for (u32 frame_number = 0; running; ++frame_number) {
 		if (was_library_written()) {
 			if (game_library != NULL) {
@@ -405,14 +409,16 @@ DWORD __stdcall game_loop(void *uncast_args)
 		}
 
 		// render any d3d11 messages we may have
-		{
-			u64 num_messages = info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
+		u64 num_messages = info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
+		if (num_messages) {
 			char buffer[1024] = {};
 			snprintf(buffer,
 			         ARRAY_SIZE(buffer),
-			         "There are %llu D3D11 messages",
+			         "Frame %u: There are %llu D3D11 messages",
+			         frame_number,
 			         num_messages);
-			imgui_text(&imgui, buffer);
+			// imgui_text(&imgui, buffer);
+			log(&d3d11_log, buffer);
 			for (u64 i = 0; i < num_messages; ++i) {
 				size_t message_len;
 				HRESULT hr = info_queue->GetMessage(i, NULL, &message_len);
@@ -420,8 +426,23 @@ DWORD __stdcall game_loop(void *uncast_args)
 				D3D11_MESSAGE *message = (D3D11_MESSAGE*)malloc(message_len);
 				hr = info_queue->GetMessage(i, message, &message_len);
 				ASSERT(SUCCEEDED(hr));
-				imgui_text(&imgui, (char*)message->pDescription);
+				// imgui_text(&imgui, (char*)message->pDescription);
+				log(&d3d11_log, (char*)message->pDescription);
 				free(message);
+			}
+			info_queue->ClearStoredMessages();
+		}
+
+		// draw log
+		{
+			u32 start = 0;
+			u32 end = d3d11_log.cur_line;
+			if (end > LOG_MAX_LINES) {
+				start = end - LOG_MAX_LINES;
+			}
+
+			for (u32 i = start; i < end; ++i) {
+				imgui_text(&imgui, log_get_line(&d3d11_log, i));
 			}
 		}
 
@@ -512,7 +533,7 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 
 	HANDLE game_thread = CreateThread(
 		NULL,
-		1024 * 1024,
+		10 * 1024 * 1024,
 		game_loop,
 		&game_loop_args,
 		0,

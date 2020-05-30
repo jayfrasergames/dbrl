@@ -97,6 +97,11 @@ fxc /Fh gen\pass_through_dxbc_vertex_shader.data.h ^
 fxc /Fh gen\pass_through_dxbc_pixel_shader.data.h ^
 	/E ps_pass_through /Vn PASS_THROUGH_PS /T ps_5_0 pass_through_output.hlsl
 
+fxc /Fh gen\card_render_dxbc_vertex_shader.data.h ^
+	/E vs_card /Vn CARD_RENDER_DXBC_VS /T vs_5_0 card_render.hlsl
+fxc /Fh gen\card_render_dxbc_pixel_shader.data.h ^
+	/E ps_card /Vn CARD_RENDER_DXBC_PS /T ps_5_0 card_render.hlsl
+
 popd
 
 EXIT /B 0
@@ -137,5 +142,7 @@ python ..\scripts\make_sprite_sheet.py ^
 	--tile-height 24
 python ..\assets\make_metadata_header.py ^
 	-o ../src/gen/appearance.data.h
+python ..\assets\build_cards.py ^
+	-o ../src/gen/cards.data.h
 
 EXIT /B 0
