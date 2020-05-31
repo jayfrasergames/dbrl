@@ -48,8 +48,9 @@ VS_Card_Output vs_card(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 	instance.screen_pos.x *= constants.screen_size.y / constants.screen_size.x;
 
 	// float2 card_size = constants.card_size / constants.screen_size;
+	float2 card_size = float2(constants.card_size.x / constants.card_size.y, 1.0f);
 
-	float2 pos = constants.zoom * vertex.pos * constants.card_size;
+	float2 pos = 0.5f * constants.zoom * vertex.pos * card_size;
 
 	float ch = cos(instance.horizontal_rotation);
 	float cv = cos(instance.vertical_rotation);
@@ -61,8 +62,8 @@ VS_Card_Output vs_card(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 	float s = sin(instance.screen_rotation);
 	pos = mul(float2x2(c, -s, s, c), pos);
 
-	// pos.x *= constants.screen_size.y / constants.screen_size.x;
-	pos /= constants.screen_size;
+	pos.x *= constants.screen_size.y / constants.screen_size.x;
+	// pos /= constants.screen_size;
 
 	pos += instance.screen_pos;
 	float2 card_pos = front_facing * instance.card_pos + (vertex.pos * float2(1.0f, -1.0f) + 1.0f) / 2.0f;

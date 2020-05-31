@@ -6,6 +6,8 @@
   * card interface
   * sound
 
+  * make zoom level screen size independent
+
 * scenarios
   * fireball hits barrels, chain reaction
   * movement
@@ -38,6 +40,7 @@
   * events not sent if mouse leaves window - need to turn off map dragging mode when re-entering the
     window
   * pixel art upsampler handle fractional input_size/input_offsets
+  * card renderer to do proper anti aliasing/alpha transparency (also mip mapping)
 
 
 * decision

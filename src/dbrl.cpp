@@ -3,6 +3,7 @@
 #include "jfg/imgui.h"
 #include "jfg/jfg_math.h"
 #include "jfg/log.h"
+#include "jfg/debug_line_draw.h"
 #include "sprite_sheet.h"
 #include "card_render.h"
 #include "pixel_art_upsampler.h"
@@ -375,6 +376,7 @@ need_player_input:
 struct Hand_Params
 {
 	// in
+	f32 screen_width; // x in range [-screen_width, screen_width]
 	f32 height;
 	f32 border;
 	f32 bottom;
@@ -390,15 +392,17 @@ struct Hand_Params
 
 void hand_params_calc(Hand_Params* params)
 {
-	f32 h = params->bottom - params->top;
+	f32 h = params->top - params->bottom;
 	f32 target = ((params->num_cards - 1.0f) * params->separation) / h;
+
+	f32 max_width = params->screen_width - params->border;
 
 	f32 theta_low = 0;
 	f32 theta_high = PI / 2.0f;
 	while (theta_high - theta_low > 1e-6f) {
 		f32 theta_mid = (theta_high + theta_low) / 2.0f;
-		f32 val = theta_mid / (1.0f - sinf(theta_mid / 2.0f));
-		if (val > target) {
+		f32 val = theta_mid / (1.0f - cosf(theta_mid / 2.0f));
+		if (val < target) {
 			theta_high = theta_mid;
 		} else {
 			theta_low = theta_mid;
@@ -407,9 +411,27 @@ void hand_params_calc(Hand_Params* params)
 	f32 theta = (theta_low + theta_high) / 2.0f;
 	f32 radius = ((params->num_cards - 1.0f) * params->separation) / theta;
 
+	if (radius * sinf(theta / 2.0f) > max_width) {
+		target = max_width / h;
+		theta_low = 0;
+		theta_high = PI / 2.0f;
+		while (theta_high - theta_low > 1e-6f) {
+			f32 theta_mid = (theta_high + theta_low) / 2.0f;
+			f32 val = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f));
+			if (val < target) {
+				theta_high = theta_mid;
+			} else {
+				theta_low = theta_mid;
+			}
+		}
+		theta = (theta_high + theta_low) / 2.0f;
+		radius = max_width / sinf(theta / 2.0f);
+		params->separation = radius * theta / (params->num_cards - 1.0f);
+	}
+
 	v2 center = {};
 	center.x = 0.0f;
-	center.y = radius + params->top;
+	center.y = params->top - radius;
 
 	params->radius = radius;
 	params->theta  = theta;
@@ -433,6 +455,7 @@ struct Draw
 	Sprite_Sheet_Instances creatures;
 	Sprite_Sheet_Instances water_edges;
 	Card_Render card_render;
+	Debug_Line card_debug_line;
 };
 
 // =============================================================================
@@ -1030,6 +1053,10 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 		goto error_init_card_render;
 	}
 
+	if (!debug_line_d3d11_init(&program->draw.card_debug_line, device)) {
+		goto error_init_debug_line;
+	}
+
 	program->max_screen_size      = screen_size;
 	program->d3d11.output_texture = output_texture;
 	program->d3d11.output_uav     = output_uav;
@@ -1040,6 +1067,8 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 
 	return 1;
 
+	debug_line_d3d11_free(&program->draw.card_debug_line);
+error_init_debug_line:
 	card_render_d3d11_free(&program->draw.card_render);
 error_init_card_render:
 	imgui_d3d11_free(&program->imgui);
@@ -1071,6 +1100,7 @@ error_init_output_texture:
 
 void program_d3d11_free(Program* program)
 {
+	debug_line_d3d11_free(&program->draw.card_debug_line);
 	card_render_d3d11_free(&program->draw.card_render);
 	imgui_d3d11_free(&program->imgui);
 	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
@@ -1239,26 +1269,54 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	// deal with card GUI
 	{
 		card_render_reset(&program->draw.card_render);
+		debug_line_reset(&program->draw.card_debug_line);
+
+		float ratio = (f32)screen_size.x / (f32)screen_size.y;
+		program->draw.card_debug_line.constants.top_left     = { -ratio,  1.0f };
+		program->draw.card_debug_line.constants.bottom_right = {  ratio, -1.0f };
 
 		f32 t = time;
 
-		u32 num_cards = 10;
+		u32 num_cards = 20;
 
 		Hand_Params params = {};
-		params.height = 1.0f;
-		params.border = 0.1f;
-		params.top = 0.1f;
-		params.bottom = 0.9f;
+		params.screen_width = ratio;
+		params.height = 0.5f;
+		params.border = 0.4;
+		params.top = -0.7f;
+		params.bottom = -0.9f;
 		params.separation = 0.2f;
 		params.num_cards = (f32)num_cards;
 
 		hand_params_calc(&params);
 
+		// draw some debug stuff
+		if (1) {
+			Debug_Line_Instance line = {};
+			line.color = { 1.0f, 1.0f, 0.0f, 1.0f };
+
+			line.start = { -ratio, params.bottom };
+			line.end   = {  ratio, params.bottom };
+			debug_line_add_instance(&program->draw.card_debug_line, line);
+
+			line.start = { -ratio, params.top };
+			line.end   = {  ratio, params.top };
+			debug_line_add_instance(&program->draw.card_debug_line, line);
+
+			line.start = { -ratio + params.border, -1.0f };
+			line.end   = { -ratio + params.border, -1.0f + params.height };
+			debug_line_add_instance(&program->draw.card_debug_line, line);
+
+			line.start = { ratio - params.border, -1.0f };
+			line.end   = { ratio - params.border, -1.0f + params.height };
+			debug_line_add_instance(&program->draw.card_debug_line, line);
+		}
+
 		for (u32 i = 0; i < num_cards; ++i) {
 			v2 card_pos = {};
 			f32 angle = PI / 2.0f + params.theta * (0.5f - ((f32)i / (f32)(num_cards - 1)));
 			card_pos.x = params.radius * cosf(angle) + params.center.x;
-			card_pos.y = params.radius * sinf(angle) - params.center.y;
+			card_pos.y = params.radius * sinf(angle) + params.center.y;
 
 			Card_Render_Instance instance = {};
 			instance.screen_rotation = angle - PI / 2.0f;
@@ -1267,8 +1325,38 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 			card_render_add_instance(&program->draw.card_render, instance);
 		}
 
+		// add draw pile card
+		{
+			Card_Render_Instance instance = {};
+			instance.screen_rotation = 0.0f;
+			instance.screen_pos = { -ratio + params.border / 2.0f,
+			                        -1.0f + params.height / 2.0f };
+			instance.card_pos = { 0.0f, 0.0f };
+			card_render_add_instance(&program->draw.card_render, instance);
+		}
+
+		// add discard pile card
+		{
+			Card_Render_Instance instance = {};
+			instance.screen_rotation = 0.0f;
+			instance.screen_pos = { ratio - params.border / 2.0f,
+			                        -1.0f + params.height / 2.0f };
+			instance.card_pos = { 1.0f, 0.0f };
+			card_render_add_instance(&program->draw.card_render, instance);
+		}
+
 		card_render_z_sort(&program->draw.card_render);
+
+		card_render_draw_debug_lines(&program->draw.card_render, &program->draw.card_debug_line);
 	}
+
+	// TODO -- get card id from mouse pos
+	v2 card_mouse_pos = { (f32)input->mouse_pos.x / (f32)screen_size.x,
+	                      (f32)input->mouse_pos.y / (f32)screen_size.y };
+	card_mouse_pos.x = (card_mouse_pos.x * 2.0f - 1.0f) * ((f32)screen_size.x / (f32)screen_size.y);
+	card_mouse_pos.y = 1.0f - 2.0f * card_mouse_pos.y;
+	u32 selected_card_id = card_render_get_card_id_from_mouse_pos(&program->draw.card_render,
+	                                                              card_mouse_pos);
 
 
 	// do stuff
@@ -1286,6 +1374,11 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	imgui_text(&program->imgui, buffer);
 	sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
 	snprintf(buffer, ARRAY_SIZE(buffer), "Sprite ID: %u", sprite_id);
+	imgui_text(&program->imgui, buffer);
+	snprintf(buffer, ARRAY_SIZE(buffer), "Card mouse pos: (%f, %f)",
+	         card_mouse_pos.x, card_mouse_pos.y);
+	imgui_text(&program->imgui, buffer);
+	snprintf(buffer, ARRAY_SIZE(buffer), "Selected Card ID: %u", selected_card_id);
 	imgui_text(&program->imgui, buffer);
 }
 
@@ -1325,6 +1418,7 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	                       dc,
 	                       screen_size_u32,
 	                       program->d3d11.output_rtv);
+	debug_line_d3d11_draw(&program->draw.card_debug_line, dc, program->d3d11.output_rtv);
 
 	imgui_d3d11_draw(&program->imgui, dc, program->d3d11.output_rtv, screen_size_u32);
 

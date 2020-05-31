@@ -22,6 +22,8 @@ struct Card_Render_Instance
 
 	F2 screen_pos;
 	F2 card_pos;
+
+	U1 card_id; // not used in shader
 };
 
 #endif

@@ -41,6 +41,11 @@ struct Card_Render
 void card_render_reset(Card_Render* render);
 void card_render_add_instance(Card_Render* render, Card_Render_Instance instance);
 void card_render_z_sort(Card_Render* render);
+u32 card_render_get_card_id_from_mouse_pos(Card_Render* render, v2 mouse_pos);
+
+#ifdef JFG_DEBUG_LINE_DRAW_H
+void card_render_draw_debug_lines(Card_Render* render, Debug_Line* debug_line);
+#endif
 
 #ifndef JFG_HEADER_ONLY
 void card_render_reset(Card_Render* render)
@@ -51,6 +56,8 @@ void card_render_reset(Card_Render* render)
 void card_render_add_instance(Card_Render* render, Card_Render_Instance instance)
 {
 	ASSERT(render->num_instances < CARD_RENDER_MAX_INSTANCES);
+	// XXX -- tmp just for testing
+	instance.card_id = render->num_instances;
 	render->instances[render->num_instances++] = instance;
 }
 
@@ -58,6 +65,99 @@ void card_render_z_sort(Card_Render* render)
 {
 	// TODO -- sort the instance buffer by z_offset
 }
+
+u32 card_render_get_card_id_from_mouse_pos(Card_Render* render, v2 mouse_pos)
+{
+	// TODO -- we will need to keep track of best z to get the card on top
+	f32 best_z = 0.0f;
+
+	//constant_buffer.card_size = { 48.0f, 80.0f };
+	// XXX -- lots of magic constants here...
+	v2 card_size = { 0.5f * 0.4f * 48.0f / 80.0f, 0.5f * 0.4f * 1.0f };
+
+	u32 num_cards = render->num_instances;
+	for (u32 i = 0; i < num_cards; ++i) {
+		Card_Render_Instance *instance = &render->instances[i];
+
+		v2 top_left = {};
+		v2 top_right = {};
+		v2 bottom_left = {};
+		v2 bottom_right = {};
+
+		v2 center = instance->screen_pos;
+		v2 m = { mouse_pos.x - center.x, mouse_pos.y - center.y };
+
+		f32 c = cosf(instance->screen_rotation);
+		f32 s = sinf(instance->screen_rotation);
+
+		m.x = m.x * c - m.y * s;
+		m.y = m.x * s + m.y * c;
+
+		v2 size = card_size;
+		size.w *= cosf(instance->horizontal_rotation);
+		size.h *= cosf(instance->vertical_rotation);
+
+		if (fabsf(m.x) < size.w && fabsf(m.y) < size.y) {
+			return instance->card_id;
+		}
+	}
+	return 0;
+}
+
+#ifdef JFG_DEBUG_LINE_DRAW_H
+void card_render_draw_debug_lines(Card_Render* render, Debug_Line* debug_line)
+{
+	Debug_Line_Instance line = {};
+	line.color = { 1.0f, 0.0f, 0.0f, 1.0f };
+
+	//constant_buffer.card_size = { 48.0f, 80.0f };
+	// XXX -- lots of magic constants here...
+	v2 card_size = { 0.5f * 0.4f * 48.0f / 80.0f, 0.5f * 0.4f * 1.0f };
+
+	u32 num_cards = render->num_instances;
+	for (u32 i = 0; i < num_cards; ++i) {
+		Card_Render_Instance *instance = &render->instances[i];
+
+		v2 top_left = {};
+		v2 top_right = {};
+		v2 bottom_left = {};
+		v2 bottom_right = {};
+
+		v2 center = instance->screen_pos;
+		v2 size = card_size;
+		size.w *= cosf(instance->horizontal_rotation);
+		size.h *= cosf(instance->vertical_rotation);
+
+		f32 c = cosf(instance->screen_rotation);
+		f32 s = sinf(instance->screen_rotation);
+
+		top_right.x = center.x + size.w * c - size.h * s;
+		top_right.y = center.y + size.w * s + size.h * c;
+
+		top_left.x = center.x - size.w * c - size.h * s;
+		top_left.y = center.y - size.w * s + size.h * c;
+
+		bottom_left.x = center.x - size.w * c + size.h * s;
+		bottom_left.y = center.y - size.w * s - size.h * c;
+
+		bottom_right.x = center.x + size.w * c + size.h * s;
+		bottom_right.y = center.y + size.w * s - size.h * c;
+
+		line.start = top_left;
+		line.end = top_right;
+		debug_line_add_instance(debug_line, line);
+		line.start = top_right;
+		line.end = bottom_right;
+		debug_line_add_instance(debug_line, line);
+		line.start = bottom_right;
+		line.end = bottom_left;
+		debug_line_add_instance(debug_line, line);
+		line.start = bottom_left;
+		line.end = top_left;
+		debug_line_add_instance(debug_line, line);
+	}
+}
+#endif // JFG_DEBUG_LINE_DRAW_H
 #endif
 
 // ==============================================================================
@@ -216,7 +316,7 @@ void card_render_d3d11_draw(Card_Render*            render,
 	constant_buffer.card_size = { 48.0f, 80.0f };
 	constant_buffer.screen_size = { (f32)screen_size.w, (f32)screen_size.h };
 	constant_buffer.tex_size = { (f32)CARD_IMAGE_SIZE.w, (f32)CARD_IMAGE_SIZE.h };
-	constant_buffer.zoom = 4.0f;
+	constant_buffer.zoom = 0.4f;
 
 	D3D11_MAPPED_SUBRESOURCE mapped_buffer = {};
 
