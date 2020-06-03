@@ -44,7 +44,7 @@ void card_render_z_sort(Card_Render* render);
 u32 card_render_get_card_id_from_mouse_pos(Card_Render* render, v2 mouse_pos);
 
 #ifdef JFG_DEBUG_LINE_DRAW_H
-void card_render_draw_debug_lines(Card_Render* render, Debug_Line* debug_line);
+void card_render_draw_debug_lines(Card_Render* render, Debug_Line* debug_line, u32 selected_id);
 #endif
 
 #ifndef JFG_HEADER_ONLY
@@ -56,20 +56,30 @@ void card_render_reset(Card_Render* render)
 void card_render_add_instance(Card_Render* render, Card_Render_Instance instance)
 {
 	ASSERT(render->num_instances < CARD_RENDER_MAX_INSTANCES);
-	// XXX -- tmp just for testing
-	instance.card_id = render->num_instances;
 	render->instances[render->num_instances++] = instance;
 }
 
 void card_render_z_sort(Card_Render* render)
 {
-	// TODO -- sort the instance buffer by z_offset
+	// XXX -- insertion sort because why not
+	u32 num_instances = render->num_instances;
+	Card_Render_Instance *instances = render->instances;
+	for (u32 i = 1; i < num_instances; ++i) {
+		Card_Render_Instance tmp = instances[i];
+		u32 j = i;
+		while (j && instances[j - 1].z_offset > tmp.z_offset) {
+			instances[j] = instances[j - 1];
+			--j;
+		}
+		instances[j] = tmp;
+	}
 }
 
 u32 card_render_get_card_id_from_mouse_pos(Card_Render* render, v2 mouse_pos)
 {
 	// TODO -- we will need to keep track of best z to get the card on top
-	f32 best_z = 0.0f;
+	f32 best_z = -1.0f;
+	u32 best_id = 0;
 
 	//constant_buffer.card_size = { 48.0f, 80.0f };
 	// XXX -- lots of magic constants here...
@@ -90,25 +100,25 @@ u32 card_render_get_card_id_from_mouse_pos(Card_Render* render, v2 mouse_pos)
 		f32 c = cosf(instance->screen_rotation);
 		f32 s = sinf(instance->screen_rotation);
 
-		m.x = m.x * c - m.y * s;
-		m.y = m.x * s + m.y * c;
+		m.x = m.x * c + m.y * s;
+		m.y = - m.x * s + m.y * c;
 
 		v2 size = card_size;
 		size.w *= cosf(instance->horizontal_rotation);
 		size.h *= cosf(instance->vertical_rotation);
 
-		if (fabsf(m.x) < size.w && fabsf(m.y) < size.y) {
-			return instance->card_id;
+		if (fabsf(m.x) < size.w && fabsf(m.y) < size.y && instance->z_offset > best_z) {
+			best_id = instance->card_id;
+			best_z = instance->z_offset;
 		}
 	}
-	return 0;
+	return best_id;
 }
 
 #ifdef JFG_DEBUG_LINE_DRAW_H
-void card_render_draw_debug_lines(Card_Render* render, Debug_Line* debug_line)
+void card_render_draw_debug_lines(Card_Render* render, Debug_Line* debug_line, u32 selected_id)
 {
 	Debug_Line_Instance line = {};
-	line.color = { 1.0f, 0.0f, 0.0f, 1.0f };
 
 	//constant_buffer.card_size = { 48.0f, 80.0f };
 	// XXX -- lots of magic constants here...
@@ -117,6 +127,11 @@ void card_render_draw_debug_lines(Card_Render* render, Debug_Line* debug_line)
 	u32 num_cards = render->num_instances;
 	for (u32 i = 0; i < num_cards; ++i) {
 		Card_Render_Instance *instance = &render->instances[i];
+		if (instance->card_id == selected_id) {
+			line.color = { 0.0f, 1.0f, 0.0f, 1.0f };
+		} else {
+			line.color = { 1.0f, 0.0f, 0.0f, 1.0f };
+		}
 
 		v2 top_left = {};
 		v2 top_right = {};

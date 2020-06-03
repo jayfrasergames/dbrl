@@ -371,74 +371,6 @@ need_player_input:
 }
 
 // =============================================================================
-// cards
-
-struct Hand_Params
-{
-	// in
-	f32 screen_width; // x in range [-screen_width, screen_width]
-	f32 height;
-	f32 border;
-	f32 bottom;
-	f32 top;
-	f32 separation;
-	f32 num_cards;
-
-	// out
-	f32 radius;
-	f32 theta;
-	v2  center;
-};
-
-void hand_params_calc(Hand_Params* params)
-{
-	f32 h = params->top - params->bottom;
-	f32 target = ((params->num_cards - 1.0f) * params->separation) / h;
-
-	f32 max_width = params->screen_width - params->border;
-
-	f32 theta_low = 0;
-	f32 theta_high = PI / 2.0f;
-	while (theta_high - theta_low > 1e-6f) {
-		f32 theta_mid = (theta_high + theta_low) / 2.0f;
-		f32 val = theta_mid / (1.0f - cosf(theta_mid / 2.0f));
-		if (val < target) {
-			theta_high = theta_mid;
-		} else {
-			theta_low = theta_mid;
-		}
-	}
-	f32 theta = (theta_low + theta_high) / 2.0f;
-	f32 radius = ((params->num_cards - 1.0f) * params->separation) / theta;
-
-	if (radius * sinf(theta / 2.0f) > max_width) {
-		target = max_width / h;
-		theta_low = 0;
-		theta_high = PI / 2.0f;
-		while (theta_high - theta_low > 1e-6f) {
-			f32 theta_mid = (theta_high + theta_low) / 2.0f;
-			f32 val = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f));
-			if (val < target) {
-				theta_high = theta_mid;
-			} else {
-				theta_low = theta_mid;
-			}
-		}
-		theta = (theta_high + theta_low) / 2.0f;
-		radius = max_width / sinf(theta / 2.0f);
-		params->separation = radius * theta / (params->num_cards - 1.0f);
-	}
-
-	v2 center = {};
-	center.x = 0.0f;
-	center.y = params->top - radius;
-
-	params->radius = radius;
-	params->theta  = theta;
-	params->center = center;
-}
-
-// =============================================================================
 // draw
 
 struct Camera
@@ -874,6 +806,284 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 }
 
 // =============================================================================
+// cards
+
+struct Hand_Params
+{
+	// in
+	f32 screen_width; // x in range [-screen_width, screen_width]
+	f32 height;
+	f32 border;
+	f32 bottom;
+	f32 top;
+	f32 separation;
+	f32 num_cards;
+	v2 card_size;
+
+	// out
+	f32 radius;
+	f32 theta;
+	v2  center;
+};
+
+void hand_params_calc(Hand_Params* params)
+{
+	f32 h = params->top - params->bottom;
+	f32 target = ((params->num_cards - 1.0f) * params->separation) / h;
+
+	f32 max_width = params->screen_width - params->border;
+
+	f32 theta_low = 0;
+	f32 theta_high = PI / 2.0f;
+	while (theta_high - theta_low > 1e-6f) {
+		f32 theta_mid = (theta_high + theta_low) / 2.0f;
+		f32 val = theta_mid / (1.0f - cosf(theta_mid / 2.0f));
+		if (val < target) {
+			theta_high = theta_mid;
+		} else {
+			theta_low = theta_mid;
+		}
+	}
+	f32 theta = (theta_low + theta_high) / 2.0f;
+	f32 radius = ((params->num_cards - 1.0f) * params->separation) / theta;
+
+	f32 card_diagonal, psi;
+	{
+		f32 w = params->card_size.w, h = params->card_size.h;
+		card_diagonal = sqrtf(w*w + h*h);
+
+		psi = atanf(w / h);
+	}
+
+	if (radius * sinf(theta / 2.0f) + card_diagonal * sinf(theta / 2.0f + psi) > max_width) {
+		target = max_width / h;
+		theta_low = 0;
+		theta_high = PI / 2.0f;
+		while (theta_high - theta_low > 1e-6f) {
+			f32 theta_mid = (theta_high + theta_low) / 2.0f;
+			f32 val = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f))
+			        + (card_diagonal / h) * sinf(theta_mid / 2.0f + psi);
+			f32 val_2 = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f));
+			if (val < target) {
+				theta_high = theta_mid;
+			} else {
+				theta_low = theta_mid;
+			}
+		}
+		theta = (theta_high + theta_low) / 2.0f;
+		// radius = max_width / sinf(theta / 2.0f);
+		radius = h / (1 - cosf(theta / 2.0f));
+		params->separation = radius * theta / (params->num_cards - 1.0f);
+	}
+
+	v2 center = {};
+	center.x = 0.0f;
+	center.y = params->top - radius;
+
+	params->radius = radius;
+	params->theta  = theta;
+	params->center = center;
+}
+
+enum Card_Anim_Type
+{
+	CARD_ANIM_DECK,
+	CARD_ANIM_DISCARD,
+	CARD_ANIM_DRAW,
+	CARD_ANIM_IN_HAND,
+};
+
+struct Card_Anim
+{
+	Card_Anim_Type type;
+	union {
+		struct {
+			u32 index;
+		} hand;
+		struct {
+			f32 start_time;
+			f32 duration;
+			u32 hand_index;
+		} draw;
+	};
+	v2 card_face;
+};
+
+#define MAX_CARD_ANIMS 1024
+struct Card_Anim_State
+{
+	Hand_Params hand_params;
+	u32         hand_size;
+	u32         highlighted_card_id;
+	u32         num_card_anims;
+	Card_Anim   card_anims[MAX_CARD_ANIMS];
+};
+
+void card_anim_draw(Card_Anim_State* card_anim_state,
+                    Card_Render*     card_render,
+                    v2_u32           screen_size,
+                    f32              time)
+{
+	card_render_reset(card_render);
+
+	float ratio = (f32)screen_size.x / (f32)screen_size.y;
+
+	u32 hand_size = card_anim_state->hand_size;
+	Hand_Params *params = &card_anim_state->hand_params;
+	params->screen_width = ratio;
+	params->num_cards = (f32)hand_size;
+	hand_params_calc(params);
+
+	// draw some debug stuff
+	// program->draw.card_debug_line.constants.top_left     = { -ratio,  1.0f };
+	// program->draw.card_debug_line.constants.bottom_right = {  ratio, -1.0f };
+	/*
+	if (1) {
+		Debug_Line_Instance line = {};
+		line.color = { 1.0f, 1.0f, 0.0f, 1.0f };
+		line.start = { -ratio, params.bottom };
+		line.end   = {  ratio, params.bottom };
+		debug_line_add_instance(&program->draw.card_debug_line, line);
+		line.start = { -ratio, params.top };
+		line.end   = {  ratio, params.top };
+		debug_line_add_instance(&program->draw.card_debug_line, line);
+		line.start = { -ratio + params.border, -1.0f };
+		line.end   = { -ratio + params.border, -1.0f + params.height };
+		debug_line_add_instance(&program->draw.card_debug_line, line);
+		line.start = { ratio - params.border, -1.0f };
+		line.end   = { ratio - params.border, -1.0f + params.height };
+		debug_line_add_instance(&program->draw.card_debug_line, line);
+	}
+	*/
+
+	u32 num_card_anims = card_anim_state->num_card_anims;
+
+	// convert finished card anims
+	for (u32 i = 0; i < num_card_anims; ++i) {
+		Card_Anim *anim = &card_anim_state->card_anims[i];
+		switch (anim->type) {
+		case CARD_ANIM_DECK:
+			break;
+		case CARD_ANIM_DISCARD:
+			break;
+		case CARD_ANIM_IN_HAND:
+			break;
+		case CARD_ANIM_DRAW:
+			if (anim->draw.start_time + anim->draw.duration <= time) {
+				anim->hand.index = anim->draw.hand_index;
+				anim->type = CARD_ANIM_IN_HAND;
+			}
+			break;
+		}
+	}
+
+	u32 highlighted_card = 20;
+	f32 highligted_zoom = 1.2f;
+	for (u32 i = 0; i < num_card_anims; ++i) {
+		Card_Anim *anim = &card_anim_state->card_anims[i];
+		switch (anim->type) {
+		case CARD_ANIM_DECK:
+			break;
+		case CARD_ANIM_DISCARD:
+			break;
+		case CARD_ANIM_IN_HAND: {
+			u32 i = anim->hand.index;
+			f32 dist_to_highlighted = (f32)i - (f32)highlighted_card;
+
+			v2 card_pos = {};
+			f32 angle = PI / 2.0f + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
+			if (dist_to_highlighted) {
+				f32 d = params->card_size.w / params->radius
+				      - params->theta / (f32)(hand_size - 1);
+				angle -= d * (1.0f / dist_to_highlighted);
+			}
+			f32 r = params->radius;
+			if (highlighted_card == i) {
+				r += (highligted_zoom - 1.0f) * params->card_size.h;
+			}
+			card_pos.x = r * cosf(angle) + params->center.x;
+			card_pos.y = r * sinf(angle) + params->center.y;
+
+			Card_Render_Instance instance = {};
+			instance.screen_rotation = angle - PI / 2.0f;
+			instance.screen_pos = card_pos;
+			instance.card_pos = { 1.0f, 0.0f };
+			instance.card_id = i + 1;
+			instance.zoom = 1.0f;
+			if (highlighted_card == i) {
+				instance.zoom = highligted_zoom;
+			}
+			if (card_anim_state->highlighted_card_id == instance.card_id) {
+				instance.z_offset = num_card_anims;
+			} else {
+				instance.z_offset = i;
+			}
+			card_render_add_instance(card_render, instance);
+			break;
+		}
+		case CARD_ANIM_DRAW: {
+			u32 i = anim->draw.hand_index;
+
+			v2 start_pos = { -ratio + params->border / 2.0f,
+			                 -1.0f  + params->height / 2.0f };
+			f32 start_rotation = 0.0f;
+
+			v2 end_pos = {};
+			f32 angle = PI / 2.0f + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
+			end_pos.x = params->radius * cosf(angle) + params->center.x;
+			end_pos.y = params->radius * sinf(angle) + params->center.y;
+			f32 end_rotation = angle - PI / 2.0f;
+
+			f32 dt = (time - anim->draw.start_time) / anim->draw.duration;
+			if (dt < 0.0f) {
+				dt = 0.0f;
+			}
+			f32 smooth = (3.0f - 2.0f * dt) * dt * dt;
+			f32 jump   = dt * (1.0f - dt) * 4.0f;
+
+			Card_Render_Instance instance = {};
+			instance.screen_rotation = start_rotation
+			                         + smooth * (end_rotation - start_rotation);
+			instance.screen_pos.x = start_pos.x + smooth * (end_pos.x - start_pos.x);
+			instance.screen_pos.y = start_pos.y + smooth * (end_pos.y - start_pos.y);
+			instance.screen_pos.y += 0.1f * jump;
+			instance.horizontal_rotation = (1.0f - dt) * PI;
+			instance.card_pos = anim->card_face;
+			instance.card_id = i + 1;
+			instance.z_offset = dt < 0.5f ? 2*num_card_anims - i : i;
+			instance.zoom = 1.0f;
+			card_render_add_instance(card_render, instance);
+			break;
+		}
+		}
+	}
+
+	// add draw pile card
+	{
+		Card_Render_Instance instance = {};
+		instance.screen_rotation = 0.0f;
+		instance.screen_pos = { -ratio + params->border / 2.0f,
+		                        -1.0f  + params->height / 2.0f };
+		instance.card_pos = { 0.0f, 0.0f };
+		instance.zoom = 1.0f;
+		card_render_add_instance(card_render, instance);
+	}
+
+	// add discard pile card
+	{
+		Card_Render_Instance instance = {};
+		instance.screen_rotation = 0.0f;
+		instance.screen_pos = { ratio - params->border / 2.0f,
+		                        -1.0f + params->height / 2.0f };
+		instance.card_pos = { 1.0f, 0.0f };
+		instance.zoom = 1.0f;
+		card_render_add_instance(card_render, instance);
+	}
+
+	card_render_z_sort(card_render);
+}
+
+// =============================================================================
 // program
 
 enum Program_Input_State
@@ -893,6 +1103,10 @@ struct Program
 	v2            screen_size;
 	v2_u32        max_screen_size;
 	IMGUI_Context imgui;
+
+	u32 prev_card_id;
+
+	Card_Anim_State card_anim_state;
 
 	Pixel_Art_Upsampler    pixel_art_upsampler;
 	union {
@@ -968,6 +1182,21 @@ void program_init(Program* program)
 	game_play_until_input_required(&program->game, &tmp_buffer);
 
 	world_anim_init(&program->world_anim, &program->game);
+
+	u32 hand_size = 40;
+	program->card_anim_state.hand_size = hand_size;
+	for (u32 i = 0; i < hand_size; ++i) {
+		Card_Anim anim = {};
+		anim.type = CARD_ANIM_DRAW;
+		// anim.hand.index = i;
+		anim.draw.start_time = (f32)i * 0.1f;
+		anim.draw.duration = 1.0f;
+		anim.draw.hand_index = i;
+		anim.card_face = { 1.0f, 0.0f };
+		program->card_anim_state.card_anims[i] = anim;
+	}
+	program->card_anim_state.num_card_anims = hand_size;
+	program->card_anim_state.hand_size = hand_size;
 }
 
 u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size)
@@ -1265,9 +1494,20 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 		}
 	}
 
+	// program->card_anim_state.hand_params.screen_width = ratio;
+	program->card_anim_state.hand_params.height = 0.5f;
+	program->card_anim_state.hand_params.border = 0.4;
+	program->card_anim_state.hand_params.top = -0.7f;
+	program->card_anim_state.hand_params.bottom = -0.9f;
+	program->card_anim_state.hand_params.separation = 0.2f;
+	// XXX - ugh
+	program->card_anim_state.hand_params.card_size = { 0.5f*0.4f*48.0f/80.0f, 0.5f*0.4f*1.0f };
+
+	debug_line_reset(&program->draw.card_debug_line);
+	card_anim_draw(&program->card_anim_state, &program->draw.card_render, screen_size, time);
 
 	// deal with card GUI
-	{
+	if (0) {
 		card_render_reset(&program->draw.card_render);
 		debug_line_reset(&program->draw.card_debug_line);
 
@@ -1277,7 +1517,7 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 
 		f32 t = time;
 
-		u32 num_cards = 20;
+		u32 num_cards = 10;
 
 		Hand_Params params = {};
 		params.screen_width = ratio;
@@ -1287,6 +1527,8 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 		params.bottom = -0.9f;
 		params.separation = 0.2f;
 		params.num_cards = (f32)num_cards;
+		// XXX - ugh
+		params.card_size = { 0.5f * 0.4f * 48.0f / 80.0f, 0.5f * 0.4f * 1.0f };
 
 		hand_params_calc(&params);
 
@@ -1322,6 +1564,12 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 			instance.screen_rotation = angle - PI / 2.0f;
 			instance.screen_pos = card_pos;
 			instance.card_pos = { 1.0f, 0.0f };
+			instance.card_id = i + 1;
+			if (program->prev_card_id == instance.card_id) {
+				instance.z_offset = num_cards;
+			} else {
+				instance.z_offset = i;
+			}
 			card_render_add_instance(&program->draw.card_render, instance);
 		}
 
@@ -1346,8 +1594,6 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 		}
 
 		card_render_z_sort(&program->draw.card_render);
-
-		card_render_draw_debug_lines(&program->draw.card_render, &program->draw.card_debug_line);
 	}
 
 	// TODO -- get card id from mouse pos
@@ -1357,6 +1603,10 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	card_mouse_pos.y = 1.0f - 2.0f * card_mouse_pos.y;
 	u32 selected_card_id = card_render_get_card_id_from_mouse_pos(&program->draw.card_render,
 	                                                              card_mouse_pos);
+	program->prev_card_id = selected_card_id;
+	card_render_draw_debug_lines(&program->draw.card_render,
+	                             &program->draw.card_debug_line,
+	                             selected_card_id);
 
 
 	// do stuff
@@ -1418,7 +1668,7 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	                       dc,
 	                       screen_size_u32,
 	                       program->d3d11.output_rtv);
-	debug_line_d3d11_draw(&program->draw.card_debug_line, dc, program->d3d11.output_rtv);
+	// debug_line_d3d11_draw(&program->draw.card_debug_line, dc, program->d3d11.output_rtv);
 
 	imgui_d3d11_draw(&program->imgui, dc, program->d3d11.output_rtv, screen_size_u32);
 

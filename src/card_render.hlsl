@@ -50,7 +50,7 @@ VS_Card_Output vs_card(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 	// float2 card_size = constants.card_size / constants.screen_size;
 	float2 card_size = float2(constants.card_size.x / constants.card_size.y, 1.0f);
 
-	float2 pos = 0.5f * constants.zoom * vertex.pos * card_size;
+	float2 pos = instance.zoom * 0.5f * constants.zoom * vertex.pos * card_size;
 
 	float ch = cos(instance.horizontal_rotation);
 	float cv = cos(instance.vertical_rotation);

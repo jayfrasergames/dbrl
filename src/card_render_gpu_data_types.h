@@ -24,6 +24,7 @@ struct Card_Render_Instance
 	F2 card_pos;
 
 	U1 card_id; // not used in shader
+	F1 zoom;
 };
 
 #endif
