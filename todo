@@ -29,6 +29,7 @@
     * input
     * random numbers
     * math functions
+       * vector data types, multiplication by scalars, casting etc
     * dll reloading - don't reload if compile unsuccessful (i.e. don't write "written_library" in that case)
     * memory functions/context
     * global context/global error message

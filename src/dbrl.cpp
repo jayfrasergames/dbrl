@@ -932,6 +932,7 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 	Hand_Params *params = &card_anim_state->hand_params;
 	params->screen_width = ratio;
 	params->num_cards = (f32)hand_size;
+	params->separation = params->card_size.w;
 	hand_params_calc(params);
 
 	// draw some debug stuff
@@ -977,8 +978,36 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 		}
 	}
 
-	u32 highlighted_card = 20;
-	f32 highligted_zoom = 1.2f;
+	f32 highlighted_zoom = 1.2f;
+	u32 highlighted_card = 3;
+
+	f32 deltas[100];
+	{
+		ASSERT(hand_size < ARRAY_SIZE(deltas));
+
+		deltas[highlighted_card] = 0.0f;
+
+		f32 min_left_separation = (highlighted_zoom - 0.4f) * params->card_size.w;
+		f32 left_delta = max(min_left_separation - params->separation, 0.0f);
+		f32 left_ratio = max(1.0f - 0.5f * params->separation / left_delta, 0.4f);
+
+		f32 acc = left_delta / params->radius;
+		for (u32 i = highlighted_card; i; --i) {
+			deltas[i - 1] = acc;
+			acc *= left_ratio;
+		}
+
+		f32 min_right_separation = (0.7f + highlighted_zoom) * params->card_size.w;
+		f32 right_delta = max(min_right_separation - params->separation, 0.0f);
+		f32 right_ratio = 1.0f - 0.5f * params->separation / right_delta;
+
+		acc = right_delta / params->radius;
+		for (u32 i = highlighted_card + 1; i < hand_size; ++i) {
+			deltas[i] = -acc;
+			acc *= right_ratio;
+		}
+	}
+
 	for (u32 i = 0; i < num_card_anims; ++i) {
 		Card_Anim *anim = &card_anim_state->card_anims[i];
 		switch (anim->type) {
@@ -992,14 +1021,10 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 
 			v2 card_pos = {};
 			f32 angle = PI / 2.0f + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
-			if (dist_to_highlighted) {
-				f32 d = params->card_size.w / params->radius
-				      - params->theta / (f32)(hand_size - 1);
-				angle -= d * (1.0f / dist_to_highlighted);
-			}
+			angle += deltas[i];
 			f32 r = params->radius;
 			if (highlighted_card == i) {
-				r += (highligted_zoom - 1.0f) * params->card_size.h;
+				r += (highlighted_zoom - 1.0f) * params->card_size.h;
 			}
 			card_pos.x = r * cosf(angle) + params->center.x;
 			card_pos.y = r * sinf(angle) + params->center.y;
@@ -1011,12 +1036,7 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 			instance.card_id = i + 1;
 			instance.zoom = 1.0f;
 			if (highlighted_card == i) {
-				instance.zoom = highligted_zoom;
-			}
-			if (card_anim_state->highlighted_card_id == instance.card_id) {
-				instance.z_offset = num_card_anims;
-			} else {
-				instance.z_offset = i;
+				instance.zoom = highlighted_zoom;
 			}
 			card_render_add_instance(card_render, instance);
 			break;
@@ -1183,7 +1203,7 @@ void program_init(Program* program)
 
 	world_anim_init(&program->world_anim, &program->game);
 
-	u32 hand_size = 40;
+	u32 hand_size = 5;
 	program->card_anim_state.hand_size = hand_size;
 	for (u32 i = 0; i < hand_size; ++i) {
 		Card_Anim anim = {};
@@ -1499,7 +1519,6 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	program->card_anim_state.hand_params.border = 0.4;
 	program->card_anim_state.hand_params.top = -0.7f;
 	program->card_anim_state.hand_params.bottom = -0.9f;
-	program->card_anim_state.hand_params.separation = 0.2f;
 	// XXX - ugh
 	program->card_anim_state.hand_params.card_size = { 0.5f*0.4f*48.0f/80.0f, 0.5f*0.4f*1.0f };
 
