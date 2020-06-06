@@ -96,12 +96,15 @@ u32 card_render_get_card_id_from_mouse_pos(Card_Render* render, v2 mouse_pos)
 
 		v2 center = instance->screen_pos;
 		v2 m = { mouse_pos.x - center.x, mouse_pos.y - center.y };
+		m.x /= instance->zoom;
+		m.y /= instance->zoom;
 
 		f32 c = cosf(instance->screen_rotation);
 		f32 s = sinf(instance->screen_rotation);
 
-		m.x = m.x * c + m.y * s;
-		m.y = - m.x * s + m.y * c;
+		f32 x = m.x, y = m.y;
+		m.x = x * c + y * s;
+		m.y = - x * s + y * c;
 
 		v2 size = card_size;
 		size.w *= cosf(instance->horizontal_rotation);
@@ -140,8 +143,8 @@ void card_render_draw_debug_lines(Card_Render* render, Debug_Line* debug_line, u
 
 		v2 center = instance->screen_pos;
 		v2 size = card_size;
-		size.w *= cosf(instance->horizontal_rotation);
-		size.h *= cosf(instance->vertical_rotation);
+		size.w *= instance->zoom * cosf(instance->horizontal_rotation);
+		size.h *= instance->zoom * cosf(instance->vertical_rotation);
 
 		f32 c = cosf(instance->screen_rotation);
 		f32 s = sinf(instance->screen_rotation);

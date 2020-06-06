@@ -4,6 +4,8 @@
 #include "jfg/jfg_math.h"
 #include "jfg/log.h"
 #include "jfg/debug_line_draw.h"
+#include "jfg/containers.hpp"
+#include "jfg/random.h"
 #include "sprite_sheet.h"
 #include "card_render.h"
 #include "pixel_art_upsampler.h"
@@ -138,6 +140,61 @@ struct Entity
 	Brain      brain;
 };
 
+// =============================================================================
+// cards
+
+struct Card
+{
+	u32             id;
+	Card_Appearance appearance;
+};
+
+enum Card_Event_Type
+{
+	CARD_EVENT_DRAW,
+};
+
+struct Card_Event
+{
+	Card_Event_Type type;
+	union {
+		struct {
+			u32             card_id;
+			Card_Appearance appearance;
+		} draw;
+	};
+};
+
+#define CARD_STATE_MAX_CARDS  1024
+#define CARD_STATE_MAX_EVENTS 1024
+struct Card_State
+{
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        deck;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        discard;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        hand;
+	Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> events;
+
+	void draw()
+	{
+		if (!deck) {
+			while (discard) {
+				u32 idx = rand_u32() % discard.len;
+				deck.append(discard[idx]);
+				discard[idx] = discard[discard.len - 1];
+				--discard.len;
+			}
+		}
+		ASSERT(deck);
+		Card card = deck.pop();
+		hand.append(card);
+		Card_Event event = {};
+		event.type = CARD_EVENT_DRAW;
+		event.draw.card_id    = card.id;
+		event.draw.appearance = card.appearance;
+		events.append(event);
+	}
+};
+
 // maybe better called "world state"?
 struct Game
 {
@@ -148,6 +205,8 @@ struct Game
 	Entity entities[MAX_ENTITIES];
 	u32 choice_stack_idx;
 	Choice choice_stack[MAX_CHOICES];
+
+	Card_State card_state;
 };
 
 void game_build_from_string(Game* game, char* str)
@@ -805,8 +864,9 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 	}
 }
 
+
 // =============================================================================
-// cards
+// card anim
 
 struct Hand_Params
 {
@@ -818,6 +878,7 @@ struct Hand_Params
 	f32 top;
 	f32 separation;
 	f32 num_cards;
+	f32 highlighted_zoom;
 	v2 card_size;
 
 	// out
@@ -885,12 +946,54 @@ void hand_params_calc(Hand_Params* params)
 	params->center = center;
 }
 
+void hand_calc_deltas(f32* deltas, Hand_Params* params, u32 selected_card)
+{
+	deltas[selected_card] = 0.0f;
+
+	f32 min_left_separation = (params->highlighted_zoom - 0.4f) * params->card_size.w;
+	f32 left_delta = max(min_left_separation - params->separation, 0.0f);
+	f32 left_ratio = max(1.0f - 0.5f * params->separation / left_delta, 0.4f);
+
+	f32 acc = left_delta / params->radius;
+	for (u32 i = selected_card; i; --i) {
+		deltas[i - 1] = acc;
+		acc *= left_ratio;
+	}
+
+	f32 min_right_separation = (0.7f + params->highlighted_zoom) * params->card_size.w;
+	f32 right_delta = max(min_right_separation - params->separation, 0.0f);
+	f32 right_ratio = 1.0f - 0.5f * params->separation / right_delta;
+
+	acc = right_delta / params->radius;
+	for (u32 i = selected_card + 1; i < params->num_cards; ++i) {
+		deltas[i] = -acc;
+		acc *= right_ratio;
+	}
+}
+
+enum Card_Anim_State_Type
+{
+	CARD_ANIM_STATE_DRAWING,
+	CARD_ANIM_STATE_SELECT,
+};
+
 enum Card_Anim_Type
 {
 	CARD_ANIM_DECK,
 	CARD_ANIM_DISCARD,
 	CARD_ANIM_DRAW,
 	CARD_ANIM_IN_HAND,
+	CARD_ANIM_HAND_TO_HAND,
+};
+
+struct Card_Hand_Pos
+{
+	f32 angle;
+	f32 zoom;
+	f32 radius;
+	f32 angle_speed;
+	f32 zoom_speed;
+	f32 radius_speed;
 };
 
 struct Card_Anim
@@ -903,27 +1006,102 @@ struct Card_Anim
 		struct {
 			f32 start_time;
 			f32 duration;
+			Card_Hand_Pos start;
+			Card_Hand_Pos end;
+			u32 index;
+		} hand_to_hand;
+		struct {
+			f32 start_time;
+			f32 duration;
 			u32 hand_index;
 		} draw;
 	};
+	u32 card_id;
 	v2 card_face;
 };
 
 #define MAX_CARD_ANIMS 1024
 struct Card_Anim_State
 {
-	Hand_Params hand_params;
-	u32         hand_size;
-	u32         highlighted_card_id;
-	u32         num_card_anims;
-	Card_Anim   card_anims[MAX_CARD_ANIMS];
+	Card_Anim_State_Type state;
+	Hand_Params          hand_params;
+	u32                  hand_size;
+	u32                  highlighted_card_id;
+	u32                  num_card_anims;
+	Card_Anim            card_anims[MAX_CARD_ANIMS];
 };
 
-void card_anim_draw(Card_Anim_State* card_anim_state,
-                    Card_Render*     card_render,
-                    v2_u32           screen_size,
-                    f32              time)
+enum Card_UI_Event_Type
 {
+	CARD_UI_EVENT_NONE,
+	CARD_UI_EVENT_DECK_CLICKED,
+	CARD_UI_EVENT_DISCARD_CLICKED,
+	CARD_UI_EVENT_HAND_CLICKED,
+};
+
+struct Card_UI_Event
+{
+	Card_UI_Event_Type type;
+	union {
+		struct {
+			u32 card_id;
+		} hand;
+	};
+};
+
+void card_anim_update_anims(Card_Anim_State*  card_anim_state,
+                            Slice<Card_Event> events,
+                            f32               time)
+{
+	for (u32 i = 0; i < events.len; ++i) {
+		Card_Event *event = &events[i];
+		switch (event->type) {
+		case CARD_EVENT_DRAW: {
+			u32 hand_index = card_anim_state->hand_size++;
+			Card_Anim anim = {};
+			anim.type = CARD_ANIM_DRAW;
+			anim.draw.start_time = time;
+			anim.draw.duration = 1.0f;
+			anim.draw.hand_index = hand_index;
+			anim.card_id = event->draw.card_id;
+			anim.card_face = card_appearance_get_sprite_coords(event->draw.appearance);
+			card_anim_state->card_anims[card_anim_state->num_card_anims++] = anim;
+			break;
+		}
+		}
+	}
+}
+
+Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
+                             Card_Render*     card_render,
+                             v2_u32           screen_size,
+                             f32              time,
+                             Input*           input)
+{
+	const u32 discard_id = (u32)-1;
+	const u32 deck_id    = (u32)-2;
+
+	Card_UI_Event event = {};
+	event.type = CARD_UI_EVENT_NONE;
+
+	// TODO -- get card id from mouse pos
+	v2 card_mouse_pos = { (f32)input->mouse_pos.x / (f32)screen_size.x,
+	                      (f32)input->mouse_pos.y / (f32)screen_size.y };
+	card_mouse_pos.x = (card_mouse_pos.x * 2.0f - 1.0f) * ((f32)screen_size.x / (f32)screen_size.y);
+	card_mouse_pos.y = 1.0f - 2.0f * card_mouse_pos.y;
+	u32 highlighted_card_id = card_render_get_card_id_from_mouse_pos(card_render, card_mouse_pos);
+
+	if (highlighted_card_id && input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
+		if (highlighted_card_id == discard_id) {
+			event.type = CARD_UI_EVENT_DISCARD_CLICKED;
+		} else if (highlighted_card_id == deck_id) {
+			event.type = CARD_UI_EVENT_DECK_CLICKED;
+		} else {
+			event.type = CARD_UI_EVENT_HAND_CLICKED;
+			event.hand.card_id = highlighted_card_id;
+		}
+	}
+
 	card_render_reset(card_render);
 
 	float ratio = (f32)screen_size.x / (f32)screen_size.y;
@@ -933,29 +1111,8 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 	params->screen_width = ratio;
 	params->num_cards = (f32)hand_size;
 	params->separation = params->card_size.w;
+	params->highlighted_zoom = 1.2f;
 	hand_params_calc(params);
-
-	// draw some debug stuff
-	// program->draw.card_debug_line.constants.top_left     = { -ratio,  1.0f };
-	// program->draw.card_debug_line.constants.bottom_right = {  ratio, -1.0f };
-	/*
-	if (1) {
-		Debug_Line_Instance line = {};
-		line.color = { 1.0f, 1.0f, 0.0f, 1.0f };
-		line.start = { -ratio, params.bottom };
-		line.end   = {  ratio, params.bottom };
-		debug_line_add_instance(&program->draw.card_debug_line, line);
-		line.start = { -ratio, params.top };
-		line.end   = {  ratio, params.top };
-		debug_line_add_instance(&program->draw.card_debug_line, line);
-		line.start = { -ratio + params.border, -1.0f };
-		line.end   = { -ratio + params.border, -1.0f + params.height };
-		debug_line_add_instance(&program->draw.card_debug_line, line);
-		line.start = { ratio - params.border, -1.0f };
-		line.end   = { ratio - params.border, -1.0f + params.height };
-		debug_line_add_instance(&program->draw.card_debug_line, line);
-	}
-	*/
 
 	u32 num_card_anims = card_anim_state->num_card_anims;
 
@@ -975,37 +1132,114 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 				anim->type = CARD_ANIM_IN_HAND;
 			}
 			break;
+		case CARD_ANIM_HAND_TO_HAND:
+			if (anim->hand_to_hand.start_time + anim->hand_to_hand.duration <= time) {
+				anim->hand.index = anim->hand_to_hand.index;
+				anim->type = CARD_ANIM_IN_HAND;
+			}
+			break;
 		}
 	}
 
-	f32 highlighted_zoom = 1.2f;
-	u32 highlighted_card = 3;
+	// process hand to hand anims
+	u32 prev_highlighted_card_id = card_anim_state->highlighted_card_id;
+	u32 prev_highlighted_card = 0, highlighted_card = 0;
 
+	// get highlighted card positions
+	for (u32 i = 0; i < num_card_anims; ++i) {
+		Card_Anim *anim = &card_anim_state->card_anims[i];
+		u32 hand_index;
+		switch (anim->type) {
+		case CARD_ANIM_IN_HAND:
+			hand_index = anim->hand.index;
+			break;
+		case CARD_ANIM_HAND_TO_HAND:
+			hand_index = anim->hand_to_hand.index;
+			break;
+		default:
+			continue;
+		}
+		if (anim->card_id == prev_highlighted_card_id) {
+			prev_highlighted_card = hand_index;
+		}
+		if (anim->card_id == highlighted_card_id) {
+			highlighted_card = hand_index;
+		}
+	}
+	card_anim_state->highlighted_card_id = highlighted_card_id;
+
+	u8 prev_hi_card_was_hand = prev_highlighted_card_id && prev_highlighted_card_id < (u32)-2;
+	u8 hi_card_is_hand = highlighted_card_id && highlighted_card_id < (u32)-2;
+	if (prev_highlighted_card_id != highlighted_card_id
+	 && (prev_hi_card_was_hand || hi_card_is_hand)) {
+		f32 before_deltas[100];
+		f32 after_deltas[100];
+
+		if (prev_highlighted_card_id) {
+			hand_calc_deltas(before_deltas, params, prev_highlighted_card);
+		} else {
+			memset(before_deltas, 0, (u32)params->num_cards * sizeof(before_deltas[0]));
+		}
+		if (highlighted_card_id) {
+			hand_calc_deltas(after_deltas, params, highlighted_card);
+		} else {
+			memset(after_deltas, 0, (u32)params->num_cards * sizeof(after_deltas[0]));
+		}
+
+		f32 base_delta = 1.0f / (params->num_cards - 1.0f);
+
+		for (u32 i = 0; i < num_card_anims; ++i) {
+			Card_Anim *anim = &card_anim_state->card_anims[i];
+			Card_Hand_Pos before_pos = {};
+			u32 hand_index;
+			switch (anim->type) {
+			case CARD_ANIM_IN_HAND: {
+				hand_index = anim->hand.index;
+				f32 base_angle = PI/2.0f + params->theta
+				               * (0.5f - (f32)hand_index * base_delta);
+				before_pos.angle = base_angle + before_deltas[hand_index];
+				before_pos.radius = params->radius;
+				before_pos.zoom = i == prev_highlighted_card && prev_highlighted_card_id
+				                  ? params->highlighted_zoom : 1.0f;
+				break;
+			}
+			case CARD_ANIM_HAND_TO_HAND: {
+				hand_index = anim->hand_to_hand.index;
+				Card_Hand_Pos *s = &anim->hand_to_hand.start;
+				Card_Hand_Pos *e = &anim->hand_to_hand.end;
+				f32 dt = (time - anim->hand_to_hand.start_time)
+				         / anim->hand_to_hand.duration;
+				dt = clamp(0.0f, 1.0f, dt);
+				before_pos.angle  = lerp(s->angle,  e->angle,  dt);
+				before_pos.zoom   = lerp(s->zoom,   e->zoom,   dt);
+				before_pos.radius = lerp(s->radius, e->radius, dt);
+				break;
+			}
+			default:
+				continue;
+			}
+			f32 base_angle = PI/2.0f + params->theta * (0.5f - (f32)hand_index * base_delta);
+			Card_Hand_Pos after_pos = {};
+			after_pos.angle = base_angle + after_deltas[hand_index];
+			after_pos.zoom = i == highlighted_card && highlighted_card_id
+			               ? params->highlighted_zoom : 1.0f;
+			after_pos.radius = params->radius;
+			anim->type = CARD_ANIM_HAND_TO_HAND;
+			anim->hand_to_hand.start_time = time;
+			anim->hand_to_hand.duration = 0.2f;
+			anim->hand_to_hand.start = before_pos;
+			anim->hand_to_hand.end = after_pos;
+			anim->hand_to_hand.index = hand_index;
+		}
+	}
+
+	u8 is_a_card_highlighted = card_anim_state->highlighted_card_id
+	                        && card_anim_state->highlighted_card_id < (u32)-2;
 	f32 deltas[100];
-	{
-		ASSERT(hand_size < ARRAY_SIZE(deltas));
-
-		deltas[highlighted_card] = 0.0f;
-
-		f32 min_left_separation = (highlighted_zoom - 0.4f) * params->card_size.w;
-		f32 left_delta = max(min_left_separation - params->separation, 0.0f);
-		f32 left_ratio = max(1.0f - 0.5f * params->separation / left_delta, 0.4f);
-
-		f32 acc = left_delta / params->radius;
-		for (u32 i = highlighted_card; i; --i) {
-			deltas[i - 1] = acc;
-			acc *= left_ratio;
-		}
-
-		f32 min_right_separation = (0.7f + highlighted_zoom) * params->card_size.w;
-		f32 right_delta = max(min_right_separation - params->separation, 0.0f);
-		f32 right_ratio = 1.0f - 0.5f * params->separation / right_delta;
-
-		acc = right_delta / params->radius;
-		for (u32 i = highlighted_card + 1; i < hand_size; ++i) {
-			deltas[i] = -acc;
-			acc *= right_ratio;
-		}
+	if (is_a_card_highlighted) {
+		hand_calc_deltas(deltas, params, highlighted_card);
+	} else {
+		memset(deltas, 0, (u32)params->num_cards * sizeof(deltas[0]));
 	}
 
 	for (u32 i = 0; i < num_card_anims; ++i) {
@@ -1023,8 +1257,8 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 			f32 angle = PI / 2.0f + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
 			angle += deltas[i];
 			f32 r = params->radius;
-			if (highlighted_card == i) {
-				r += (highlighted_zoom - 1.0f) * params->card_size.h;
+			if (is_a_card_highlighted && highlighted_card == i) {
+				r += (params->highlighted_zoom - 1.0f) * params->card_size.h;
 			}
 			card_pos.x = r * cosf(angle) + params->center.x;
 			card_pos.y = r * sinf(angle) + params->center.y;
@@ -1032,11 +1266,12 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 			Card_Render_Instance instance = {};
 			instance.screen_rotation = angle - PI / 2.0f;
 			instance.screen_pos = card_pos;
-			instance.card_pos = { 1.0f, 0.0f };
-			instance.card_id = i + 1;
+			instance.card_pos = anim->card_face;
+			instance.card_id = anim->card_id;
+			instance.z_offset = i;
 			instance.zoom = 1.0f;
-			if (highlighted_card == i) {
-				instance.zoom = highlighted_zoom;
+			if (is_a_card_highlighted && highlighted_card == i) {
+				instance.zoom = params->highlighted_zoom;
 			}
 			card_render_add_instance(card_render, instance);
 			break;
@@ -1069,10 +1304,37 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 			instance.screen_pos.y += 0.1f * jump;
 			instance.horizontal_rotation = (1.0f - dt) * PI;
 			instance.card_pos = anim->card_face;
-			instance.card_id = i + 1;
+			instance.card_id = anim->card_id;
 			instance.z_offset = dt < 0.5f ? 2*num_card_anims - i : i;
 			instance.zoom = 1.0f;
 			card_render_add_instance(card_render, instance);
+			break;
+		}
+		case CARD_ANIM_HAND_TO_HAND: {
+			u32 i = anim->hand_to_hand.index;
+			f32 dt = (time - anim->hand_to_hand.start_time) / anim->hand_to_hand.duration;
+
+			Card_Hand_Pos *s = &anim->hand_to_hand.start;
+			Card_Hand_Pos *e = &anim->hand_to_hand.end;
+
+			f32 a = lerp(s->angle,  e->angle,  dt);
+			f32 r = lerp(s->radius, e->radius, dt);
+			f32 z = lerp(s->zoom,   e->zoom,   dt);
+			r += (z - 1.0f) * params->card_size.h;
+
+			v2 pos = {};
+			pos.x = r * cosf(a) + params->center.x;
+			pos.y = r * sinf(a) + params->center.y;
+
+			Card_Render_Instance instance = {};
+			instance.screen_rotation = a - PI / 2.0f;
+			instance.screen_pos = pos;
+			instance.card_pos = anim->card_face;
+			instance.card_id = anim->card_id;
+			instance.z_offset = i;
+			instance.zoom = z;
+			card_render_add_instance(card_render, instance);
+
 			break;
 		}
 		}
@@ -1086,6 +1348,7 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 		                        -1.0f  + params->height / 2.0f };
 		instance.card_pos = { 0.0f, 0.0f };
 		instance.zoom = 1.0f;
+		instance.card_id = deck_id;
 		card_render_add_instance(card_render, instance);
 	}
 
@@ -1097,10 +1360,13 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 		                        -1.0f + params->height / 2.0f };
 		instance.card_pos = { 1.0f, 0.0f };
 		instance.zoom = 1.0f;
+		instance.card_id = discard_id;
 		card_render_add_instance(card_render, instance);
 	}
 
 	card_render_z_sort(card_render);
+
+	return event;
 }
 
 // =============================================================================
@@ -1123,6 +1389,8 @@ struct Program
 	v2            screen_size;
 	v2_u32        max_screen_size;
 	IMGUI_Context imgui;
+
+	MT19937 random_state;
 
 	u32 prev_card_id;
 
@@ -1155,6 +1423,9 @@ void program_init(Program* program)
 	sprite_sheet_renderer_init(&program->draw.renderer,
 	                           &program->draw.tiles, 3,
 	                           { 1600, 900 });
+
+	program->random_state.seed(0);
+	program->random_state.set_current();
 
 	program->draw.tiles.data       = SPRITE_SHEET_TILES;
 	program->draw.creatures.data   = SPRITE_SHEET_CREATURES;
@@ -1203,20 +1474,14 @@ void program_init(Program* program)
 
 	world_anim_init(&program->world_anim, &program->game);
 
-	u32 hand_size = 5;
-	program->card_anim_state.hand_size = hand_size;
-	for (u32 i = 0; i < hand_size; ++i) {
-		Card_Anim anim = {};
-		anim.type = CARD_ANIM_DRAW;
-		// anim.hand.index = i;
-		anim.draw.start_time = (f32)i * 0.1f;
-		anim.draw.duration = 1.0f;
-		anim.draw.hand_index = i;
-		anim.card_face = { 1.0f, 0.0f };
-		program->card_anim_state.card_anims[i] = anim;
+	u32 deck_size = 100;
+	Card_State *card_state = &program->game.card_state;
+	for (u32 i = 0; i < deck_size; ++i) {
+		Card card = {};
+		card.id = i + 1;
+		card.appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
+		card_state->discard.append(card);
 	}
-	program->card_anim_state.num_card_anims = hand_size;
-	program->card_anim_state.hand_size = hand_size;
 }
 
 u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size)
@@ -1523,97 +1788,28 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	program->card_anim_state.hand_params.card_size = { 0.5f*0.4f*48.0f/80.0f, 0.5f*0.4f*1.0f };
 
 	debug_line_reset(&program->draw.card_debug_line);
-	card_anim_draw(&program->card_anim_state, &program->draw.card_render, screen_size, time);
+	// card_anim_update_anims
+	Card_UI_Event card_event = card_anim_draw(&program->card_anim_state,
+	                                          &program->draw.card_render,
+	                                          screen_size,
+	                                          time,
+	                                          input);
 
-	// deal with card GUI
-	if (0) {
-		card_render_reset(&program->draw.card_render);
-		debug_line_reset(&program->draw.card_debug_line);
-
-		float ratio = (f32)screen_size.x / (f32)screen_size.y;
-		program->draw.card_debug_line.constants.top_left     = { -ratio,  1.0f };
-		program->draw.card_debug_line.constants.bottom_right = {  ratio, -1.0f };
-
-		f32 t = time;
-
-		u32 num_cards = 10;
-
-		Hand_Params params = {};
-		params.screen_width = ratio;
-		params.height = 0.5f;
-		params.border = 0.4;
-		params.top = -0.7f;
-		params.bottom = -0.9f;
-		params.separation = 0.2f;
-		params.num_cards = (f32)num_cards;
-		// XXX - ugh
-		params.card_size = { 0.5f * 0.4f * 48.0f / 80.0f, 0.5f * 0.4f * 1.0f };
-
-		hand_params_calc(&params);
-
-		// draw some debug stuff
-		if (1) {
-			Debug_Line_Instance line = {};
-			line.color = { 1.0f, 1.0f, 0.0f, 1.0f };
-
-			line.start = { -ratio, params.bottom };
-			line.end   = {  ratio, params.bottom };
-			debug_line_add_instance(&program->draw.card_debug_line, line);
-
-			line.start = { -ratio, params.top };
-			line.end   = {  ratio, params.top };
-			debug_line_add_instance(&program->draw.card_debug_line, line);
-
-			line.start = { -ratio + params.border, -1.0f };
-			line.end   = { -ratio + params.border, -1.0f + params.height };
-			debug_line_add_instance(&program->draw.card_debug_line, line);
-
-			line.start = { ratio - params.border, -1.0f };
-			line.end   = { ratio - params.border, -1.0f + params.height };
-			debug_line_add_instance(&program->draw.card_debug_line, line);
-		}
-
-		for (u32 i = 0; i < num_cards; ++i) {
-			v2 card_pos = {};
-			f32 angle = PI / 2.0f + params.theta * (0.5f - ((f32)i / (f32)(num_cards - 1)));
-			card_pos.x = params.radius * cosf(angle) + params.center.x;
-			card_pos.y = params.radius * sinf(angle) + params.center.y;
-
-			Card_Render_Instance instance = {};
-			instance.screen_rotation = angle - PI / 2.0f;
-			instance.screen_pos = card_pos;
-			instance.card_pos = { 1.0f, 0.0f };
-			instance.card_id = i + 1;
-			if (program->prev_card_id == instance.card_id) {
-				instance.z_offset = num_cards;
-			} else {
-				instance.z_offset = i;
-			}
-			card_render_add_instance(&program->draw.card_render, instance);
-		}
-
-		// add draw pile card
-		{
-			Card_Render_Instance instance = {};
-			instance.screen_rotation = 0.0f;
-			instance.screen_pos = { -ratio + params.border / 2.0f,
-			                        -1.0f + params.height / 2.0f };
-			instance.card_pos = { 0.0f, 0.0f };
-			card_render_add_instance(&program->draw.card_render, instance);
-		}
-
-		// add discard pile card
-		{
-			Card_Render_Instance instance = {};
-			instance.screen_rotation = 0.0f;
-			instance.screen_pos = { ratio - params.border / 2.0f,
-			                        -1.0f + params.height / 2.0f };
-			instance.card_pos = { 1.0f, 0.0f };
-			card_render_add_instance(&program->draw.card_render, instance);
-		}
-
-		card_render_z_sort(&program->draw.card_render);
+	Card_State *card_state = &program->game.card_state;
+	card_state->events.reset();
+	switch (card_event.type) {
+	case CARD_UI_EVENT_NONE:
+		break;
+	case CARD_UI_EVENT_DECK_CLICKED:
+		card_state->draw();
+		break;
+	case CARD_UI_EVENT_DISCARD_CLICKED:
+		break;
+	case CARD_UI_EVENT_HAND_CLICKED:
+		break;
 	}
+
+	card_anim_update_anims(&program->card_anim_state, card_state->events, time);
 
 	// TODO -- get card id from mouse pos
 	v2 card_mouse_pos = { (f32)input->mouse_pos.x / (f32)screen_size.x,
@@ -1623,6 +1819,11 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	u32 selected_card_id = card_render_get_card_id_from_mouse_pos(&program->draw.card_render,
 	                                                              card_mouse_pos);
 	program->prev_card_id = selected_card_id;
+	{
+		f32 ratio = (f32)screen_size.x / (f32) screen_size.y;
+		program->draw.card_debug_line.constants.top_left     = { -ratio,  1.0f };
+		program->draw.card_debug_line.constants.bottom_right = {  ratio, -1.0f };
+	}
 	card_render_draw_debug_lines(&program->draw.card_render,
 	                             &program->draw.card_debug_line,
 	                             selected_card_id);
