@@ -6,6 +6,7 @@
 #include "jfg/input.h"
 
 #include "jfg/jfg_d3d11.h"
+#include "jfg/jfg_dsound.h"
 
 struct Program;
 
@@ -13,6 +14,9 @@ struct Program;
 	/* start list */ \
 	GAME_FUNCTION(Memory_Spec, get_program_size) \
 	GAME_FUNCTION(void, program_init, Program *program) \
+	GAME_FUNCTION(u8, program_dsound_init, Program *program, IDirectSound *dsound) \
+	GAME_FUNCTION(void, program_dsound_free, Program *program) \
+	GAME_FUNCTION(void, program_dsound_play, Program *program) \
 	GAME_FUNCTION(u8, program_d3d11_init, Program *program, ID3D11Device *device, v2_u32 screen_size) \
 	GAME_FUNCTION(void, program_d3d11_free, Program *program) \
 	GAME_FUNCTION(u8, program_d3d11_set_screen_size, Program *program, ID3D11Device* device, v2_u32 screen_size) \

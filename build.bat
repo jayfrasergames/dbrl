@@ -36,11 +36,11 @@ EXIT /B 0
 echo build_debug_runner
 
 cl ..\src\main_win32.cpp ^
-	d3d11.lib user32.lib ^
+	user32.lib ^
 	/I ..\src ^
 	/Fe: %project_name%_d.exe ^
 	/Fd: %project_name%_d.pdb ^
-	/Zi /Od /MDd ^
+	/Zi /Od /MTd ^
 	/D WIN32 /D DEBUG ^
 	/link /incremental:no /subsystem:windows
 
@@ -68,7 +68,7 @@ cl ..\src\dbrl.cpp ^
 	/I ..\src ^
 	/Fe: %project_name%_d.dll ^
 	/Fd: pdb\%project_name%_lib_d_%time_str%_2.pdb ^
-	/Zi /LDd /MDd /D DEBUG /D LIBRARY ^
+	/Zi /LDd /MTd /D DEBUG /D LIBRARY ^
 	/link /dll /incremental:no /pdb:pdb\%project_name%_lib_d_%time_str%_1.pdb
 
 echo written_library > written_library
@@ -110,10 +110,10 @@ EXIT /B 0
 echo build_debug_release
 
 cl ..\src\main_win32.cpp ^
-	d3d11.lib user32.lib ^
+	user32.lib ^
 	/I ..\src ^
 	/Fe: %project_name%.exe ^
-	/Ot /MD ^
+	/Ot /MT ^
 	/D WIN32 ^
 	/link /incremental:no /subsystem:windows
 
@@ -122,6 +122,10 @@ EXIT /B 0
 :build_assets
 echo build_assets
 
+python ..\scripts\wave_to_header.py ^
+	-i ../assets/sound/Card_Game_Movement_Deal_Single_01.wav ^
+	-o ../src/gen/sound_deal_card.data.h ^
+	-n Sound_Deal_Card
 python ..\scripts\make_sprite_sheet.py ^
 	-i ../assets/creatures.png ^
 	-o ../src/gen/sprite_sheet_creatures.data.h ^

@@ -1,13 +1,15 @@
 #include "jfg/prelude.h"
 #include "jfg/codepage_437.h"
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <windows.h>
+
+#include "jfg/jfg_dsound.h"
 
 #include "jfg/jfg_d3d11.h"
 #include "jfg/log.h"
 #include "jfg/imgui.h"
+
+#include "gen/sound_deal_card.data.h"
 
 #include <dxgi1_2.h>
 
@@ -203,6 +205,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	HWND window = args->window;
 
+	if (!d3d11_try_load()) {
+		return 0;
+	}
+
 	ID3D11Device        *device;
 	ID3D11DeviceContext *context;
 
@@ -329,6 +335,106 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	Log d3d11_log = {};
 
+	if (!dsound_try_load()) {
+		return 0;
+	}
+
+	// TODO -- enumerate devices/give a choice of sound devices
+	IDirectSound *dsound = NULL;
+	hr = DirectSoundCreate(NULL, &dsound, NULL);
+	if (FAILED(hr)) {
+		return 0;
+	}
+
+	hr = dsound->SetCooperativeLevel(window, DSSCL_PRIORITY);
+	if (FAILED(hr)) {
+		log(&d3d11_log, "Failed to set direct sound priority");
+	}
+
+	// create sound buffer
+	IDirectSoundBuffer *ds_primary_buffer = NULL;
+	{
+		DSBUFFERDESC desc = {};
+		desc.dwSize = sizeof(desc);
+		desc.dwFlags = DSBCAPS_PRIMARYBUFFER; // | DSBCAPS_GLOBALFOCUS;
+
+		hr = dsound->CreateSoundBuffer(&desc, &ds_primary_buffer, NULL);
+	}
+	if (FAILED(hr)) {
+		return 0;
+	}
+
+	WAVEFORMATEX waveformat = {};
+	waveformat.wFormatTag = WAVE_FORMAT_PCM;
+	waveformat.nChannels = 2;
+	waveformat.nSamplesPerSec = 44100;
+	waveformat.wBitsPerSample = 16;
+	waveformat.nBlockAlign = waveformat.nChannels * waveformat.wBitsPerSample / 8;
+	waveformat.nAvgBytesPerSec = waveformat.nSamplesPerSec * waveformat.nBlockAlign;
+	waveformat.cbSize = 0;
+
+	hr = ds_primary_buffer->SetFormat(&waveformat);
+	if (FAILED(hr)) {
+		log(&d3d11_log, "Failed to set direct sound primary buffer format.");
+	}
+
+	program_dsound_init(program, dsound);
+
+	/*
+	IDirectSoundBuffer *ds_secondary_buffer = NULL;
+	{
+		DSBUFFERDESC desc = {};
+		desc.dwSize = sizeof(desc);
+		desc.dwFlags = 0;
+		desc.dwBufferBytes = waveformat.nAvgBytesPerSec * 2;
+		desc.lpwfxFormat = &waveformat;
+
+		hr = dsound->CreateSoundBuffer(&desc, &ds_secondary_buffer, NULL);
+	}
+	if (FAILED(hr)) {
+		log(&d3d11_log, "Failed to create secondary buffer.");
+	}
+
+	IDirectSoundBuffer *deal_card_sound = NULL;
+	{
+		WAVEFORMATEX waveformat = {};
+		waveformat.wFormatTag = WAVE_FORMAT_PCM;
+		waveformat.nChannels = SOUND_DEAL_CARD_HEADER.num_channels;
+		waveformat.nSamplesPerSec = SOUND_DEAL_CARD_HEADER.sample_rate;
+		waveformat.wBitsPerSample = SOUND_DEAL_CARD_HEADER.sample_width * 8;
+		waveformat.nBlockAlign = waveformat.nChannels * waveformat.wBitsPerSample / 8;
+		waveformat.nAvgBytesPerSec = waveformat.nSamplesPerSec * waveformat.nBlockAlign;
+		waveformat.cbSize = 0;
+
+		DSBUFFERDESC desc = {};
+		desc.dwSize = sizeof(desc);
+		desc.dwFlags = DSBCAPS_GLOBALFOCUS;
+		desc.dwBufferBytes = sizeof(SOUND_DEAL_CARD_DATA);
+		desc.lpwfxFormat = &waveformat;
+
+		hr = dsound->CreateSoundBuffer(&desc, &deal_card_sound, NULL);
+	}
+	if (FAILED(hr)) {
+		log(&d3d11_log, "Failed to create deal_card_sound buffer.");
+	} else {
+		void *data_1, *data_2;
+		DWORD len_1, len_2;
+		hr = deal_card_sound->Lock(0, sizeof(SOUND_DEAL_CARD_DATA),
+		                           &data_1, &len_1,
+		                           &data_2, &len_2,
+		                           DSBLOCK_ENTIREBUFFER);
+		ASSERT(SUCCEEDED(hr));
+		memcpy(data_1, SOUND_DEAL_CARD_DATA, len_1);
+		if (data_2) {
+			memcpy(data_2, SOUND_DEAL_CARD_DATA + len_1, len_2);
+		}
+		hr = deal_card_sound->Unlock(data_1, len_1, data_2, len_2);
+		ASSERT(SUCCEEDED(hr));
+
+		deal_card_sound->Play(0, 0, DSBPLAY_LOOPING);
+	}
+	*/
+
 	for (u32 frame_number = 0; running; ++frame_number) {
 		if (was_library_written()) {
 			if (game_library != NULL) {
@@ -407,6 +513,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 			}
 			render_d3d11(program, context, back_buffer_rtv);
 		}
+		program_dsound_play(program);
 
 		// render any d3d11 messages we may have
 		u64 num_messages = info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();

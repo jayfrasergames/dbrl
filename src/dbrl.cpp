@@ -6,6 +6,7 @@
 #include "jfg/debug_line_draw.h"
 #include "jfg/containers.hpp"
 #include "jfg/random.h"
+#include "sound.h"
 #include "sprite_sheet.h"
 #include "card_render.h"
 #include "pixel_art_upsampler.h"
@@ -1226,7 +1227,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			after_pos.radius = params->radius;
 			anim->type = CARD_ANIM_HAND_TO_HAND;
 			anim->hand_to_hand.start_time = time;
-			anim->hand_to_hand.duration = 0.2f;
+			anim->hand_to_hand.duration = 0.1f;
 			anim->hand_to_hand.start = before_pos;
 			anim->hand_to_hand.end = after_pos;
 			anim->hand_to_hand.index = hand_index;
@@ -1384,6 +1385,7 @@ struct Program
 	Program_Input_State program_input_state;
 	World_Anim_State    world_anim;
 	Draw                draw;
+	Sound_Player        sound;
 
 	u32           frame_number;
 	v2            screen_size;
@@ -1482,6 +1484,21 @@ void program_init(Program* program)
 		card.appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
 		card_state->discard.append(card);
 	}
+}
+
+u8 program_dsound_init(Program* program, IDirectSound* dsound)
+{
+	return sound_player_dsound_init(&program->sound, dsound);
+}
+
+void program_dsound_free(Program* program)
+{
+	sound_player_dsound_free(&program->sound);
+}
+
+void program_dsound_play(Program* program)
+{
+	sound_player_dsound_play(&program->sound);
 }
 
 u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size)
@@ -1717,6 +1734,7 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 {
 	program->screen_size = { (f32)screen_size.w, (f32)screen_size.h };
 	++program->frame_number;
+	program->sound.reset();
 
 	// process input
 	switch (program->program_input_state) {
@@ -1802,6 +1820,7 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 		break;
 	case CARD_UI_EVENT_DECK_CLICKED:
 		card_state->draw();
+		program->sound.play(SOUND_DEAL_CARD);
 		break;
 	case CARD_UI_EVENT_DISCARD_CLICKED:
 		break;
