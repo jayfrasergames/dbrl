@@ -6,13 +6,14 @@
 #include "jfg/debug_line_draw.h"
 #include "jfg/containers.hpp"
 #include "jfg/random.h"
+#include "jfg/thread.h"
+
 #include "sound.h"
 #include "sprite_sheet.h"
 #include "card_render.h"
 #include "pixel_art_upsampler.h"
 
 #include <stdio.h>  // XXX - for snprintf
-#include <stdlib.h> // XXX - for random
 
 #include "gen/appearance.data.h"
 #include "gen/sprite_sheet_creatures.data.h"
@@ -21,6 +22,13 @@
 
 #include "gen/pass_through_dxbc_vertex_shader.data.h"
 #include "gen/pass_through_dxbc_pixel_shader.data.h"
+
+// =============================================================================
+// Global Platform Functions
+
+#define PLATFORM_FUNCTION(return_type, name, ...) return_type (*name)(__VA_ARGS__) = NULL;
+PLATFORM_FUNCTIONS
+#undef PLATFORM_FUNCTION
 
 // =============================================================================
 // type definitions/constants
@@ -401,7 +409,7 @@ void game_play_until_input_required(Game* game, Event_Buffer* event_buffer)
 					action.type = ACTION_MOVE;
 					action.move.entity_id = choice.entity_id;
 					action.move.start = e->pos;
-					action.move.end = poss[rand() % num_poss];
+					action.move.end = poss[rand_u32() % num_poss];
 				} else {
 					Action action = {};
 					action.type = ACTION_WAIT;
@@ -428,6 +436,90 @@ void game_play_until_input_required(Game* game, Event_Buffer* event_buffer)
 	}
 need_player_input:
 	game->current_entity = cur_entity;
+}
+
+// =============================================================================
+// turns
+
+// TODO -- need a "peek move resolve" function
+
+void peek_move_resolve(Slice<Action> moves)
+{
+	for (u32 i = 0; i < moves.len; ++i) {
+		Action a = moves[i];
+		ASSERT(a.type == ACTION_MOVE);
+		/*
+		if (will_resolve(a)) {
+			a.move.will_resolve = 1;
+		} else {
+			a.move.will_resolve = 0;
+		}
+		*/
+	}
+}
+
+enum Message_Type
+{
+	MESSAGE_MOVE_PRE_EXIT,
+	MESSAGE_MOVE_POST_EXIT,
+	MESSAGE_MOVE_PRE_ENTER,
+	MESSAGE_MOVE_POST_ENTER,
+};
+
+struct Message
+{
+	Message_Type type;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Pos       start;
+			Pos       pos;
+		} move;
+	};
+};
+
+enum Transaction_Type
+{
+	TRANSACTION_MOVE_EXIT,
+	TRANSACTION_MOVE_ENTER,
+};
+
+struct Transaction
+{
+	Transaction_Type type;
+	f32 start_time;
+	union {
+		struct {
+		} move_exit;
+		struct {
+		} move_enter;
+	};
+};
+
+#define MAX_TRANSACTIONS 4096
+void game_do_actions(Slice<Action> actions, Event_Buffer* event_buffer)
+{
+	Max_Length_Array<Transaction, MAX_TRANSACTIONS> transaction_buffer;
+
+	// build actions into "transaction buffer"
+	for (u32 i = 0; i < actions.len; ++i) {
+		Action a = actions[i];
+		Transaction t;
+		switch (a.type) {
+		case ACTION_NONE:
+		case ACTION_WAIT:
+			break;
+		case ACTION_MOVE:
+			t.type = TRANSACTION_MOVE_EXIT;
+			t.start_time = 0.0f;
+			transaction_buffer.append(t);
+			break;
+		}
+	}
+
+	f32 time = 0.0f;
+	while (transaction_buffer) {
+	}
 }
 
 // =============================================================================
@@ -612,7 +704,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ca.world_coords = { (f32)pos.x, (f32)pos.y };
 			ca.entity_id = e->id;
 			ca.depth_offset = Z_OFFSET_CHARACTER;
-			ca.idle.duration = 0.8f + 0.4f * ((f32)rand() / (f32)RAND_MAX);
+			ca.idle.duration = 0.8f + 0.4f * rand_f32();
 			ca.idle.offset = 0.0f;
 			world_anim->anims[anim_idx++] = ca;
 			continue;
@@ -757,7 +849,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 				anim->world_coords = anim->move.end;
 				anim->type = ANIM_CREATURE_IDLE;
 				anim->idle.offset = time;
-				anim->idle.duration = 0.8f + 0.4f * ((f32)rand()/(f32)RAND_MAX);
+				anim->idle.duration = 0.8f + 0.4f * rand_f32();
 				--world_anim->num_active_anims;
 			}
 			break;
@@ -1373,6 +1465,12 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 // =============================================================================
 // program
 
+enum Program_State
+{
+	PROGRAM_STATE_NORMAL,
+	PROGRAM_STATE_DEBUG_PAUSE,
+};
+
 enum Program_Input_State
 {
 	GIS_NONE,
@@ -1381,6 +1479,12 @@ enum Program_Input_State
 
 struct Program
 {
+	Program_State       state;
+	volatile u32        process_frame_signal;
+
+	Input  *cur_input;
+	v2_u32  cur_screen_size;
+
 	Game                game;
 	Program_Input_State program_input_state;
 	World_Anim_State    world_anim;
@@ -1419,8 +1523,12 @@ Memory_Spec get_program_size()
 	return result;
 }
 
-void program_init(Program* program)
+void program_init(Program* program, Platform_Functions platform_functions)
 {
+#define PLATFORM_FUNCTION(_return_type, name, ...) name = platform_functions.name;
+	PLATFORM_FUNCTIONS
+#undef PLATFORM_FUNCTION
+
 	memset(program, 0, sizeof(*program));
 	sprite_sheet_renderer_init(&program->draw.renderer,
 	                           &program->draw.tiles, 3,
@@ -1730,8 +1838,11 @@ static v2_i32 screen_pos_to_world_pos(Camera* camera, v2_u32 screen_size, v2_u32
 	return world_pos;
 }
 
-void process_frame(Program* program, Input* input, v2_u32 screen_size)
+void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 {
+	// start off by setting global state
+	program->random_state.set_current();
+
 	program->screen_size = { (f32)screen_size.w, (f32)screen_size.h };
 	++program->frame_number;
 	program->sound.reset();
@@ -1869,6 +1980,37 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	imgui_text(&program->imgui, buffer);
 	snprintf(buffer, ARRAY_SIZE(buffer), "Selected Card ID: %u", selected_card_id);
 	imgui_text(&program->imgui, buffer);
+}
+
+struct Process_Frame_Aux_Thread_Args
+{
+	Program* program;
+	Input*   input;
+	v2_u32   screen_size;
+};
+
+void process_frame_aux_thread(void* uncast_args)
+{
+	Program* program = (Program*)uncast_args;
+	process_frame_aux(program, program->cur_input, program->cur_screen_size);
+	ASSERT(!interlocked_compare_exchange(&program->process_frame_signal, 1, 0));
+}
+
+void process_frame(Program* program, Input* input, v2_u32 screen_size)
+{
+	switch (program->state) {
+	case PROGRAM_STATE_NORMAL: {
+		program->cur_input       = input;
+		program->cur_screen_size = screen_size;
+		start_thread(process_frame_aux_thread, program);
+		while (!interlocked_compare_exchange(&program->process_frame_signal, 0, 1)) {
+			sleep(0);
+		}
+		break;
+	}
+	case PROGRAM_STATE_DEBUG_PAUSE:
+		break;
+	}
 }
 
 void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetView* output_rtv)

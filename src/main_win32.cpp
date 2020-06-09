@@ -9,8 +9,6 @@
 #include "jfg/log.h"
 #include "jfg/imgui.h"
 
-#include "gen/sound_deal_card.data.h"
-
 #include <dxgi1_2.h>
 
 #include <math.h>
@@ -35,6 +33,39 @@ void show_debug_messages(HWND window, ID3D11InfoQueue *info_queue)
 		MessageBox(window, message->pDescription, "DBRL", MB_OK);
 		free(message);
 	}
+}
+
+struct Start_Thread_Aux_Args
+{
+	Thread_Function   thread_function;
+	void             *thread_args;
+};
+
+DWORD __stdcall start_thread_aux(void* uncast_args)
+{
+	Start_Thread_Aux_Args *args = (Start_Thread_Aux_Args*)uncast_args;
+	args->thread_function(args->thread_args);
+	free(uncast_args);
+	return 1;
+}
+
+void start_thread(Thread_Function thread_function, void* thread_args)
+{
+	Start_Thread_Aux_Args *args = (Start_Thread_Aux_Args*)malloc(sizeof(Start_Thread_Aux_Args));
+	args->thread_function = thread_function;
+	args->thread_args = thread_args;
+	HANDLE thread = CreateThread(
+		NULL,
+		10 * 1024 * 1024,
+		start_thread_aux,
+		args,
+		0,
+		NULL);
+}
+
+void sleep(u32 time_in_milliseconds)
+{
+	Sleep(time_in_milliseconds);
 }
 
 static u8 running = 1;
@@ -327,7 +358,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 	get_screen_size(window, &screen_size);
 	prev_screen_size = screen_size;
 
-	program_init(program);
+	Platform_Functions platform_functions = {};
+	platform_functions.start_thread = start_thread;
+	platform_functions.sleep = sleep;
+	program_init(program, platform_functions);
 	u8 d3d11_init_success = program_d3d11_init(program, device, screen_size);
 
 	v2_u32 back_buffer_size;
@@ -380,62 +414,9 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	program_dsound_init(program, dsound);
 
-	/*
-	IDirectSoundBuffer *ds_secondary_buffer = NULL;
-	{
-		DSBUFFERDESC desc = {};
-		desc.dwSize = sizeof(desc);
-		desc.dwFlags = 0;
-		desc.dwBufferBytes = waveformat.nAvgBytesPerSec * 2;
-		desc.lpwfxFormat = &waveformat;
-
-		hr = dsound->CreateSoundBuffer(&desc, &ds_secondary_buffer, NULL);
-	}
-	if (FAILED(hr)) {
-		log(&d3d11_log, "Failed to create secondary buffer.");
-	}
-
-	IDirectSoundBuffer *deal_card_sound = NULL;
-	{
-		WAVEFORMATEX waveformat = {};
-		waveformat.wFormatTag = WAVE_FORMAT_PCM;
-		waveformat.nChannels = SOUND_DEAL_CARD_HEADER.num_channels;
-		waveformat.nSamplesPerSec = SOUND_DEAL_CARD_HEADER.sample_rate;
-		waveformat.wBitsPerSample = SOUND_DEAL_CARD_HEADER.sample_width * 8;
-		waveformat.nBlockAlign = waveformat.nChannels * waveformat.wBitsPerSample / 8;
-		waveformat.nAvgBytesPerSec = waveformat.nSamplesPerSec * waveformat.nBlockAlign;
-		waveformat.cbSize = 0;
-
-		DSBUFFERDESC desc = {};
-		desc.dwSize = sizeof(desc);
-		desc.dwFlags = DSBCAPS_GLOBALFOCUS;
-		desc.dwBufferBytes = sizeof(SOUND_DEAL_CARD_DATA);
-		desc.lpwfxFormat = &waveformat;
-
-		hr = dsound->CreateSoundBuffer(&desc, &deal_card_sound, NULL);
-	}
-	if (FAILED(hr)) {
-		log(&d3d11_log, "Failed to create deal_card_sound buffer.");
-	} else {
-		void *data_1, *data_2;
-		DWORD len_1, len_2;
-		hr = deal_card_sound->Lock(0, sizeof(SOUND_DEAL_CARD_DATA),
-		                           &data_1, &len_1,
-		                           &data_2, &len_2,
-		                           DSBLOCK_ENTIREBUFFER);
-		ASSERT(SUCCEEDED(hr));
-		memcpy(data_1, SOUND_DEAL_CARD_DATA, len_1);
-		if (data_2) {
-			memcpy(data_2, SOUND_DEAL_CARD_DATA + len_1, len_2);
-		}
-		hr = deal_card_sound->Unlock(data_1, len_1, data_2, len_2);
-		ASSERT(SUCCEEDED(hr));
-
-		deal_card_sound->Play(0, 0, DSBPLAY_LOOPING);
-	}
-	*/
-
 	for (u32 frame_number = 0; running; ++frame_number) {
+
+#ifdef DEGBUG
 		if (was_library_written()) {
 			if (game_library != NULL) {
 				program_d3d11_free(program);
@@ -448,6 +429,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 				d3d11_init_success = 0;
 			}
 		}
+#endif
 
 		get_screen_size(window, &screen_size);
 
@@ -487,9 +469,13 @@ DWORD __stdcall game_loop(void *uncast_args)
 		};
 		prev_mouse_pos = mouse_pos;
 
+#ifdef DEBUG
 		if (game_library != NULL) {
 			process_frame(program, input_front_buffer, screen_size);
 		}
+#else
+		process_frame(program, input_front_buffer, screen_size);
+#endif
 
 		imgui_begin(&imgui);
 		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });

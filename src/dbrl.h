@@ -8,12 +8,14 @@
 #include "jfg/jfg_d3d11.h"
 #include "jfg/jfg_dsound.h"
 
+#include "platform_functions.h"
+
 struct Program;
 
 #define GAME_FUNCTIONS \
 	/* start list */ \
 	GAME_FUNCTION(Memory_Spec, get_program_size) \
-	GAME_FUNCTION(void, program_init, Program *program) \
+	GAME_FUNCTION(void, program_init, Program *program, Platform_Functions platform_functions) \
 	GAME_FUNCTION(u8, program_dsound_init, Program *program, IDirectSound *dsound) \
 	GAME_FUNCTION(void, program_dsound_free, Program *program) \
 	GAME_FUNCTION(void, program_dsound_play, Program *program) \

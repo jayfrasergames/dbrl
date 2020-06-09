@@ -2,10 +2,6 @@
 * tasks:
   * make constants (e.g. bounce duration) tunable with IMGUI in something like constants.edit.h
 
-
-  * card interface
-  * sound
-
   * make zoom level screen size independent
 
 * scenarios
@@ -27,7 +23,6 @@
     * imgui
       * display log
     * input
-    * random numbers
     * math functions
        * vector data types, multiplication by scalars, casting etc
     * dll reloading - don't reload if compile unsuccessful (i.e. don't write "written_library" in that case)
