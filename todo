@@ -1,3 +1,6 @@
+* urgent bug fix
+  * change world center to actually be a world center in world units
+    right now it is an offset
 
 * tasks:
   * make constants (e.g. bounce duration) tunable with IMGUI in something like constants.edit.h

@@ -102,6 +102,11 @@ fxc /Fh gen\card_render_dxbc_vertex_shader.data.h ^
 fxc /Fh gen\card_render_dxbc_pixel_shader.data.h ^
 	/E ps_card /Vn CARD_RENDER_DXBC_PS /T ps_5_0 card_render.hlsl
 
+fxc /Fh gen\debug_draw_world_dxbc_triangle_vertex_shader.data.h ^
+	/E vs_triangle /Vn DDW_TRIANGLE_DXBC_VS /T vs_5_0 debug_draw_world.hlsl
+fxc /Fh gen\debug_draw_world_dxbc_triangle_pixel_shader.data.h ^
+	/E ps_triangle /Vn DDW_TRIANGLE_DXBC_PS /T ps_5_0 debug_draw_world.hlsl
+
 popd
 
 EXIT /B 0

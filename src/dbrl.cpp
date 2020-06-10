@@ -8,6 +8,7 @@
 #include "jfg/random.h"
 #include "jfg/thread.h"
 
+#include "debug_draw_world.h"
 #include "sound.h"
 #include "sprite_sheet.h"
 #include "card_render.h"
@@ -47,6 +48,10 @@ typedef u16 Entity_ID;
 #define Z_OFFSET_CHARACTER        1.0f
 #define Z_OFFSET_CHARACTER_SHADOW 0.9f
 #define Z_OFFSET_WATER_EDGE       0.05f
+
+struct Program;
+thread_local Program* global_program;
+void debug_pause();
 
 // =============================================================================
 // game
@@ -379,6 +384,7 @@ u8 game_do_action(Game* game, Action action, Event_Buffer* event_buffer)
 
 void game_play_until_input_required(Game* game, Event_Buffer* event_buffer)
 {
+	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
 	u32 cur_entity = game->current_entity;
 	for (;;) {
 		Entity *e = &game->entities[cur_entity];
@@ -410,6 +416,11 @@ void game_play_until_input_required(Game* game, Event_Buffer* event_buffer)
 					action.move.entity_id = choice.entity_id;
 					action.move.start = e->pos;
 					action.move.end = poss[rand_u32() % num_poss];
+
+					debug_draw_world_arrow((v2)action.move.start,
+					                       (v2)action.move.end);
+					debug_pause();
+
 				} else {
 					Action action = {};
 					action.type = ACTION_WAIT;
@@ -1469,6 +1480,7 @@ enum Program_State
 {
 	PROGRAM_STATE_NORMAL,
 	PROGRAM_STATE_DEBUG_PAUSE,
+	PROGRAM_STATE_NO_PAUSE,
 };
 
 enum Program_Input_State
@@ -1481,6 +1493,7 @@ struct Program
 {
 	Program_State       state;
 	volatile u32        process_frame_signal;
+	volatile u32        debug_resume;
 
 	Input  *cur_input;
 	v2_u32  cur_screen_size;
@@ -1502,6 +1515,7 @@ struct Program
 
 	Card_Anim_State card_anim_state;
 
+	Debug_Draw_World debug_draw_world;
 	Pixel_Art_Upsampler    pixel_art_upsampler;
 	union {
 		struct {
@@ -1534,8 +1548,11 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	                           &program->draw.tiles, 3,
 	                           { 1600, 900 });
 
+	global_program = program;
+	program->state = PROGRAM_STATE_NO_PAUSE;
 	program->random_state.seed(0);
 	program->random_state.set_current();
+	program->debug_draw_world.set_current();
 
 	program->draw.tiles.data       = SPRITE_SHEET_TILES;
 	program->draw.creatures.data   = SPRITE_SHEET_CREATURES;
@@ -1592,6 +1609,8 @@ void program_init(Program* program, Platform_Functions platform_functions)
 		card.appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
 		card_state->discard.append(card);
 	}
+
+	program->state = PROGRAM_STATE_NORMAL;
 }
 
 u8 program_dsound_init(Program* program, IDirectSound* dsound)
@@ -1696,6 +1715,10 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 		goto error_init_debug_line;
 	}
 
+	if (!debug_draw_world_d3d11_init(&program->debug_draw_world, device)) {
+		goto error_init_debug_draw_world;
+	}
+
 	program->max_screen_size      = screen_size;
 	program->d3d11.output_texture = output_texture;
 	program->d3d11.output_uav     = output_uav;
@@ -1706,6 +1729,8 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 
 	return 1;
 
+	debug_draw_world_d3d11_free(&program->debug_draw_world);
+error_init_debug_draw_world:
 	debug_line_d3d11_free(&program->draw.card_debug_line);
 error_init_debug_line:
 	card_render_d3d11_free(&program->draw.card_render);
@@ -1739,6 +1764,7 @@ error_init_output_texture:
 
 void program_d3d11_free(Program* program)
 {
+	debug_draw_world_d3d11_free(&program->debug_draw_world);
 	debug_line_d3d11_free(&program->draw.card_debug_line);
 	card_render_d3d11_free(&program->draw.card_render);
 	imgui_d3d11_free(&program->imgui);
@@ -1838,10 +1864,25 @@ static v2_i32 screen_pos_to_world_pos(Camera* camera, v2_u32 screen_size, v2_u32
 	return world_pos;
 }
 
+void debug_pause()
+{
+	Program *program = global_program;
+	if (program->state == PROGRAM_STATE_NO_PAUSE) {
+		return;
+	}
+	program->state = PROGRAM_STATE_DEBUG_PAUSE;
+	interlocked_compare_exchange(&program->process_frame_signal, 1, 0);
+	while (!interlocked_compare_exchange(&program->debug_resume, 0, 1)) {
+		sleep(0);
+	}
+}
+
 void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 {
 	// start off by setting global state
 	program->random_state.set_current();
+	program->debug_draw_world.reset();
+	program->debug_draw_world.set_current();
 
 	program->screen_size = { (f32)screen_size.w, (f32)screen_size.h };
 	++program->frame_number;
@@ -1886,6 +1927,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			Input_Button_Frame_Data lmb_data = input->button_data[INPUT_BUTTON_MOUSE_LEFT];
 			if (!(lmb_data.flags & INPUT_BUTTON_FLAG_ENDED_DOWN) && lmb_data.num_transitions
 			    && sprite_id) {
+				debug_pause();
 				Entity *mover = game_get_entity_by_id(&program->game,
 				                                      current_choice.entity_id);
 				Entity *target = game_get_entity_by_id(&program->game, sprite_id);
@@ -1973,12 +2015,29 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	         world_mouse_pos.x, world_mouse_pos.y);
 	imgui_text(&program->imgui, buffer);
 	sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
-	snprintf(buffer, ARRAY_SIZE(buffer), "Sprite ID: %u", sprite_id);
+	Pos sprite_pos;
+	{
+		u32 num_entities = program->game.num_entities;
+		Entity *entities = program->game.entities;
+		for (u32 i = 0; i < num_entities; ++i) {
+			Entity *e = &entities[i];
+			if (e->id == sprite_id) {
+				sprite_pos = e->pos;
+				break;
+			}
+		}
+	}
+	snprintf(buffer, ARRAY_SIZE(buffer), "Sprite ID: %u, position: (%u, %u)", sprite_id,
+		sprite_pos.x, sprite_pos.y);
 	imgui_text(&program->imgui, buffer);
 	snprintf(buffer, ARRAY_SIZE(buffer), "Card mouse pos: (%f, %f)",
 	         card_mouse_pos.x, card_mouse_pos.y);
 	imgui_text(&program->imgui, buffer);
 	snprintf(buffer, ARRAY_SIZE(buffer), "Selected Card ID: %u", selected_card_id);
+	imgui_text(&program->imgui, buffer);
+	snprintf(buffer, ARRAY_SIZE(buffer), "World Center: (%f, %f)",
+		program->draw.camera.world_center.x,
+		program->draw.camera.world_center.y);
 	imgui_text(&program->imgui, buffer);
 }
 
@@ -1992,6 +2051,7 @@ struct Process_Frame_Aux_Thread_Args
 void process_frame_aux_thread(void* uncast_args)
 {
 	Program* program = (Program*)uncast_args;
+	global_program = program;
 	process_frame_aux(program, program->cur_input, program->cur_screen_size);
 	ASSERT(!interlocked_compare_exchange(&program->process_frame_signal, 1, 0));
 }
@@ -2009,13 +2069,26 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 		break;
 	}
 	case PROGRAM_STATE_DEBUG_PAUSE:
+		if (input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
+			program->state = PROGRAM_STATE_NORMAL;
+			interlocked_compare_exchange(&program->debug_resume, 1, 0);
+			while (!interlocked_compare_exchange(&program->process_frame_signal, 0, 1)) {
+				sleep(0);
+			}
+		} else {
+			imgui_begin(&program->imgui);
+			imgui_set_text_cursor(&program->imgui,
+			                      { 1.0f, 0.0f, 1.0f, 1.0f },
+			                      { 5.0f, 5.0f });
+			imgui_text(&program->imgui, "DEBUG PAUSE");
+		}
 		break;
 	}
 }
 
 void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetView* output_rtv)
 {
-	v2_u32 screen_size_u32 = { (u32)program->screen_size.x, (u32)program->screen_size.y };
+	v2_u32 screen_size_u32 = (v2_u32)program->screen_size;
 
 	f32 clear_color[] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	dc->ClearRenderTargetView(program->d3d11.output_rtv, clear_color);
@@ -2050,6 +2123,13 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	                       screen_size_u32,
 	                       program->d3d11.output_rtv);
 	// debug_line_d3d11_draw(&program->draw.card_debug_line, dc, program->d3d11.output_rtv);
+
+	v2 debug_zoom = (v2)(world_br - world_tl) / 24.0f;
+	debug_draw_world_d3d11_draw(&program->debug_draw_world,
+	                            dc,
+	                            output_rtv,
+	                            program->draw.camera.world_center,
+	                            debug_zoom);
 
 	imgui_d3d11_draw(&program->imgui, dc, program->d3d11.output_rtv, screen_size_u32);
 
