@@ -56,18 +56,6 @@ void debug_pause();
 // =============================================================================
 // game
 
-enum Brain_Type
-{
-	BRAIN_TYPE_NONE,
-	BRAIN_TYPE_PLAYER,
-	BRAIN_TYPE_RANDOM,
-};
-
-struct Brain
-{
-	Brain_Type type;
-};
-
 #define MAX_CHOICES 32
 
 enum Choice_Type
@@ -144,14 +132,44 @@ enum Block_Flag
 	BLOCK_FLY  = 1 << 2,
 };
 
+
 struct Entity
 {
-	Entity_ID  id;
-	u16        movement_type;
-	u16        block_mask;
-	Pos        pos;
-	Appearance appearance;
-	Brain      brain;
+	Entity_ID     id;
+	u16           movement_type;
+	u16           block_mask;
+	Pos           pos;
+	Appearance    appearance;
+};
+
+enum Controller_Type
+{
+	CONTROLLER_PLAYER,
+	CONTROLLER_RANDOM_MOVE,
+	CONTROLLER_RANDOM_SNAKE,
+
+	NUM_CONTROLLERS,
+};
+
+#define CONTROLLER_SNAKE_MAX_LENGTH 16
+
+typedef u32 Controller_ID;
+struct Controller
+{
+	Controller_Type type;
+	Controller_ID   id;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Action    action;
+		} player;
+		struct {
+			Entity_ID entity_id;
+		} random_move;
+		struct {
+			Max_Length_Array<Entity_ID, CONTROLLER_SNAKE_MAX_LENGTH> entities;
+		} random_snake;
+	};
 };
 
 // =============================================================================
@@ -209,108 +227,25 @@ struct Card_State
 	}
 };
 
+#define GAME_MAX_CONTROLLERS 1024
 // maybe better called "world state"?
 struct Game
 {
 	u32 current_entity;
+	Entity_ID     next_entity_id;
+	Controller_ID next_controller_id;
+
+	// probably don't need this
 	u32 cur_block_id;
 	f32 block_time;
+
 	u32 num_entities;
 	Entity entities[MAX_ENTITIES];
-	u32 choice_stack_idx;
-	Choice choice_stack[MAX_CHOICES];
+
+	Max_Length_Array<Controller, GAME_MAX_CONTROLLERS> controllers;
 
 	Card_State card_state;
 };
-
-void game_build_from_string(Game* game, char* str)
-{
-	Pos cur_pos = { 1, 1 };
-	u32 idx = 0;
-	Entity_ID e_id = 1;
-	for (char *p = str; *p; ++p) {
-		switch (*p) {
-		case '\n':
-			cur_pos.x = 1;
-			++cur_pos.y;
-			continue;
-		case '#': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_WALL_WOOD;
-			e.brain.type = BRAIN_TYPE_NONE;
-			game->entities[idx++] = e;
-			break;
-		}
-		case 'x': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_WALL_FANCY;
-			e.brain.type = BRAIN_TYPE_NONE;
-			game->entities[idx++] = e;
-			break;
-		}
-		case '.': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_SWIM;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_FLOOR_ROCK;
-			e.brain.type = BRAIN_TYPE_NONE;
-			game->entities[idx++] = e;
-			break;
-		}
-		case '@': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_SWIM;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_FLOOR_ROCK;
-			e.brain.type = BRAIN_TYPE_NONE;
-			game->entities[idx++] = e;
-			e.id = e_id++;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.appearance = APPEARANCE_CREATURE_MALE_BERSERKER;
-			e.movement_type = BLOCK_WALK;
-			e.brain.type = BRAIN_TYPE_PLAYER;
-			game->entities[idx++] = e;
-			break;
-		}
-		case 'b': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_SWIM;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_FLOOR_ROCK;
-			e.brain.type = BRAIN_TYPE_NONE;
-			game->entities[idx++] = e;
-			e.id = e_id++;
-			e.movement_type = BLOCK_FLY;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.appearance = APPEARANCE_CREATURE_RED_BAT;
-			e.brain.type = BRAIN_TYPE_RANDOM;
-			game->entities[idx++] = e;
-			break;
-		}
-		case '~': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_WALK;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_LIQUID_WATER;
-			e.brain.type = BRAIN_TYPE_NONE;
-			game->entities[idx++] = e;
-			break;
-		}
-		}
-		++cur_pos.x;
-	}
-	game->num_entities = idx;
-}
 
 Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
 {
@@ -338,115 +273,174 @@ u8 game_is_passable(Game* game, Pos pos, u16 block_flag)
 	return result;
 }
 
-u8 game_do_action(Game* game, Action action, Event_Buffer* event_buffer)
-{
-	// maybe assert that the action matches the current choice?
-	switch (action.type) {
-	case ACTION_NONE:
-		ASSERT(0);
-		return 1;
-	case ACTION_MOVE: {
-		i8 dx = action.move.end.x - action.move.start.x;
-		i8 dy = action.move.end.y - action.move.start.y;
-		if (dx * dx > 1 || dy * dy > 1) {
-			return 0;
-		}
-		Entity *e;
-		for (u32 i = 0; i < game->num_entities; ++i) {
-			e = &game->entities[i];
-			if (e->id == action.move.entity_id) {
-				break;
-			}
-		}
-		ASSERT(e->id == action.move.entity_id);
-		ASSERT(e->pos.x == action.move.start.x && e->pos.y == action.move.start.y);
-		if (!game_is_passable(game, action.move.end, e->movement_type)) {
-			return 0;
-		}
-		e->pos = action.move.end;
-		Event event = {};
-		event.time = game->block_time;
-		event.block_id = game->cur_block_id;
-		event.type = EVENT_MOVE;
-		event.move.entity_id = action.move.entity_id;
-		event.move.start = action.move.start;
-		event.move.end = action.move.end;
-		event_buffer->events[event_buffer->num_events++] = event;
-		--game->choice_stack_idx;
-		return 1;
-	}
-	case ACTION_WAIT:
-		--game->choice_stack_idx;
-		return 1;
-	}
-	return 0;
-}
+#define GAME_MAX_ACTIONS GAME_MAX_CONTROLLERS
 
-void game_play_until_input_required(Game* game, Event_Buffer* event_buffer)
+typedef Max_Length_Array<Action, GAME_MAX_ACTIONS> Action_Buffer;
+
+void game_calculate_action_buffer(Game* game, Action_Buffer* action_buffer)
 {
-	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
-	u32 cur_entity = game->current_entity;
-	for (;;) {
-		Entity *e = &game->entities[cur_entity];
-		if (game->choice_stack_idx) {
-			switch (e->brain.type) {
-			case BRAIN_TYPE_NONE:
-				ASSERT(0);
-				break;
-			case BRAIN_TYPE_PLAYER:
-				goto need_player_input;
-			case BRAIN_TYPE_RANDOM: {
-				Choice choice = game->choice_stack[game->choice_stack_idx - 1];
-				ASSERT(choice.type == CHOICE_START_TURN);
-				Action action = {};
-				u32 num_poss = 0;
-				Pos poss[8] = {};
-				for (i8 dy = -1; dy <= 1; ++dy) {
-					for (i8 dx = -1; dx <= 1; ++dx) {
-						Pos new_pos = {};
-						new_pos.x = e->pos.x + dx;
-						new_pos.y = e->pos.y + dy;
-						if (game_is_passable(game, new_pos, BLOCK_FLY)) {
-							poss[num_poss++] = new_pos;
-						}
+	action_buffer->reset();
+
+	struct Potential_Move
+	{
+		Pos start;
+		Pos end;
+		u32 weight;
+	};
+	Max_Length_Array<Potential_Move, GAME_MAX_ACTIONS> potential_moves;
+	potential_moves.reset();
+
+	debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 1.0f));
+	u32 num_controllers = game->controllers.len;
+	for (u32 i = 0; i < num_controllers; ++i) {
+		Controller *c = &game->controllers[i];
+		switch (c->type) {
+		case CONTROLLER_PLAYER:
+			action_buffer->append(c->player.action);
+			break;
+		case CONTROLLER_RANDOM_MOVE: {
+			Entity *e = game_get_entity_by_id(game, c->random_move.entity_id);
+			u16 move_mask = e->movement_type;
+			Pos start = e->pos;
+			Max_Length_Array<Pos, 8> moves;
+			moves.reset();
+			for (i8 dy = -1; dy <= 1; ++dy) {
+				for (i8 dx = -1; dx <= 1; ++dx) {
+					Pos end = (Pos)((v2_i16)start + V2_i16(dx, dy));
+					if (game_is_passable(game, end, move_mask)) {
+						moves.append(end);
 					}
 				}
-				if (num_poss) {
-					action.type = ACTION_MOVE;
-					action.move.entity_id = choice.entity_id;
-					action.move.start = e->pos;
-					action.move.end = poss[rand_u32() % num_poss];
-
-					debug_draw_world_arrow((v2)action.move.start,
-					                       (v2)action.move.end);
-					debug_pause();
-
-				} else {
-					Action action = {};
-					action.type = ACTION_WAIT;
-				}
-				u8 did_action = game_do_action(game, action, event_buffer);
-				ASSERT(did_action);
-				break;
 			}
+
+			if (moves) {
+				u32 idx = rand_u32() % moves.len;
+				Action a = {};
+				a.type = ACTION_MOVE;
+				a.move.entity_id = e->id;
+				a.move.start = start;
+				a.move.end = moves[idx];
+				action_buffer->append(a);
+			} else {
+				debug_draw_world_circle((v2)start, 0.25f);
 			}
+
+			break;
 		}
-
-		// advance to next turn
-		++game->cur_block_id;
-		game->block_time = 0.0f;
-		do {
-			cur_entity = (cur_entity + 1) % game->num_entities;
-			e = &game->entities[cur_entity];
-		} while (!e->brain.type);
-		Choice choice = {};
-		choice.type = CHOICE_START_TURN;
-		choice.entity_id = e->id;
-		game->choice_stack[0] = choice;
-		game->choice_stack_idx = 1;
+		case CONTROLLER_RANDOM_SNAKE:
+			break;
+		}
 	}
-need_player_input:
-	game->current_entity = cur_entity;
+
+	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
+	for (u32 i = 0; i < action_buffer->len; ++i) {
+		Action *a = &action_buffer->items[i];
+		debug_draw_world_arrow((v2)a->move.start, (v2)a->move.end);
+	}
+	debug_pause();
+}
+
+void game_build_from_string(Game* game, char* str)
+{
+	Pos cur_pos = { 1, 1 };
+	u32 idx = 0;
+	Entity_ID     e_id = 1;
+	Controller_ID c_id = 1;
+
+	Controller *player_controller = game->controllers.items;
+	++game->controllers.len;
+	player_controller->type = CONTROLLER_PLAYER;
+	player_controller->id = c_id++;
+
+	for (char *p = str; *p; ++p) {
+		switch (*p) {
+		case '\n':
+			cur_pos.x = 1;
+			++cur_pos.y;
+			continue;
+		case '#': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_WALL_WOOD;
+			game->entities[idx++] = e;
+			break;
+		}
+		case 'x': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_WALL_FANCY;
+			game->entities[idx++] = e;
+			break;
+		}
+		case '.': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_SWIM;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_FLOOR_ROCK;
+			game->entities[idx++] = e;
+			break;
+		}
+		case '@': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_SWIM;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_FLOOR_ROCK;
+			game->entities[idx++] = e;
+
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.appearance = APPEARANCE_CREATURE_MALE_BERSERKER;
+			e.movement_type = BLOCK_WALK;
+			game->entities[idx++] = e;
+
+			player_controller->player.entity_id = e.id;
+
+			break;
+		}
+		case 'b': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_SWIM;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_FLOOR_ROCK;
+			game->entities[idx++] = e;
+
+			e.id = e_id++;
+			e.movement_type = BLOCK_FLY;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.appearance = APPEARANCE_CREATURE_RED_BAT;
+			game->entities[idx++] = e;
+
+			Controller c = {};
+			c.id = c_id++;
+			c.type = CONTROLLER_RANDOM_MOVE;
+			c.random_move.entity_id = e.id;
+
+			game->controllers.append(c);
+
+			break;
+		}
+		case '~': {
+			Entity e = {};
+			e.id = e_id++;
+			e.block_mask = BLOCK_WALK;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_LIQUID_WATER;
+			game->entities[idx++] = e;
+			break;
+		}
+		}
+		++cur_pos.x;
+	}
+	game->num_entities = idx;
+	game->next_entity_id = e_id;
+	game->next_controller_id = c_id;
 }
 
 // =============================================================================
@@ -1491,6 +1485,8 @@ enum Program_Input_State
 
 struct Program
 {
+	Platform_Functions platform_functions;
+
 	Program_State       state;
 	volatile u32        process_frame_signal;
 	volatile u32        debug_resume;
@@ -1537,22 +1533,34 @@ Memory_Spec get_program_size()
 	return result;
 }
 
+void set_global_state(Program* program)
+{
+	global_program = program;
+
+	program->random_state.set_current();
+	program->debug_draw_world.set_current();
+
+#define PLATFORM_FUNCTION(_return_type, name, ...) name = program->platform_functions.name;
+	PLATFORM_FUNCTIONS
+#undef PLATFORM_FUNCTION
+}
+
 void program_init(Program* program, Platform_Functions platform_functions)
 {
-#define PLATFORM_FUNCTION(_return_type, name, ...) name = platform_functions.name;
+	memset(program, 0, sizeof(*program));
+
+#define PLATFORM_FUNCTION(_return_type, name, ...) program->platform_functions.name = platform_functions.name;
 	PLATFORM_FUNCTIONS
 #undef PLATFORM_FUNCTION
 
-	memset(program, 0, sizeof(*program));
+	set_global_state(program);
+	program->state = PROGRAM_STATE_NO_PAUSE;
+	program->random_state.seed(0);
+
 	sprite_sheet_renderer_init(&program->draw.renderer,
 	                           &program->draw.tiles, 3,
 	                           { 1600, 900 });
 
-	global_program = program;
-	program->state = PROGRAM_STATE_NO_PAUSE;
-	program->random_state.seed(0);
-	program->random_state.set_current();
-	program->debug_draw_world.set_current();
 
 	program->draw.tiles.data       = SPRITE_SHEET_TILES;
 	program->draw.creatures.data   = SPRITE_SHEET_CREATURES;
@@ -1560,11 +1568,11 @@ void program_init(Program* program, Platform_Functions platform_functions)
 
 	game_build_from_string(&program->game,
 		"##########################################\n"
-		"#.b.b.........#..........................#\n"
-		"#..@...#......#..........................#\n"
-		"#.....###.....#.........###..............#\n"
-		"#....#####....#.........#x#..............#\n"
-		"#...##.#.##...#.......###x#.#............#\n"
+		"#bbbbb........#..........................#\n"
+		"#bb@.b.#......#..........................#\n"
+		"#bbbbb###.....#.........###..............#\n"
+		"#bbbb#####....#.........#x#..............#\n"
+		"#.b.##.#.##...#.......###x#.#............#\n"
 		"#..##..#..##..#.......#xxxxx#............#\n"
 		"#......#......#.......###x###............#\n"
 		"#......#......#.........#x#..............#\n"
@@ -1597,7 +1605,6 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	program->draw.camera.world_center = { 0.0f, 0.0f };
 
 	Event_Buffer tmp_buffer = {};
-	game_play_until_input_required(&program->game, &tmp_buffer);
 
 	world_anim_init(&program->world_anim, &program->game);
 
@@ -1880,11 +1887,11 @@ void debug_pause()
 void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 {
 	// start off by setting global state
-	program->random_state.set_current();
-	program->debug_draw_world.reset();
-	program->debug_draw_world.set_current();
+	set_global_state(program);
 
-	program->screen_size = { (f32)screen_size.w, (f32)screen_size.h };
+	program->debug_draw_world.reset();
+
+	program->screen_size = (v2)screen_size;
 	++program->frame_number;
 	program->sound.reset();
 
@@ -1914,41 +1921,34 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	v2_i32 world_mouse_pos = screen_pos_to_world_pos(&program->draw.camera,
 	                                                 screen_size,
 	                                                 input->mouse_pos);
-	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw.renderer,
-	                                                { (u32)world_mouse_pos.x,
-	                                                  (u32)world_mouse_pos.y });
+	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw.renderer, (v2_u32)world_mouse_pos);
 
-	Event_Buffer event_buffer = {};
-
-	if (!world_anim_is_animating(&program->world_anim)) {
-		Choice current_choice = program->game.choice_stack[program->game.choice_stack_idx - 1];
-		switch (current_choice.type) {
-		case CHOICE_START_TURN: {
-			Input_Button_Frame_Data lmb_data = input->button_data[INPUT_BUTTON_MOUSE_LEFT];
-			if (!(lmb_data.flags & INPUT_BUTTON_FLAG_ENDED_DOWN) && lmb_data.num_transitions
-			    && sprite_id) {
-				debug_pause();
-				Entity *mover = game_get_entity_by_id(&program->game,
-				                                      current_choice.entity_id);
-				Entity *target = game_get_entity_by_id(&program->game, sprite_id);
-				Pos start = mover->pos;
-				Pos end = target->pos;
-				Action action = {};
-				action.type = ACTION_MOVE;
-				action.move.entity_id = current_choice.entity_id;
-				action.move.start = start;
-				action.move.end = end;
-				u8 did_action = game_do_action(&program->game, action, &event_buffer);
-				if (did_action) {
-					game_play_until_input_required(&program->game, &event_buffer);
-					world_anim_build_events_to_be_animated(&program->world_anim,
-					                                       &event_buffer);
-				}
+	if (input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
+		Entity *e = game_get_entity_by_id(&program->game, sprite_id);
+		if (e) {
+			Controller *c = &program->game.controllers.items[0];
+			ASSERT(c->type == CONTROLLER_PLAYER);
+			Entity *player = game_get_entity_by_id(&program->game, c->player.entity_id);
+			Pos start = player->pos;
+			Pos end = e->pos;
+			v2 dir = (v2)end - (v2)start;
+			dir = dir * dir;
+			u8 test_val = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
+			if (game_is_passable(&program->game, end, player->movement_type)
+			    && test_val == 1) {
+				Action a = {};
+				a.type = ACTION_MOVE;
+				a.move.entity_id = player->id;
+				a.move.start = start;
+				a.move.end = end;
+				c->player.action = a;
+				Action_Buffer action_buffer;
+				game_calculate_action_buffer(&program->game, &action_buffer);
 			}
-			break;
-		}
 		}
 	}
+
+	Event_Buffer event_buffer = {};
 
 	// program->card_anim_state.hand_params.screen_width = ratio;
 	program->card_anim_state.hand_params.height = 0.5f;
@@ -2058,6 +2058,8 @@ void process_frame_aux_thread(void* uncast_args)
 
 void process_frame(Program* program, Input* input, v2_u32 screen_size)
 {
+	set_global_state(program);
+
 	switch (program->state) {
 	case PROGRAM_STATE_NORMAL: {
 		program->cur_input       = input;
@@ -2069,6 +2071,24 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 		break;
 	}
 	case PROGRAM_STATE_DEBUG_PAUSE:
+		switch (program->program_input_state) {
+		case GIS_NONE:
+			if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags & INPUT_BUTTON_FLAG_ENDED_DOWN) {
+				program->program_input_state = GIS_DRAGGING_MAP;
+			}
+			break;
+		case GIS_DRAGGING_MAP:
+			if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags & INPUT_BUTTON_FLAG_HELD_DOWN) {
+				f32 zoom = 24.0f * program->draw.camera.zoom;
+				program->draw.camera.world_center.x += (f32)input->mouse_delta.x / zoom;
+				program->draw.camera.world_center.y += (f32)input->mouse_delta.y / zoom;
+			} else if (!(input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags
+				     & INPUT_BUTTON_FLAG_ENDED_DOWN)) {
+				program->program_input_state = GIS_NONE;
+			}
+			break;
+		}
+		program->draw.camera.zoom += (f32)input->mouse_wheel_delta * 0.25f;
 		if (input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
 			program->state = PROGRAM_STATE_NORMAL;
 			interlocked_compare_exchange(&program->debug_resume, 1, 0);

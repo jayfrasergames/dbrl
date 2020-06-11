@@ -47,6 +47,7 @@ struct Debug_Draw_World
 
 void debug_draw_world_set_color(v4 color);
 void debug_draw_world_arrow(v2 start, v2 end);
+void debug_draw_world_circle(v2 center, f32 radius);
 
 #ifndef JFG_HEADER_ONLY
 #include "jfg/jfg_math.h"
@@ -90,6 +91,29 @@ void debug_draw_world_arrow(v2 start, v2 end)
 	debug_draw_world_context->triangles.append(t);
 	t.a = e; t.b = f; t.c = g;
 	debug_draw_world_context->triangles.append(t);
+}
+
+void debug_draw_world_circle(v2 center, f32 radius)
+{
+	ASSERT(debug_draw_world_context);
+
+	u32 num_points = 4;
+
+	center = center + 0.5f;
+	v2 v = V2_f32(radius, 0.0f);
+
+	m2 m = m2::rotation(2.0f * PI / (f32)(4 * num_points));
+
+	Debug_Draw_World_Triangle t = {};
+	t.color = debug_draw_world_context->current_color;
+	for (u32 i = 0; i < 4 * num_points; ++i) {
+		v2 w = m * v;
+		t.a = center;
+		t.b = center + v;
+		t.c = center + w;
+		debug_draw_world_context->triangles.append(t);
+		v = w;
+	}
 }
 #endif // JFG_HEADER_ONLY
 
@@ -145,8 +169,8 @@ u8 debug_draw_world_d3d11_init(Debug_Draw_World* context, ID3D11Device* device)
 		D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
 		desc.Format = DXGI_FORMAT_UNKNOWN;
 		desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		desc.Buffer.ElementOffset = 0;
-		desc.Buffer.ElementWidth  = sizeof(context->triangles.items[0]);
+		desc.Buffer.FirstElement = 0;
+		desc.Buffer.NumElements  = ARRAY_SIZE(context->triangles.items);
 
 		hr = device->CreateShaderResourceView(context->d3d11.triangle_instance_buffer,
 		                                      &desc,

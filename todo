@@ -36,6 +36,8 @@
     * strings
 
 * bugs
+  * don't try code reloading during debug pause
+  * code reloading stopped working (happened when adding debug pause)
   * events not sent if mouse leaves window - need to turn off map dragging mode when re-entering the
     window
   * pixel art upsampler handle fractional input_size/input_offsets

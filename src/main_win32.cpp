@@ -46,6 +46,7 @@ DWORD __stdcall start_thread_aux(void* uncast_args)
 	Start_Thread_Aux_Args *args = (Start_Thread_Aux_Args*)uncast_args;
 	args->thread_function(args->thread_args);
 	free(uncast_args);
+	ExitThread(1);
 	return 1;
 }
 
@@ -416,18 +417,22 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	for (u32 frame_number = 0; running; ++frame_number) {
 
-#ifdef DEGBUG
+#ifdef DEBUG
 		if (was_library_written()) {
 			if (game_library != NULL) {
 				program_d3d11_free(program);
-				FreeLibrary(game_library);
+				BOOL library_freed = FreeLibrary(game_library);
+				ASSERT(library_freed);
+				// MessageBoxA(window, "Need to unload game library.", "DBRL", MB_OK);
 			}
-			load_game_functions();
+			u8 loaded_library_functions = load_game_functions();
+			ASSERT(loaded_library_functions);
 			if (game_library != NULL) {
 				d3d11_init_success = program_d3d11_init(program, device, screen_size);
 			} else {
 				d3d11_init_success = 0;
 			}
+			// MessageBoxA(window, "Here.", "DBRL", MB_OK);
 		}
 #endif
 
