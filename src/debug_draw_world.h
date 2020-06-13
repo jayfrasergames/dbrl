@@ -45,6 +45,7 @@ struct Debug_Draw_World
 	void reset()       { triangles.reset(); }
 };
 
+void debug_draw_world_reset();
 void debug_draw_world_set_color(v4 color);
 void debug_draw_world_arrow(v2 start, v2 end);
 void debug_draw_world_circle(v2 center, f32 radius);
@@ -55,6 +56,12 @@ void debug_draw_world_circle(v2 center, f32 radius);
 #include "gen/debug_draw_world_dxbc_triangle_pixel_shader.data.h"
 
 thread_local Debug_Draw_World *debug_draw_world_context = NULL;
+
+void debug_draw_world_reset()
+{
+	ASSERT(debug_draw_world_context);
+	debug_draw_world_context->reset();
+}
 
 void debug_draw_world_set_color(v4 color)
 {

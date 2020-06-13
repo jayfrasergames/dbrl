@@ -36,6 +36,16 @@ PLATFORM_FUNCTIONS
 
 typedef v2_u8 Pos;
 
+u16 pos_to_u16(Pos p)
+{
+	return p.y * 256 + p.x;
+}
+
+Pos u16_to_pos(u16 n)
+{
+	return V2_u8(n % 256, n / 256);
+}
+
 #define MAX_ENTITIES 10240
 
 typedef u16 Entity_ID;
@@ -52,6 +62,22 @@ typedef u16 Entity_ID;
 struct Program;
 thread_local Program* global_program;
 void debug_pause();
+
+template <typename T>
+struct Map_Cache
+{
+	T items[256 * 256];
+	T& operator[](Pos pos) { return items[pos.y * 256 + pos.x]; }
+};
+
+struct Map_Cache_Bool
+{
+	u64  items[256 * 256 / 64];
+	u64  get(Pos p)   { u16 idx = pos_to_u16(p); return items[idx / 64] & (1 << (idx % 64)); }
+	void set(Pos p)   { u16 idx = pos_to_u16(p); items[idx / 64] |= (1 << (idx % 64)); }
+	void unset(Pos p) { u16 idx = pos_to_u16(p); items[idx / 64] &= ~(1 << (idx % 64)); }
+	void reset()        { memset(items, 0, sizeof(items)); }
+};
 
 // =============================================================================
 // game
@@ -109,11 +135,7 @@ struct Event
 };
 
 #define MAX_EVENTS 10240
-struct Event_Buffer
-{
-	u32   num_events;
-	Event events[MAX_EVENTS];
-};
+typedef Max_Length_Array<Event, MAX_EVENTS> Event_Buffer;
 
 u8 event_type_is_blocking(Event_Type type)
 {
@@ -227,6 +249,20 @@ struct Card_State
 	}
 };
 
+enum Tile_Type
+{
+	TILE_EMPTY,
+	TILE_WALL,
+	TILE_FLOOR,
+	TILE_WATER,
+};
+
+struct Tile
+{
+	Tile_Type  type;
+	Appearance appearance;
+};
+
 #define GAME_MAX_CONTROLLERS 1024
 // maybe better called "world state"?
 struct Game
@@ -241,6 +277,8 @@ struct Game
 
 	u32 num_entities;
 	Entity entities[MAX_ENTITIES];
+
+	Map_Cache<Tile> tiles;
 
 	Max_Length_Array<Controller, GAME_MAX_CONTROLLERS> controllers;
 
@@ -257,17 +295,41 @@ Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
 	return NULL;
 }
 
-u8 game_is_passable(Game* game, Pos pos, u16 block_flag)
+u8 tile_is_passable(Tile tile, u16 move_mask)
 {
+	switch (tile.type) {
+	case TILE_EMPTY:
+	case TILE_WALL:
+		return 0;
+	case TILE_FLOOR:
+		if (move_mask & BLOCK_SWIM) {
+			return 0;
+		}
+		return 1;
+	case TILE_WATER:
+		if (move_mask & BLOCK_WALK) {
+			return 0;
+		}
+		return 1;
+	default:
+		ASSERT(0);
+	}
+}
+
+u8 game_is_passable(Game* game, Pos pos, u16 move_mask)
+{
+	Tile t = game->tiles[pos];
+	if (!tile_is_passable(t, move_mask)) {
+		return 0;
+	}
 	u32 num_entities = game->num_entities;
 	Entity *e = game->entities;
-	u8 result = 0;
+	u8 result = 1;
 	for (u32 i = 0; i < num_entities; ++i, ++e) {
 		if (e->pos.x == pos.x && e->pos.y == pos.y) {
-			if (e->block_mask & block_flag) {
+			if (e->block_mask & move_mask) {
 				return 0;
 			}
-			result = 1;
 		}
 	}
 	return result;
@@ -277,54 +339,70 @@ u8 game_is_passable(Game* game, Pos pos, u16 block_flag)
 
 typedef Max_Length_Array<Action, GAME_MAX_ACTIONS> Action_Buffer;
 
-void game_calculate_action_buffer(Game* game, Action_Buffer* action_buffer)
+// #define DEBUG_CREATE_MOVES
+// #define DEBUG_SHOW_ACTIONS
+
+void game_do_turn(Game* game, Event_Buffer* event_buffer)
 {
-	action_buffer->reset();
+	event_buffer->reset();
+
+	// =====================================================================
+	// create chosen actions
+
+	Max_Length_Array<Action, MAX_ENTITIES> actions;
+	actions.reset();
+
+	// 1. choose moves
 
 	struct Potential_Move
 	{
+		Entity_ID entity_id;
 		Pos start;
 		Pos end;
-		u32 weight;
+		f32 weight;
 	};
-	Max_Length_Array<Potential_Move, GAME_MAX_ACTIONS> potential_moves;
+	Max_Length_Array<Potential_Move, MAX_ENTITIES * 9> potential_moves;
 	potential_moves.reset();
 
-	debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 1.0f));
+	Map_Cache_Bool occupied;
+	occupied.reset();
+
 	u32 num_controllers = game->controllers.len;
 	for (u32 i = 0; i < num_controllers; ++i) {
 		Controller *c = &game->controllers[i];
 		switch (c->type) {
 		case CONTROLLER_PLAYER:
-			action_buffer->append(c->player.action);
+			if (c->player.action.type == ACTION_MOVE) {
+				Potential_Move pm = {};
+				pm.entity_id = c->player.entity_id;
+				pm.start = c->player.action.move.start;
+				pm.end = c->player.action.move.end;
+				// XXX -- weight here should be infinite
+				pm.weight = 10.0f;
+				potential_moves.append(pm);
+			}
 			break;
 		case CONTROLLER_RANDOM_MOVE: {
 			Entity *e = game_get_entity_by_id(game, c->random_move.entity_id);
 			u16 move_mask = e->movement_type;
 			Pos start = e->pos;
-			Max_Length_Array<Pos, 8> moves;
-			moves.reset();
 			for (i8 dy = -1; dy <= 1; ++dy) {
 				for (i8 dx = -1; dx <= 1; ++dx) {
+					if (!(dx || dy)) {
+						continue;
+					}
 					Pos end = (Pos)((v2_i16)start + V2_i16(dx, dy));
-					if (game_is_passable(game, end, move_mask)) {
-						moves.append(end);
+					Tile t = game->tiles[end];
+					if (tile_is_passable(t, move_mask)) {
+						Potential_Move pm = {};
+						pm.entity_id = e->id;
+						pm.start = start;
+						pm.end = end;
+						pm.weight = uniform_f32(0.0f, 1.0f);
+						potential_moves.append(pm);
 					}
 				}
 			}
-
-			if (moves) {
-				u32 idx = rand_u32() % moves.len;
-				Action a = {};
-				a.type = ACTION_MOVE;
-				a.move.entity_id = e->id;
-				a.move.start = start;
-				a.move.end = moves[idx];
-				action_buffer->append(a);
-			} else {
-				debug_draw_world_circle((v2)start, 0.25f);
-			}
-
 			break;
 		}
 		case CONTROLLER_RANDOM_SNAKE:
@@ -332,12 +410,112 @@ void game_calculate_action_buffer(Game* game, Action_Buffer* action_buffer)
 		}
 	}
 
-	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
-	for (u32 i = 0; i < action_buffer->len; ++i) {
-		Action *a = &action_buffer->items[i];
-		debug_draw_world_arrow((v2)a->move.start, (v2)a->move.end);
+	u32 num_entities = game->num_entities;
+	for (u32 i = 0; i < num_entities; ++i) {
+		occupied.set(game->entities[i].pos);
+	}
+
+	// sort
+	for (u32 i = 1; i < potential_moves.len; ++i) {
+		Potential_Move tmp = potential_moves[i];
+		u32 j = i;
+		while (j && potential_moves[j - 1].weight < tmp.weight) {
+			potential_moves[j] = potential_moves[j - 1];
+			--j;
+		}
+		potential_moves[j] = tmp;
+	}
+
+	for (;;) {
+		u32 idx = 0;
+		while (idx < potential_moves.len && occupied.get(potential_moves[idx].end)) {
+			++idx;
+		}
+		if (idx == potential_moves.len) {
+			break;
+		}
+		Potential_Move pm = potential_moves[idx];
+
+#ifdef DEBUG_CREATE_MOVES
+		debug_draw_world_reset();
+		debug_draw_world_set_color(V4_f32(pm.weight, 0.0f, 0.0f, 1.0f));
+		debug_draw_world_arrow((v2)pm.start, (v2)pm.end);
+		debug_pause();
+#endif
+
+		Action chosen_move = {};
+		chosen_move.type = ACTION_MOVE;
+		chosen_move.move.entity_id = pm.entity_id;
+		chosen_move.move.start = pm.start;
+		chosen_move.move.end = pm.end;
+		actions.append(chosen_move);
+
+		occupied.unset(pm.start);
+		occupied.set(pm.end);
+
+		u32 push_back = 0;
+		for (u32 i = 0; i < potential_moves.len; ++i) {
+			if (potential_moves[i].entity_id == pm.entity_id) {
+				++push_back;
+			} else if (push_back) {
+				potential_moves[i - push_back] = potential_moves[i];
+			}
+		}
+		potential_moves.len -= push_back;
+
+#ifdef DEBUG_CREATE_MOVES
+		debug_draw_world_reset();
+		for (u32 i = 0; i < potential_moves.len; ++i) {
+			Potential_Move pm = potential_moves[i];
+			debug_draw_world_set_color(V4_f32(pm.weight, 0.0f, 0.0f, 1.0f));
+			debug_draw_world_arrow((v2)pm.start, (v2)pm.end);
+		}
+		debug_pause();
+#endif
+	}
+
+	// 2. create other actions...
+
+#ifdef DEBUG_SHOW_ACTIONS
+	debug_draw_world_reset();
+	debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 1.0f, 1.0f));
+	for (u32 i = 0; i < actions.len; ++i) {
+		Action action = actions[i];
+		switch (action.type) {
+		case ACTION_MOVE:
+			debug_draw_world_arrow((v2)action.move.start, (v2)action.move.end);
+			break;
+		}
 	}
 	debug_pause();
+#endif
+
+	// =====================================================================
+	// simulate actions
+
+	// =====================================================================
+	// create event buffer
+
+	Event_Buffer& events = *event_buffer;
+	for (u32 i = 0; i < actions.len; ++i) {
+		Action action = actions[i];
+		switch (action.type) {
+		case ACTION_MOVE: {
+			Entity *e = game_get_entity_by_id(game, action.move.entity_id);
+			e->pos = action.move.end;
+
+			Event event = {};
+			event.type = EVENT_MOVE;
+			event.block_id = 0;
+			event.move.entity_id = action.move.entity_id;
+			event.move.start = action.move.start;
+			event.move.end = action.move.end;
+			events.append(event);
+
+			break;
+		}
+		}
+	}
 }
 
 void game_build_from_string(Game* game, char* str)
@@ -351,6 +529,8 @@ void game_build_from_string(Game* game, char* str)
 	++game->controllers.len;
 	player_controller->type = CONTROLLER_PLAYER;
 	player_controller->id = c_id++;
+	auto& tiles = game->tiles;
+	memset(&tiles, 0, sizeof(tiles));
 
 	for (char *p = str; *p; ++p) {
 		switch (*p) {
@@ -359,41 +539,27 @@ void game_build_from_string(Game* game, char* str)
 			++cur_pos.y;
 			continue;
 		case '#': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_WALL_WOOD;
-			game->entities[idx++] = e;
+			tiles[cur_pos].type = TILE_WALL;
+			tiles[cur_pos].appearance = APPEARANCE_WALL_WOOD;
 			break;
 		}
 		case 'x': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_WALL_FANCY;
-			game->entities[idx++] = e;
+			tiles[cur_pos].type = TILE_WALL;
+			tiles[cur_pos].appearance = APPEARANCE_WALL_FANCY;
 			break;
 		}
 		case '.': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_SWIM;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_FLOOR_ROCK;
-			game->entities[idx++] = e;
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
 			break;
 		}
 		case '@': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
 			Entity e = {};
 			e.id = e_id++;
-			e.block_mask = BLOCK_SWIM;
 			e.pos = cur_pos;
-			e.appearance = APPEARANCE_FLOOR_ROCK;
-			game->entities[idx++] = e;
-
-			e.id = e_id++;
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e.appearance = APPEARANCE_CREATURE_MALE_BERSERKER;
 			e.movement_type = BLOCK_WALK;
@@ -404,14 +570,12 @@ void game_build_from_string(Game* game, char* str)
 			break;
 		}
 		case 'b': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
 			Entity e = {};
 			e.id = e_id++;
-			e.block_mask = BLOCK_SWIM;
 			e.pos = cur_pos;
-			e.appearance = APPEARANCE_FLOOR_ROCK;
-			game->entities[idx++] = e;
-
-			e.id = e_id++;
 			e.movement_type = BLOCK_FLY;
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e.appearance = APPEARANCE_CREATURE_RED_BAT;
@@ -427,12 +591,8 @@ void game_build_from_string(Game* game, char* str)
 			break;
 		}
 		case '~': {
-			Entity e = {};
-			e.id = e_id++;
-			e.block_mask = BLOCK_WALK;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_LIQUID_WATER;
-			game->entities[idx++] = e;
+			tiles[cur_pos].type = TILE_WATER;
+			tiles[cur_pos].appearance = APPEARANCE_LIQUID_WATER;
 			break;
 		}
 		}
@@ -501,32 +661,6 @@ struct Transaction
 	};
 };
 
-#define MAX_TRANSACTIONS 4096
-void game_do_actions(Slice<Action> actions, Event_Buffer* event_buffer)
-{
-	Max_Length_Array<Transaction, MAX_TRANSACTIONS> transaction_buffer;
-
-	// build actions into "transaction buffer"
-	for (u32 i = 0; i < actions.len; ++i) {
-		Action a = actions[i];
-		Transaction t;
-		switch (a.type) {
-		case ACTION_NONE:
-		case ACTION_WAIT:
-			break;
-		case ACTION_MOVE:
-			t.type = TRANSACTION_MOVE_EXIT;
-			t.start_time = 0.0f;
-			transaction_buffer.append(t);
-			break;
-		}
-	}
-
-	f32 time = 0.0f;
-	while (transaction_buffer) {
-	}
-}
-
 // =============================================================================
 // draw
 
@@ -587,45 +721,44 @@ struct Anim
 
 struct World_Anim_State
 {
-	u32          num_anims;
-	u32          num_active_anims;
-	Anim         anims[MAX_ANIMS];
-	f32          dynamic_anim_start_time;
-	u32          anim_block_number;
-	u32          total_anim_blocks;
-	u32          event_buffer_idx;
-	Event_Buffer events_to_be_animated;
+	Max_Length_Array<Anim, MAX_ANIMS> anims;
+	u32                               num_active_anims;
+	f32                               dynamic_anim_start_time;
+	u32                               anim_block_number;
+	u32                               total_anim_blocks;
+	u32                               event_buffer_idx;
+	Event_Buffer                      events_to_be_animated;
 };
 
 void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Event_Buffer* event_buffer)
 {
-	u32 num_events = event_buffer->num_events;
+	u32 num_events = event_buffer->len;
 	u32 cur_block_number = 0;
 	Event_Buffer *dest = &world_anim->events_to_be_animated;
 	u8 prev_event_is_blocking = 1;
 	for (u32 i = 0; i < num_events; ++i) {
-		Event *cur_event = &event_buffer->events[i];
+		Event *cur_event = &event_buffer->items[i];
 		u8 create_new_block = prev_event_is_blocking || event_type_is_blocking(cur_event->type);
 		prev_event_is_blocking = event_type_is_blocking(cur_event->type);
 		if (create_new_block) {
 			++cur_block_number;
 		}
-		dest->events[i] = *cur_event;
-		dest->events[i].block_id = cur_block_number;
+		dest->items[i] = *cur_event;
+		dest->items[i].block_id = cur_block_number;
 	}
 	world_anim->anim_block_number = 1;
 	world_anim->total_anim_blocks = cur_block_number;
 	world_anim->event_buffer_idx = 0;
-	dest->num_events = num_events;
+	dest->len = num_events;
 }
 
 void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 {
-	u32 num_anims = world_anim->num_anims;
+	u32 num_anims = world_anim->anims.len;
 	u32 event_idx = world_anim->event_buffer_idx;
-	u32 num_events = world_anim->events_to_be_animated.num_events;
+	u32 num_events = world_anim->events_to_be_animated.len;
 	u32 cur_block_id = world_anim->anim_block_number++;
-	Event *events = world_anim->events_to_be_animated.events;
+	Event *events = world_anim->events_to_be_animated.items;
 
 	while (event_idx < num_events && events[event_idx].block_id == cur_block_id) {
 		Event *event = &events[event_idx];
@@ -660,10 +793,10 @@ u8 world_anim_is_animating(World_Anim_State* world_anim)
 
 void world_anim_do_events(World_Anim_State* world_anim, Event_Buffer* event_buffer, f32 time)
 {
-	u32 num_anims = world_anim->num_anims;
-	u32 num_events = event_buffer->num_events;
+	u32 num_anims = world_anim->anims.len;
+	u32 num_events = event_buffer->len;
 	for (u32 i = 0; i < num_events; ++i) {
-		Event *event = &event_buffer->events[i];
+		Event *event = &event_buffer->items[i];
 		switch (event->type) {
 		case EVENT_MOVE:
 			for (u32 i = 0; i < num_anims; ++i) {
@@ -706,12 +839,12 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			Anim ca = {};
 			ca.type = ANIM_CREATURE_IDLE;
 			ca.sprite_coords = appearance_get_creature_sprite_coords(app);
-			ca.world_coords = { (f32)pos.x, (f32)pos.y };
+			ca.world_coords = (v2)pos;
 			ca.entity_id = e->id;
 			ca.depth_offset = Z_OFFSET_CHARACTER;
 			ca.idle.duration = 0.8f + 0.4f * rand_f32();
 			ca.idle.offset = 0.0f;
-			world_anim->anims[anim_idx++] = ca;
+			world_anim->anims.append(ca);
 			continue;
 		}
 		if (appearance_is_floor(app)) {
@@ -721,7 +854,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ta.world_coords = { (f32)pos.x, (f32)pos.y };
 			ta.entity_id = e->id;
 			ta.depth_offset = Z_OFFSET_FLOOR;
-			world_anim->anims[anim_idx++] = ta;
+			world_anim->anims.append(ta);
 			continue;
 		}
 		if (appearance_is_wall(app)) {
@@ -738,66 +871,108 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ta.world_coords = { (f32)pos.x, (f32)pos.y };
 			ta.entity_id = e->id;
 			ta.depth_offset = Z_OFFSET_FLOOR;
-			world_anim->anims[anim_idx++] = ta;
+			world_anim->anims.append(ta);
 			u32 index = pos.y * 256 + pos.x;
 			liquid_id_grid[index] = appearance_get_liquid_id(app);
 			liquid_entity_id_grid[index] = e->id;
 		}
 	}
 
+	auto& tiles = game->tiles;
 	for (u32 y = 1; y < 255; ++y) {
 		for (u32 x = 1; x < 255; ++x) {
-			u32 index = y*256 + x;
-			u8 c = wall_id_grid[index];
-			if (!c) {
-				continue;
+			Pos p = V2_u8(x, y);
+			Tile c = tiles[p];
+			switch (c.type) {
+			case TILE_EMPTY:
+				break;
+			case TILE_FLOOR: {
+				v2 sprite_coords = appearance_get_floor_sprite_coords(c.appearance);
+				Anim anim = {};
+				anim.type = ANIM_TILE_STATIC;
+				anim.sprite_coords = sprite_coords;
+				anim.world_coords = (v2)p;
+				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
+				anim.depth_offset = Z_OFFSET_FLOOR;
+				world_anim->anims.append(anim);
+				break;
 			}
-			Appearance app = appearance_wall_id_to_appearance(c);
+			case TILE_WALL: {
+				Appearance app = c.appearance;
+				u8 tl = tiles[(Pos)((v2_i16)p + V2_i16(-1, -1))].appearance == app;
+				u8 t  = tiles[(Pos)((v2_i16)p + V2_i16( 0, -1))].appearance == app;
+				u8 tr = tiles[(Pos)((v2_i16)p + V2_i16( 1, -1))].appearance == app;
+				u8 l  = tiles[(Pos)((v2_i16)p + V2_i16(-1,  0))].appearance == app;
+				u8 r  = tiles[(Pos)((v2_i16)p + V2_i16( 1,  0))].appearance == app;
+				u8 bl = tiles[(Pos)((v2_i16)p + V2_i16(-1,  1))].appearance == app;
+				u8 b  = tiles[(Pos)((v2_i16)p + V2_i16( 0,  1))].appearance == app;
+				u8 br = tiles[(Pos)((v2_i16)p + V2_i16( 1,  1))].appearance == app;
 
-			// get whether the floor ids equal c in the following pattern
-			//  tl | t | tr
-			// ----+---+----
-			//  l  | c | r
-			// ----+---+----
-			//  bl | b | br
+				u8 connection_mask = 0;
+				if (t && !(tl && tr && l && r)) {
+					connection_mask |= APPEARANCE_N;
+				}
+				if (r && !(t && tr && b && br)) {
+					connection_mask |= APPEARANCE_E;
+				}
+				if (b && !(l && r && bl && br)) {
+					connection_mask |= APPEARANCE_S;
+				}
+				if (l && !(t && b && tl && bl)) {
+					connection_mask |= APPEARANCE_W;
+				}
 
-			u8 tl = wall_id_grid[index - 257] == c;
-			u8 t  = wall_id_grid[index - 256] == c;
-			u8 tr = wall_id_grid[index - 255] == c;
-			u8 l  = wall_id_grid[index - 1]  == c;
-			u8 r  = wall_id_grid[index + 1]  == c;
-			u8 bl = wall_id_grid[index + 255] == c;
-			u8 b  = wall_id_grid[index + 256] == c;
-			u8 br = wall_id_grid[index + 257] == c;
+				Anim anim = {};
+				anim.type = ANIM_TILE_STATIC;
+				anim.sprite_coords = appearance_get_wall_sprite_coords(app, connection_mask);
+				anim.world_coords = (v2)p;
+				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
+				anim.depth_offset = Z_OFFSET_WALL;
+				world_anim->anims.append(anim);
 
-			u8 connection_mask = 0;
-			if (t && !(tl && tr && l && r)) {
-				connection_mask |= APPEARANCE_N;
+				if (tiles[(Pos)((v2_i16)p + V2_i16( 0,  1))].type != TILE_WALL) {
+					anim.sprite_coords = { 30.0f, 36.0f };
+					anim.world_coords = (v2)p + V2_f32(0.0f, 1.0f);
+					anim.depth_offset = Z_OFFSET_WALL_SHADOW;
+					world_anim->anims.append(anim);
+				}
+
+				break;
 			}
-			if (r && !(t && tr && b && br)) {
-				connection_mask |= APPEARANCE_E;
+			case TILE_WATER: {
+				v2 sprite_coords = appearance_get_liquid_sprite_coords(c.appearance);
+				Anim anim = {};
+				anim.type = ANIM_TILE_STATIC;
+				anim.sprite_coords = sprite_coords;
+				anim.world_coords = (v2)p;
+				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
+				anim.depth_offset = Z_OFFSET_FLOOR;
+				world_anim->anims.append(anim);
+
+				Tile_Type t = c.type;
+				u8 mask = 0;
+				if (tiles[(Pos)((v2_i16)p + V2_i16( 0, -1))].type == t) { mask |= 0x01; }
+				if (tiles[(Pos)((v2_i16)p + V2_i16( 1, -1))].type == t) { mask |= 0x02; }
+				if (tiles[(Pos)((v2_i16)p + V2_i16( 1,  0))].type == t) { mask |= 0x04; }
+				if (tiles[(Pos)((v2_i16)p + V2_i16( 1,  1))].type == t) { mask |= 0x08; }
+				if (tiles[(Pos)((v2_i16)p + V2_i16( 0,  1))].type == t) { mask |= 0x10; }
+				if (tiles[(Pos)((v2_i16)p + V2_i16(-1,  1))].type == t) { mask |= 0x20; }
+				if (tiles[(Pos)((v2_i16)p + V2_i16(-1,  0))].type == t) { mask |= 0x40; }
+				if (tiles[(Pos)((v2_i16)p + V2_i16(-1, -1))].type == t) { mask |= 0x80; }
+
+				if (~mask & 0xFF) {
+					Anim anim = {};
+					anim.type = ANIM_WATER_EDGE;
+					anim.sprite_coords = { (f32)(mask % 16), (f32)(15 - mask / 16) };
+					anim.world_coords = (v2)p;
+					anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
+					anim.depth_offset = Z_OFFSET_WATER_EDGE;
+					anim.water_edge.color = { 0x58, 0x80, 0xC0, 0xFF };
+					world_anim->anims.append(anim);
+				}
 			}
-			if (b && !(l && r && bl && br)) {
-				connection_mask |= APPEARANCE_S;
-			}
-			if (l && !(t && b && tl && bl)) {
-				connection_mask |= APPEARANCE_W;
 			}
 
-			Anim anim = {};
-			anim.type = ANIM_TILE_STATIC;
-			anim.sprite_coords = appearance_get_wall_sprite_coords(app, connection_mask);
-			anim.world_coords = { (f32)x, (f32)y };
-			anim.entity_id = wall_entity_id_grid[index];
-			anim.depth_offset = Z_OFFSET_WALL;
-			world_anim->anims[anim_idx++] = anim;
-
-			if (!wall_id_grid[index + 256]) {
-				anim.sprite_coords = { 30.0f, 36.0f };
-				anim.world_coords = { (f32)x, (f32)y + 1.0f };
-				anim.depth_offset = Z_OFFSET_WALL_SHADOW;
-				world_anim->anims[anim_idx++] = anim;
-			}
 		}
 	}
 
@@ -827,13 +1002,13 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 				anim.entity_id = liquid_entity_id_grid[index];
 				anim.depth_offset = Z_OFFSET_WATER_EDGE;
 				anim.water_edge.color = { 0x58, 0x80, 0xc0, 255 };
-				world_anim->anims[anim_idx++] = anim;
+				world_anim->anims.append(anim);
 			}
 		}
 	}
 
-	ASSERT(anim_idx < MAX_ANIMS);
-	world_anim->num_anims = anim_idx;
+	// ASSERT(anim_idx < MAX_ANIMS);
+	// world_anim->num_anims = anim_idx;
 }
 
 void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
@@ -846,7 +1021,8 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 	f32 dyn_time = time - world_anim->dynamic_anim_start_time;
 
 	// clear up finished animations
-	for (u32 i = 0; i < world_anim->num_anims; ++i) {
+	u32 num_anims = world_anim->anims.len;
+	for (u32 i = 0; i < num_anims; ++i) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
 		case ANIM_MOVE:
@@ -871,7 +1047,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 
 
 	// draw tile animations
-	for (u32 i = 0; i < world_anim->num_anims; ++i) {
+	for (u32 i = 0; i < num_anims; ++i) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
 		case ANIM_TILE_STATIC: {
@@ -1568,15 +1744,15 @@ void program_init(Program* program, Platform_Functions platform_functions)
 
 	game_build_from_string(&program->game,
 		"##########################################\n"
-		"#bbbbb........#..........................#\n"
-		"#bb@.b.#......#..........................#\n"
-		"#bbbbb###.....#.........###..............#\n"
-		"#bbbb#####....#.........#x#..............#\n"
-		"#.b.##.#.##...#.......###x#.#............#\n"
-		"#..##..#..##..#.......#xxxxx#............#\n"
-		"#......#......#.......###x###............#\n"
-		"#......#......#.........#x#..............#\n"
-		"#......#................###..............#\n"
+		"#bbbbb........#b#........................#\n"
+		"#bb..b.#......#b#........................#\n"
+		"#bbbbb###.....#b#.......###..............#\n"
+		"#bbbb#####....#b#.......#x#..............#\n"
+		"#.b.##.#.##...#b#.....###x#.#............#\n"
+		"#..##..#..##..#b#.....#xxxxx#............#\n"
+		"#......#......#b#.....###x###............#\n"
+		"#......#......#.#.......#x#..............#\n"
+		"#......#.......@........###..............#\n"
 		"#......#......#..........................#\n"
 		"#......#......#............#.............#\n"
 		"#......#......#..........................#\n"
@@ -1923,28 +2099,32 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	                                                 input->mouse_pos);
 	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw.renderer, (v2_u32)world_mouse_pos);
 
-	if (input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
-		Entity *e = game_get_entity_by_id(&program->game, sprite_id);
-		if (e) {
-			Controller *c = &program->game.controllers.items[0];
-			ASSERT(c->type == CONTROLLER_PLAYER);
-			Entity *player = game_get_entity_by_id(&program->game, c->player.entity_id);
-			Pos start = player->pos;
-			Pos end = e->pos;
-			v2 dir = (v2)end - (v2)start;
-			dir = dir * dir;
-			u8 test_val = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
-			if (game_is_passable(&program->game, end, player->movement_type)
-			    && test_val == 1) {
-				Action a = {};
-				a.type = ACTION_MOVE;
-				a.move.entity_id = player->id;
-				a.move.start = start;
-				a.move.end = end;
-				c->player.action = a;
-				Action_Buffer action_buffer;
-				game_calculate_action_buffer(&program->game, &action_buffer);
-			}
+	if (sprite_id && input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
+		Controller *c = &program->game.controllers.items[0];
+		ASSERT(c->type == CONTROLLER_PLAYER);
+		Entity *player = game_get_entity_by_id(&program->game, c->player.entity_id);
+		Pos start = player->pos;
+		Pos end;
+		if (sprite_id < MAX_ENTITIES) {
+			Entity *e = game_get_entity_by_id(&program->game, sprite_id);
+			end = e->pos;
+		} else {
+			end = u16_to_pos(sprite_id - MAX_ENTITIES);
+		}
+		v2 dir = (v2)end - (v2)start;
+		dir = dir * dir;
+		u8 test_val = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
+		if (game_is_passable(&program->game, end, player->movement_type)
+		    && test_val == 1) {
+			Action a = {};
+			a.type = ACTION_MOVE;
+			a.move.entity_id = player->id;
+			a.move.start = start;
+			a.move.end = end;
+			c->player.action = a;
+			Event_Buffer event_buffer;
+			game_do_turn(&program->game, &event_buffer);
+			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
 		}
 	}
 
