@@ -58,6 +58,7 @@ typedef u16 Entity_ID;
 #define Z_OFFSET_CHARACTER        1.0f
 #define Z_OFFSET_CHARACTER_SHADOW 0.9f
 #define Z_OFFSET_WATER_EDGE       0.05f
+#define Z_OFFSET_ITEM             0.15f
 
 struct Program;
 thread_local Program* global_program;
@@ -119,6 +120,8 @@ enum Event_Type
 {
 	EVENT_NONE,
 	EVENT_MOVE,
+	EVENT_MOVE_BLOCKED,
+	EVENT_DROP_TILE,
 };
 
 struct Event
@@ -131,6 +134,9 @@ struct Event
 			Entity_ID entity_id;
 			Pos start, end;
 		} move;
+		struct {
+			Pos pos;
+		} drop_tile;
 	};
 };
 
@@ -142,6 +148,8 @@ u8 event_type_is_blocking(Event_Type type)
 	switch (type) {
 	case EVENT_NONE: return 0;
 	case EVENT_MOVE: return 0;
+	case EVENT_MOVE_BLOCKED: return 0;
+	case EVENT_DROP_TILE: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -263,7 +271,53 @@ struct Tile
 	Appearance appearance;
 };
 
+enum Message_Type : u32
+{
+	MESSAGE_MOVE_PRE_EXIT   = 1 << 0,
+	MESSAGE_MOVE_POST_EXIT  = 1 << 1,
+	MESSAGE_MOVE_PRE_ENTER  = 1 << 2,
+	MESSAGE_MOVE_POST_ENTER = 1 << 3,
+};
+
+struct Message
+{
+	Message_Type type;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Pos       start;
+			Pos       end;
+		} move;
+	};
+};
+
+enum Message_Handler_Type
+{
+	MESSAGE_HANDLER_PREVENT_EXIT,
+	MESSAGE_HANDLER_PREVENT_ENTER,
+	MESSAGE_HANDLER_DROP_TILE,
+	MESSAGE_HANDLER_TRAP_FIREBALL,
+};
+
+struct Message_Handler
+{
+	Message_Handler_Type type;
+	u32                  handle_mask;
+	union {
+		struct {
+			Pos pos;
+		} prevent_exit;
+		struct {
+			Pos pos;
+		} prevent_enter;
+		struct {
+			Pos pos;
+		} trap;
+	};
+};
+
 #define GAME_MAX_CONTROLLERS 1024
+#define GAME_MAX_MESSAGE_HANDLERS 1024
 // maybe better called "world state"?
 struct Game
 {
@@ -283,6 +337,8 @@ struct Game
 	Max_Length_Array<Controller, GAME_MAX_CONTROLLERS> controllers;
 
 	Card_State card_state;
+
+	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
 };
 
 Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
@@ -311,9 +367,9 @@ u8 tile_is_passable(Tile tile, u16 move_mask)
 			return 0;
 		}
 		return 1;
-	default:
-		ASSERT(0);
 	}
+	ASSERT(0);
+	return 0;
 }
 
 u8 game_is_passable(Game* game, Pos pos, u16 move_mask)
@@ -339,8 +395,83 @@ u8 game_is_passable(Game* game, Pos pos, u16 move_mask)
 
 typedef Max_Length_Array<Action, GAME_MAX_ACTIONS> Action_Buffer;
 
+#define GAME_MAX_TRANSACTIONS 65536
+
+enum Transaction_Type
+{
+	TRANSACTION_REMOVE,
+	TRANSACTION_MOVE_EXIT,
+	TRANSACTION_MOVE_ENTER,
+	TRANSACTION_DROP_TILE,
+};
+
+struct Transaction
+{
+	Transaction_Type type;
+	f32 start_time;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Pos start;
+			Pos end;
+		} move;
+		struct {
+			Pos pos;
+		} drop_tile;
+	};
+};
+
+typedef Max_Length_Array<Transaction, GAME_MAX_TRANSACTIONS> Transaction_Buffer;
+
+void game_dispatch_message(Game*               game,
+                           Message             message,
+                           f32                 time,
+                           Transaction_Buffer* transaction_buffer,
+                           void*               data)
+{
+	auto& handlers = game->handlers;
+	auto& transactions = *transaction_buffer;
+	u32 num_handlers = handlers.len;
+	for (u32 i = 0; i < num_handlers; ++i) {
+		Message_Handler h = handlers[i];
+		if (!(message.type & h.handle_mask)) {
+			continue;
+		}
+		switch (h.type) {
+		case MESSAGE_HANDLER_PREVENT_EXIT: {
+			if (h.prevent_exit.pos.x == message.move.start.x
+			 && h.prevent_exit.pos.y == message.move.start.y) {
+				u8 *can_exit = (u8*)data;
+				*can_exit = 0;
+			}
+			break;
+		}
+		case MESSAGE_HANDLER_PREVENT_ENTER: {
+			if (h.prevent_enter.pos.x == message.move.end.x
+			 && h.prevent_enter.pos.y == message.move.end.y) {
+				u8 *can_enter = (u8*)data;
+				*can_enter = 0;
+			}
+			break;
+		}
+		case MESSAGE_HANDLER_DROP_TILE:
+			if (h.trap.pos.x == message.move.start.x
+			 && h.trap.pos.y == message.move.start.y) {
+				// game->tiles[h.trap.pos].type = TILE_EMPTY;
+				Transaction t = {};
+				t.type = TRANSACTION_DROP_TILE;
+				t.start_time = time + 0.05f;
+				t.drop_tile.pos = h.trap.pos;
+				transactions.append(t);
+			}
+			break;
+		}
+	}
+}
+
 // #define DEBUG_CREATE_MOVES
 // #define DEBUG_SHOW_ACTIONS
+// #define DEBUG_TRANSACTION_PROCESSING
 
 void game_do_turn(Game* game, Event_Buffer* event_buffer)
 {
@@ -367,6 +498,8 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 	Map_Cache_Bool occupied;
 	occupied.reset();
 
+	auto& tiles = game->tiles;
+
 	u32 num_controllers = game->controllers.len;
 	for (u32 i = 0; i < num_controllers; ++i) {
 		Controller *c = &game->controllers[i];
@@ -392,7 +525,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 						continue;
 					}
 					Pos end = (Pos)((v2_i16)start + V2_i16(dx, dy));
-					Tile t = game->tiles[end];
+					Tile t = tiles[end];
 					if (tile_is_passable(t, move_mask)) {
 						Potential_Move pm = {};
 						pm.entity_id = e->id;
@@ -412,7 +545,10 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 	u32 num_entities = game->num_entities;
 	for (u32 i = 0; i < num_entities; ++i) {
-		occupied.set(game->entities[i].pos);
+		Entity *e = &game->entities[i];
+		if (e->block_mask) {
+			occupied.set(e->pos);
+		}
 	}
 
 	// sort
@@ -493,28 +629,187 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 	// =====================================================================
 	// simulate actions
 
-	// =====================================================================
-	// create event buffer
+	// 1. create transaction buffer
 
-	Event_Buffer& events = *event_buffer;
+
+	Transaction_Buffer transactions;
+	transactions.reset();
+
 	for (u32 i = 0; i < actions.len; ++i) {
 		Action action = actions[i];
 		switch (action.type) {
+		case ACTION_NONE:
+		case ACTION_WAIT:
+			break;
 		case ACTION_MOVE: {
-			Entity *e = game_get_entity_by_id(game, action.move.entity_id);
-			e->pos = action.move.end;
-
-			Event event = {};
-			event.type = EVENT_MOVE;
-			event.block_id = 0;
-			event.move.entity_id = action.move.entity_id;
-			event.move.start = action.move.start;
-			event.move.end = action.move.end;
-			events.append(event);
-
+			Transaction t = {};
+			t.type = TRANSACTION_MOVE_EXIT;
+			t.start_time = 0.0f;
+			t.move.entity_id = action.move.entity_id;
+			t.move.start = action.move.start;
+			t.move.end = action.move.end;
+			transactions.append(t);
 			break;
 		}
 		}
+	}
+
+	// 2. initialise "occupied" grid
+
+	occupied.reset();
+
+	Entity *entities = game->entities;
+	for (u32 i = 0; i < num_entities; ++i) {
+		Entity *e = &entities[i];
+		if (e->block_mask) {
+			occupied.set(e->pos);
+		}
+	}
+
+	// 3. resolve transactions
+
+	auto& handlers = game->handlers;
+	Event_Buffer& events = *event_buffer;
+
+	f32 time = 0.0f;
+	while (transactions) {
+		for (u32 i = 0; i < transactions.len; ++i) {
+			Transaction *t = &transactions[i];
+			ASSERT(t->start_time >= time);
+			if (t->start_time > time) {
+				continue;
+			}
+			switch (t->type) {
+			case TRANSACTION_MOVE_EXIT: {
+				// pre-exit
+				u8 can_exit = 1;
+				Message m = {};
+				m.type = MESSAGE_MOVE_PRE_EXIT;
+				m.move.entity_id = t->move.entity_id;
+				m.move.start = t->move.start;
+				m.move.end = t->move.end;
+				game_dispatch_message(game, m, time, &transactions, &can_exit);
+
+#ifdef DEBUG_TRANSACTION_PROCESSING
+				debug_draw_world_reset();
+				debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 1.0f));
+				debug_draw_world_arrow((v2)m.move.start, (v2)m.move.end);
+				debug_pause();
+#endif
+
+				if (!can_exit) {
+					t->type = TRANSACTION_REMOVE;
+					break;
+				}
+
+#ifdef DEBUG_TRANSACTION_PROCESSING
+				debug_draw_world_reset();
+				debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+				debug_draw_world_arrow((v2)m.move.start, (v2)m.move.end);
+				debug_pause();
+#endif
+
+				// post-exit
+				m.type = MESSAGE_MOVE_POST_EXIT;
+				game_dispatch_message(game, m, time, &transactions, NULL);
+
+				t->type = TRANSACTION_MOVE_ENTER;
+				t->start_time += 0.5f;
+				break;
+			}
+			case TRANSACTION_MOVE_ENTER: {
+				// pre-enter
+				u8 can_enter = 1;
+				Pos start = t->move.start;
+				Pos end = t->move.end;
+				Message m = {};
+				m.type = MESSAGE_MOVE_PRE_ENTER;
+				m.move.entity_id = t->move.entity_id;
+				m.move.start = start;
+				m.move.end = end;
+				game_dispatch_message(game, m, time, &transactions, &can_enter);
+
+#ifdef DEBUG_TRANSACTION_PROCESSING
+				debug_draw_world_reset();
+				debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 1.0f));
+				debug_draw_world_arrow((v2)start, (v2)end);
+				debug_pause();
+#endif
+
+				// post-enter
+				Event event = {};
+				event.time = time - 0.5f; // XXX - yuck
+				event.move.entity_id = t->move.entity_id;
+				event.move.start = start;
+				event.move.end = end;
+				if (can_enter && !occupied.get(end)) {
+					occupied.unset(start);
+					occupied.set(end);
+					Entity *e = game_get_entity_by_id(game, t->move.entity_id);
+					ASSERT(e);
+					e->pos = end;
+					event.type = EVENT_MOVE;
+
+#ifdef DEBUG_TRANSACTION_PROCESSING
+					debug_draw_world_reset();
+					debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+					debug_draw_world_arrow((v2)start, (v2)end);
+					debug_pause();
+#endif
+				} else {
+#ifdef DEBUG_TRANSACTION_PROCESSING
+					debug_draw_world_reset();
+					debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
+					debug_draw_world_circle((v2)start, 0.5f);
+					debug_pause();
+#endif
+					event.type = EVENT_MOVE_BLOCKED;
+				}
+				m.type = MESSAGE_MOVE_POST_ENTER;
+				game_dispatch_message(game, m, time, &transactions, NULL);
+
+				t->type = TRANSACTION_REMOVE;
+				events.append(event);
+
+				break;
+			}
+			case TRANSACTION_DROP_TILE: {
+				Event event = {};
+				event.type = EVENT_DROP_TILE;
+				event.time = time;
+				event.drop_tile.pos = t->drop_tile.pos;
+				events.append(event);
+
+				tiles[t->drop_tile.pos].type = TILE_EMPTY;
+				t->type = TRANSACTION_REMOVE;
+
+				break;
+			}
+			}
+		}
+
+		// remove finished transactions
+		u32 push_back = 0;
+		for (u32 i = 0; i < transactions.len; ++i) {
+			if (transactions[i].type == TRANSACTION_REMOVE) {
+				++push_back;
+			} else if (push_back) {
+				transactions[i - push_back] = transactions[i];
+			}
+		}
+		transactions.len -= push_back;
+
+		// TODO - need some better representation of "infinity"
+		f32 next_time = 1000000.0f;
+		for (u32 i = 0; i < transactions.len; ++i) {
+			Transaction *t = &transactions[i];
+			f32 start_time = t->start_time;
+			ASSERT(start_time > time);
+			if (start_time < next_time) {
+				next_time = start_time;
+			}
+		}
+		time = next_time;
 	}
 }
 
@@ -530,6 +825,7 @@ void game_build_from_string(Game* game, char* str)
 	player_controller->type = CONTROLLER_PLAYER;
 	player_controller->id = c_id++;
 	auto& tiles = game->tiles;
+	auto& handlers = game->handlers;
 	memset(&tiles, 0, sizeof(tiles));
 
 	for (char *p = str; *p; ++p) {
@@ -551,6 +847,55 @@ void game_build_from_string(Game* game, char* str)
 		case '.': {
 			tiles[cur_pos].type = TILE_FLOOR;
 			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+			break;
+		}
+		case 'w': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			Message_Handler mh = {};
+			mh.type = MESSAGE_HANDLER_PREVENT_EXIT;
+			mh.handle_mask = MESSAGE_MOVE_PRE_EXIT;
+			mh.prevent_exit.pos = cur_pos;
+			handlers.append(mh);
+
+			Entity e = {};
+			e.id = e_id++;
+			e.pos = cur_pos;
+			e.appearance = rand_u32() % 2 ?
+			               APPEARANCE_ITEM_SPIDERWEB_1 : APPEARANCE_ITEM_SPIDERWEB_2;
+			game->entities[idx++] = e;
+
+			break;
+		}
+		case '^': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			Message_Handler mh = {};
+			mh.type = MESSAGE_HANDLER_TRAP_FIREBALL;
+			mh.handle_mask = MESSAGE_MOVE_POST_ENTER;
+			mh.trap.pos = cur_pos;
+			handlers.append(mh);
+
+			Entity e = {};
+			e.id = e_id++;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_ITEM_TRAP_HEX;
+			game->entities[idx++] = e;
+
+			break;
+		}
+		case 'v': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			Message_Handler mh = {};
+			mh.type = MESSAGE_HANDLER_DROP_TILE;
+			mh.handle_mask = MESSAGE_MOVE_POST_EXIT;
+			mh.trap.pos = cur_pos;
+			handlers.append(mh);
+
 			break;
 		}
 		case '@': {
@@ -623,43 +968,6 @@ void peek_move_resolve(Slice<Action> moves)
 	}
 }
 
-enum Message_Type
-{
-	MESSAGE_MOVE_PRE_EXIT,
-	MESSAGE_MOVE_POST_EXIT,
-	MESSAGE_MOVE_PRE_ENTER,
-	MESSAGE_MOVE_POST_ENTER,
-};
-
-struct Message
-{
-	Message_Type type;
-	union {
-		struct {
-			Entity_ID entity_id;
-			Pos       start;
-			Pos       pos;
-		} move;
-	};
-};
-
-enum Transaction_Type
-{
-	TRANSACTION_MOVE_EXIT,
-	TRANSACTION_MOVE_ENTER,
-};
-
-struct Transaction
-{
-	Transaction_Type type;
-	f32 start_time;
-	union {
-		struct {
-		} move_exit;
-		struct {
-		} move_enter;
-	};
-};
 
 // =============================================================================
 // draw
@@ -690,6 +998,8 @@ enum Anim_Type
 	ANIM_WATER_EDGE,
 	ANIM_CREATURE_IDLE,
 	ANIM_MOVE,
+	ANIM_MOVE_BLOCKED,
+	ANIM_DROP_TILE,
 };
 
 struct Anim
@@ -709,6 +1019,10 @@ struct Anim
 			v2 start;
 			v2 end;
 		} move;
+		struct {
+			f32 start_time;
+			f32 duration;
+		} drop_tile;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -778,6 +1092,34 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 				}
 			}
 			break;
+		case EVENT_MOVE_BLOCKED:
+			for (u32 i = 0; i < num_anims; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->move.entity_id) {
+					anim->type = ANIM_MOVE_BLOCKED;
+					anim->move.duration = ANIM_MOVE_DURATION;
+					anim->move.start_time = event->time;
+					anim->move.start.x = (f32)event->move.start.x;
+					anim->move.start.y = (f32)event->move.start.y;
+					anim->move.end.x   = (f32)event->move.end.x;
+					anim->move.end.y   = (f32)event->move.end.y;
+					++world_anim->num_active_anims;
+				}
+			}
+			break;
+		case EVENT_DROP_TILE: {
+			u32 tile_id = MAX_ENTITIES + pos_to_u16(event->drop_tile.pos);
+			for (u32 i = 0; i < num_anims; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == tile_id) {
+					anim->type = ANIM_DROP_TILE;
+					anim->drop_tile.duration = ANIM_MOVE_DURATION;
+					anim->drop_tile.start_time = event->time;
+					++world_anim->num_active_anims;
+				}
+			}
+			break;
+		}
 		}
 		++event_idx;
 	}
@@ -875,6 +1217,16 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			u32 index = pos.y * 256 + pos.x;
 			liquid_id_grid[index] = appearance_get_liquid_id(app);
 			liquid_entity_id_grid[index] = e->id;
+		}
+		if (appearance_is_item(app)) {
+			Anim ia = {};
+			ia.type = ANIM_TILE_STATIC;
+			ia.sprite_coords = appearance_get_item_sprite_coords(app);
+			ia.world_coords = (v2)pos;
+			ia.entity_id = e->id;
+			ia.depth_offset = Z_OFFSET_ITEM;
+			world_anim->anims.append(ia);
+			continue;
 		}
 	}
 
@@ -1021,8 +1373,9 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 	f32 dyn_time = time - world_anim->dynamic_anim_start_time;
 
 	// clear up finished animations
-	u32 num_anims = world_anim->anims.len;
-	for (u32 i = 0; i < num_anims; ++i) {
+	// u32 num_anims = world_anim->anims.len;
+	auto& anims = world_anim->anims;
+	for (u32 i = 0; i < anims.len; ) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
 		case ANIM_MOVE:
@@ -1030,11 +1383,28 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 				anim->world_coords = anim->move.end;
 				anim->type = ANIM_CREATURE_IDLE;
 				anim->idle.offset = time;
-				anim->idle.duration = 0.8f + 0.4f * rand_f32();
+				anim->idle.duration = uniform_f32(0.8f, 1.2f);
 				--world_anim->num_active_anims;
 			}
 			break;
+		case ANIM_MOVE_BLOCKED:
+			if (anim->move.start_time + anim->move.duration <= dyn_time) {
+				anim->world_coords = anim->move.start;
+				anim->type = ANIM_CREATURE_IDLE;
+				anim->idle.offset = time;
+				anim->idle.duration = uniform_f32(0.8f, 1.2f);
+				--world_anim->num_active_anims;
+			}
+			break;
+		case ANIM_DROP_TILE:
+			if (anim->drop_tile.start_time + anim->drop_tile.duration <= dyn_time) {
+				anims.remove(i);
+				--world_anim->num_active_anims;
+				continue;
+			}
+			break;
 		}
+		++i;
 	}
 
 	// prepare next events if we're still animating
@@ -1047,7 +1417,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 
 
 	// draw tile animations
-	for (u32 i = 0; i < num_anims; ++i) {
+	for (u32 i = 0; i < anims.len; ++i) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
 		case ANIM_TILE_STATIC: {
@@ -1131,6 +1501,60 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			ci.depth_offset += 0.5f;
 
 			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			break;
+		}
+		case ANIM_MOVE_BLOCKED: {
+			f32 dt = (dyn_time - anim->move.start_time) / anim->move.duration;
+			v2 start = anim->move.start;
+			v2 end = anim->move.end;
+			v2 world_pos = {};
+			f32 w = dt;
+			if (dt > 0.5f) {
+				w = 1.0f - dt;
+			}
+			world_pos.x = start.x + (end.x - start.x) * w;
+			world_pos.y = start.y + (end.y - start.y) * w;
+
+			Sprite_Sheet_Instance ci = {};
+
+			// draw shadow
+			world_pos.y -= 3.0f / 24.0f;
+			ci.sprite_pos = { 4.0f, 22.0f };
+			ci.world_pos = world_pos;
+			ci.sprite_id = anim->entity_id;
+			ci.depth_offset = anim->depth_offset;
+			ci.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
+			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			v2 sprite_pos = anim->sprite_coords;
+			if (dt > 0.5f) {
+				sprite_pos.y += 1.0f;
+			}
+			ci.sprite_pos = sprite_pos;
+			world_pos.y -= 3.0f / 24.0f + 0.5f * dt*(1.0f - dt);
+			ci.world_pos = world_pos;
+			ci.depth_offset += 0.5f;
+
+			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			break;
+		}
+		case ANIM_DROP_TILE: {
+			f32 dt = (dyn_time - anim->drop_tile.start_time) / anim->drop_tile.duration;
+			dt = max(0.0f, dt);
+
+			f32 dy = dt*dt;
+
+			Sprite_Sheet_Instance ti = {};
+			ti.sprite_pos = anim->sprite_coords;
+			ti.world_pos = anim->world_coords + V2_f32(0, dy);
+			ti.sprite_id = anim->entity_id;
+			ti.depth_offset = anim->depth_offset - dy;
+
+			f32 c = 1.0f - dt;
+			ti.color_mod = { c, c, c, 1.0f };
+			sprite_sheet_instances_add(&draw->tiles, ti);
 
 			break;
 		}
@@ -1745,19 +2169,19 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	game_build_from_string(&program->game,
 		"##########################################\n"
 		"#bbbbb........#b#........................#\n"
-		"#bb..b.#......#b#........................#\n"
+		"#bb..b.#..w...#b#........................#\n"
 		"#bbbbb###.....#b#.......###..............#\n"
 		"#bbbb#####....#b#.......#x#..............#\n"
 		"#.b.##.#.##...#b#.....###x#.#............#\n"
 		"#..##..#..##..#b#.....#xxxxx#............#\n"
 		"#......#......#b#.....###x###............#\n"
-		"#......#......#.#.......#x#..............#\n"
-		"#......#.......@........###..............#\n"
-		"#......#......#..........................#\n"
-		"#......#......#............#.............#\n"
-		"#......#......#..........................#\n"
-		"#~~~...#.....x#..............#...........#\n"
-		"#~~~~..#.....x#..........................#\n"
+		"#...w..#......#w#.......#x#..............#\n"
+		"#w.....#.......@........###..............#\n"
+		"#......#...w..#..........................#\n"
+		"#......#......#vvv.^..^....#.............#\n"
+		"#......#......#vvv.......................#\n"
+		"#~~~...#.....x#vvv.^...^.....#...........#\n"
+		"#~~~~..#.....x#vvv.......................#\n"
 		"#~~~~~~..xxxxx#............#...#.........#\n"
 		"##########x####..........................#\n"
 		"#.........x...#........#.................#\n"
