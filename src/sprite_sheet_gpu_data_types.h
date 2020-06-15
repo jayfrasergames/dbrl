@@ -14,8 +14,8 @@ struct Sprite_Sheet_Constant_Buffer
 	F2 screen_size;
 	F2 sprite_size;
 
+	F2 world_tile_size;
 	F2 tex_size;
-	F2 _dummy;
 };
 
 struct Sprite_Sheet_Instance

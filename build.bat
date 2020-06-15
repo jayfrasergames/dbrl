@@ -149,6 +149,12 @@ python ..\scripts\make_sprite_sheet.py ^
 	-n Water_Edges ^
 	--tile-width 24 ^
 	--tile-height 24
+python ..\scripts\make_sprite_sheet.py ^
+	-i ../assets/effects32.png ^
+	-o ../src/gen/sprite_sheet_effects_32.data.h ^
+	-n Effects_32 ^
+	--tile-width 32 ^
+	--tile-height 32
 python ..\assets\make_metadata_header.py ^
 	-o ../src/gen/appearance.data.h
 python ..\assets\build_cards.py ^

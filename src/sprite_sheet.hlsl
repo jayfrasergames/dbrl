@@ -8,7 +8,6 @@ cbuffer blitter_constants : register(b0)
 {
 	Sprite_Sheet_Constant_Buffer constants;
 };
-// ConstantBuffer<Sprite_Sheet_Constant_Buffer> constants : register(b0);
 StructuredBuffer<Sprite_Sheet_Instance>      instances : register(t0);
 Texture2D<float4>                            tex       : register(t0);
 
@@ -42,13 +41,13 @@ struct VS_Sprite_Vertex
 };
 
 static const VS_Sprite_Vertex SPRITE_VERTICES[] = {
-	{ 0.0f, 0.0f },
-	{ 0.0f, 1.0f },
-	{ 1.0f, 0.0f },
+	{  0.0f,  0.0f },
+	{  0.0f,  1.0f },
+	{  1.0f,  0.0f },
 
-	{ 1.0f, 0.0f },
-	{ 0.0f, 1.0f },
-	{ 1.0f, 1.0f },
+	{  1.0f,  0.0f },
+	{  0.0f,  1.0f },
+	{  1.0f,  1.0f },
 };
 
 VS_Sprite_Output vs_sprite(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -59,7 +58,12 @@ VS_Sprite_Output vs_sprite(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 	Sprite_Sheet_Instance instance = instances[iid];
 
 	float2 sprite_size = constants.sprite_size / constants.screen_size;
-	float2 pos = (vertex.pos + instance.world_pos) * sprite_size;
+	float2 world_tile_size = constants.world_tile_size / constants.screen_size;
+
+	// floa2 center = instance.world_pos * world_tile_size;
+
+	float2 pos = vertex.pos * sprite_size + instance.world_pos * world_tile_size
+	           - (sprite_size - world_tile_size) / 2.0f;
 	pos = pos * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
 	float2 sprite_pos = instance.sprite_pos + vertex.pos;
 

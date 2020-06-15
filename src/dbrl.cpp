@@ -20,6 +20,7 @@
 #include "gen/sprite_sheet_creatures.data.h"
 #include "gen/sprite_sheet_tiles.data.h"
 #include "gen/sprite_sheet_water_edges.data.h"
+#include "gen/sprite_sheet_effects_32.data.h"
 
 #include "gen/pass_through_dxbc_vertex_shader.data.h"
 #include "gen/pass_through_dxbc_pixel_shader.data.h"
@@ -74,10 +75,10 @@ struct Map_Cache
 struct Map_Cache_Bool
 {
 	u64  items[256 * 256 / 64];
-	u64  get(Pos p)   { u16 idx = pos_to_u16(p); return items[idx / 64] & (1 << (idx % 64)); }
-	void set(Pos p)   { u16 idx = pos_to_u16(p); items[idx / 64] |= (1 << (idx % 64)); }
-	void unset(Pos p) { u16 idx = pos_to_u16(p); items[idx / 64] &= ~(1 << (idx % 64)); }
-	void reset()        { memset(items, 0, sizeof(items)); }
+	u64  get(Pos p)   { u16 idx = pos_to_u16(p); return items[idx / 64] & ((u64)1 << (idx % 64)); }
+	void set(Pos p)   { u16 idx = pos_to_u16(p); items[idx / 64] |= ((u64)1 << (idx % 64)); }
+	void unset(Pos p) { u16 idx = pos_to_u16(p); items[idx / 64] &= ~((u64)1 << (idx % 64)); }
+	void reset()      { memset(items, 0, sizeof(items)); }
 };
 
 // =============================================================================
@@ -101,6 +102,7 @@ enum Action_Type
 	ACTION_NONE,
 	ACTION_MOVE,
 	ACTION_WAIT,
+	ACTION_FIREBALL,
 };
 
 struct Action
@@ -111,6 +113,10 @@ struct Action
 			Entity_ID entity_id;
 			Pos start, end;
 		} move;
+		struct {
+			Pos start;
+			Pos end;
+		} fireball;
 	};
 };
 
@@ -122,6 +128,7 @@ enum Event_Type
 	EVENT_MOVE,
 	EVENT_MOVE_BLOCKED,
 	EVENT_DROP_TILE,
+	EVENT_FIREBALL_SHOT,
 };
 
 struct Event
@@ -137,6 +144,11 @@ struct Event
 		struct {
 			Pos pos;
 		} drop_tile;
+		struct {
+			f32 duration;
+			Pos start;
+			Pos end;
+		} fireball_shot;
 	};
 };
 
@@ -150,6 +162,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_MOVE: return 0;
 	case EVENT_MOVE_BLOCKED: return 0;
 	case EVENT_DROP_TILE: return 0;
+	case EVENT_FIREBALL_SHOT: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -177,6 +190,7 @@ enum Controller_Type
 	CONTROLLER_PLAYER,
 	CONTROLLER_RANDOM_MOVE,
 	CONTROLLER_RANDOM_SNAKE,
+	CONTROLLER_DRAGON,
 
 	NUM_CONTROLLERS,
 };
@@ -199,6 +213,9 @@ struct Controller
 		struct {
 			Max_Length_Array<Entity_ID, CONTROLLER_SNAKE_MAX_LENGTH> entities;
 		} random_snake;
+		struct {
+			Entity_ID entity_id;
+		} dragon;
 	};
 };
 
@@ -403,6 +420,8 @@ enum Transaction_Type
 	TRANSACTION_MOVE_EXIT,
 	TRANSACTION_MOVE_ENTER,
 	TRANSACTION_DROP_TILE,
+	TRANSACTION_FIREBALL_SHOT,
+	TRANSACTION_FIREBALL_OFFSHOOT,
 };
 
 struct Transaction
@@ -418,6 +437,14 @@ struct Transaction
 		struct {
 			Pos pos;
 		} drop_tile;
+		struct {
+			Pos start;
+			Pos end;
+		} fireball_shot;
+			Pos start;
+			Pos end;
+		struct {
+		} fireball_offshoot;
 	};
 };
 
@@ -551,6 +578,20 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 		}
 	}
 
+#if 0
+	debug_draw_world_reset();
+	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
+	for (u8 y = 1; y < 255; ++y) {
+		for (u8 x = 1; x < 255; ++x) {
+			Pos p = { x, y };
+			if (occupied.get(p)) {
+				debug_draw_world_circle((v2)p, 0.25f);
+			}
+		}
+	}
+	debug_pause();
+#endif
+
 	// sort
 	for (u32 i = 1; i < potential_moves.len; ++i) {
 		Potential_Move tmp = potential_moves[i];
@@ -612,6 +653,35 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 	// 2. create other actions...
 
+	// XXX - the whole point of doing other actions _now_ is that we can
+	// use the locations of where things finish after movement for targetting
+	// we should incorporate that here
+	for (u32 i = 0; i < num_controllers; ++i) {
+		Controller *c = &game->controllers[i];
+		switch (c->type) {
+		case CONTROLLER_DRAGON: {
+			Entity *e = game_get_entity_by_id(game, c->dragon.entity_id);
+			u16 move_mask = e->movement_type;
+			u32 t_idx = rand_u32() % game->num_entities;
+			Entity *t = &game->entities[t_idx];
+			Action a = {};
+			a.type = ACTION_FIREBALL;
+			a.fireball.start = e->pos;
+			a.fireball.end = t->pos;
+
+			/*
+			debug_draw_world_reset();
+			debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 1.0f));
+			debug_draw_world_arrow((v2)a.fireball.start, (v2)a.fireball.end);
+			debug_pause();
+			*/
+
+			actions.append(a);
+			break;
+		}
+		}
+	}
+
 #ifdef DEBUG_SHOW_ACTIONS
 	debug_draw_world_reset();
 	debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 1.0f, 1.0f));
@@ -648,6 +718,15 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 			t.move.entity_id = action.move.entity_id;
 			t.move.start = action.move.start;
 			t.move.end = action.move.end;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_FIREBALL: {
+			Transaction t = {};
+			t.type = TRANSACTION_FIREBALL_SHOT;
+			t.start_time = 0.0f;
+			t.fireball_shot.start = action.fireball.start;
+			t.fireball_shot.end = action.fireball.end;
 			transactions.append(t);
 			break;
 		}
@@ -785,6 +864,21 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 				break;
 			}
+			case TRANSACTION_FIREBALL_SHOT: {
+				// TODO -- calculate sensible start time/duration for fireball
+				// based on distance the fireball has to travel
+				Event event = {};
+				event.type = EVENT_FIREBALL_SHOT;
+				event.time = time;
+				event.fireball_shot.duration = 1.0f;
+				event.fireball_shot.start = t->fireball_shot.start;
+				event.fireball_shot.end = t->fireball_shot.end;
+				events.append(event);
+
+				t->type = TRANSACTION_REMOVE;
+
+				break;
+			}
 			}
 		}
 
@@ -865,6 +959,27 @@ void game_build_from_string(Game* game, char* str)
 			e.appearance = rand_u32() % 2 ?
 			               APPEARANCE_ITEM_SPIDERWEB_1 : APPEARANCE_ITEM_SPIDERWEB_2;
 			game->entities[idx++] = e;
+
+			break;
+		}
+		case 'd': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			Entity e = {};
+			e.id = e_id++;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_CREATURE_RED_DRAGON;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.movement_type = BLOCK_WALK;
+			game->entities[idx++] = e;
+
+			Controller c = {};
+			c.id = c_id++;
+			c.type = CONTROLLER_DRAGON;
+			c.dragon.entity_id = e.id;
+
+			game->controllers.append(c);
 
 			break;
 		}
@@ -985,6 +1100,7 @@ struct Draw
 	Sprite_Sheet_Instances tiles;
 	Sprite_Sheet_Instances creatures;
 	Sprite_Sheet_Instances water_edges;
+	Sprite_Sheet_Instances effects_32;
 	Card_Render card_render;
 	Debug_Line card_debug_line;
 };
@@ -1000,6 +1116,7 @@ enum Anim_Type
 	ANIM_MOVE,
 	ANIM_MOVE_BLOCKED,
 	ANIM_DROP_TILE,
+	ANIM_PROJECTILE_EFFECT_32,
 };
 
 struct Anim
@@ -1023,6 +1140,12 @@ struct Anim
 			f32 start_time;
 			f32 duration;
 		} drop_tile;
+		struct {
+			f32 start_time;
+			f32 duration;
+			v2 start;
+			v2 end;
+		} projectile;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -1074,11 +1197,13 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 	u32 cur_block_id = world_anim->anim_block_number++;
 	Event *events = world_anim->events_to_be_animated.items;
 
+	auto& anims = world_anim->anims;
+
 	while (event_idx < num_events && events[event_idx].block_id == cur_block_id) {
 		Event *event = &events[event_idx];
 		switch (event->type) {
 		case EVENT_MOVE:
-			for (u32 i = 0; i < num_anims; ++i) {
+			for (u32 i = 0; i < anims.len; ++i) {
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == event->move.entity_id) {
 					anim->type = ANIM_MOVE;
@@ -1093,7 +1218,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			}
 			break;
 		case EVENT_MOVE_BLOCKED:
-			for (u32 i = 0; i < num_anims; ++i) {
+			for (u32 i = 0; i < anims.len; ++i) {
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == event->move.entity_id) {
 					anim->type = ANIM_MOVE_BLOCKED;
@@ -1109,7 +1234,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			break;
 		case EVENT_DROP_TILE: {
 			u32 tile_id = MAX_ENTITIES + pos_to_u16(event->drop_tile.pos);
-			for (u32 i = 0; i < num_anims; ++i) {
+			for (u32 i = 0; i < anims.len; ++i) {
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == tile_id) {
 					anim->type = ANIM_DROP_TILE;
@@ -1118,6 +1243,17 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 					++world_anim->num_active_anims;
 				}
 			}
+			break;
+		}
+		case EVENT_FIREBALL_SHOT: {
+			Anim a = {};
+			a.type = ANIM_PROJECTILE_EFFECT_32;
+			a.projectile.start_time = event->time;
+			a.projectile.duration = ANIM_MOVE_DURATION;
+			a.projectile.start = (v2)event->fireball_shot.start;
+			a.projectile.end = (v2)event->fireball_shot.end;
+			anims.append(a);
+			++world_anim->num_active_anims;
 			break;
 		}
 		}
@@ -1369,6 +1505,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 	sprite_sheet_instances_reset(&draw->tiles);
 	sprite_sheet_instances_reset(&draw->creatures);
 	sprite_sheet_instances_reset(&draw->water_edges);
+	sprite_sheet_instances_reset(&draw->effects_32);
 
 	f32 dyn_time = time - world_anim->dynamic_anim_start_time;
 
@@ -1398,6 +1535,13 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			break;
 		case ANIM_DROP_TILE:
 			if (anim->drop_tile.start_time + anim->drop_tile.duration <= dyn_time) {
+				anims.remove(i);
+				--world_anim->num_active_anims;
+				continue;
+			}
+			break;
+		case ANIM_PROJECTILE_EFFECT_32:
+			if (anim->projectile.start_time + anim->projectile.duration <= dyn_time) {
 				anims.remove(i);
 				--world_anim->num_active_anims;
 				continue;
@@ -1556,6 +1700,23 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			ti.color_mod = { c, c, c, 1.0f };
 			sprite_sheet_instances_add(&draw->tiles, ti);
 
+			break;
+		}
+		case ANIM_PROJECTILE_EFFECT_32: {
+			f32 dt = (dyn_time - anim->projectile.start_time) / anim->projectile.duration;
+			if (dt < 0.0f) {
+				break;
+			}
+			dt = dt * dt;
+
+			Sprite_Sheet_Instance instance = {};
+			instance.sprite_pos = anim->sprite_coords;
+			instance.world_pos = lerp(anim->projectile.start, anim->projectile.end, dt);
+			instance.sprite_id = 0;
+			instance.depth_offset = 2.0f;
+			instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+
+			sprite_sheet_instances_add(&draw->effects_32, instance);
 			break;
 		}
 		}
@@ -2158,23 +2319,24 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	program->random_state.seed(0);
 
 	sprite_sheet_renderer_init(&program->draw.renderer,
-	                           &program->draw.tiles, 3,
+	                           &program->draw.tiles, 4,
 	                           { 1600, 900 });
 
 
 	program->draw.tiles.data       = SPRITE_SHEET_TILES;
 	program->draw.creatures.data   = SPRITE_SHEET_CREATURES;
 	program->draw.water_edges.data = SPRITE_SHEET_WATER_EDGES;
+	program->draw.effects_32.data  = SPRITE_SHEET_EFFECTS_32;
 
 	game_build_from_string(&program->game,
 		"##########################################\n"
 		"#bbbbb........#b#........................#\n"
 		"#bb..b.#..w...#b#........................#\n"
-		"#bbbbb###.....#b#.......###..............#\n"
+		"#bbbbb###.....#b#.......###.......d......#\n"
 		"#bbbb#####....#b#.......#x#..............#\n"
-		"#.b.##.#.##...#b#.....###x#.#............#\n"
+		"#.b.##.#.##...#b#.....###x#.#.......d....#\n"
 		"#..##..#..##..#b#.....#xxxxx#............#\n"
-		"#......#......#b#.....###x###............#\n"
+		"#......#......#b#.....###x###.....d......#\n"
 		"#...w..#......#w#.......#x#..............#\n"
 		"#w.....#.......@........###..............#\n"
 		"#......#...w..#..........................#\n"
@@ -2306,6 +2468,10 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 		goto error_init_sprite_sheet_water_edges;
 	}
 
+	if (!sprite_sheet_instances_d3d11_init(&program->draw.effects_32, device)) {
+		goto error_init_sprite_sheet_effects_32;
+	}
+
 	if (!pixel_art_upsampler_d3d11_init(&program->pixel_art_upsampler, device)) {
 		goto error_init_pixel_art_upsampler;
 	}
@@ -2346,6 +2512,8 @@ error_init_card_render:
 error_init_imgui:
 	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
 error_init_pixel_art_upsampler:
+	sprite_sheet_instances_d3d11_free(&program->draw.effects_32);
+error_init_sprite_sheet_effects_32:
 	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
 error_init_sprite_sheet_water_edges:
 	sprite_sheet_instances_d3d11_free(&program->draw.creatures);
@@ -2376,6 +2544,7 @@ void program_d3d11_free(Program* program)
 	card_render_d3d11_free(&program->draw.card_render);
 	imgui_d3d11_free(&program->imgui);
 	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
+	sprite_sheet_instances_d3d11_free(&program->draw.effects_32);
 	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
 	sprite_sheet_instances_d3d11_free(&program->draw.creatures);
 	sprite_sheet_instances_d3d11_free(&program->draw.tiles);
@@ -2604,6 +2773,16 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	                             &program->draw.card_debug_line,
 	                             selected_card_id);
 
+	/*
+	Sprite_Sheet_Instance test_instance = {};
+	test_instance.world_pos  = V2_f32(3.0f, 3.0f);
+	test_instance.sprite_pos = V2_f32(0.0f, 5.0f);
+	test_instance.sprite_id = 0;
+	test_instance.depth_offset = 2.0f;
+	test_instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+	sprite_sheet_instances_add(&program->draw.effects_32,
+	                           test_instance);
+	*/
 
 	// do stuff
 	imgui_begin(&program->imgui);
@@ -2721,6 +2900,7 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	sprite_sheet_instances_d3d11_draw(&program->draw.tiles, dc, screen_size_u32);
 	sprite_sheet_instances_d3d11_draw(&program->draw.creatures, dc, screen_size_u32);
 	sprite_sheet_instances_d3d11_draw(&program->draw.water_edges, dc, screen_size_u32);
+	sprite_sheet_instances_d3d11_draw(&program->draw.effects_32, dc, screen_size_u32);
 	sprite_sheet_renderer_d3d11_end(&program->draw.renderer, dc);
 
 	f32 zoom = program->draw.camera.zoom;

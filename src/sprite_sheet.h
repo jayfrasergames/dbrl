@@ -661,11 +661,10 @@ void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
                                        v2_u32                  screen_size)
 {
 	Sprite_Sheet_Constant_Buffer constant_buffer = {};
-	constant_buffer.screen_size = { (f32)screen_size.w, (f32)screen_size.h };
-	constant_buffer.sprite_size = { (f32)instances->data.sprite_size.w,
-	                                (f32)instances->data.sprite_size.h };
-	constant_buffer.tex_size = { (f32)instances->data.size.w,
-	                             (f32)instances->data.size.h };
+	constant_buffer.screen_size = (v2)screen_size;
+	constant_buffer.sprite_size = (v2)instances->data.sprite_size;
+	constant_buffer.world_tile_size = V2_f32(24.0f, 24.0f);
+	constant_buffer.tex_size = (v2)instances->data.size;
 
 	D3D11_MAPPED_SUBRESOURCE mapped_buffer = {};
 
