@@ -8,6 +8,7 @@
 #include "jfg/random.h"
 #include "jfg/thread.h"
 
+#include "constants.h"
 #include "debug_draw_world.h"
 #include "sound.h"
 #include "sprite_sheet.h"
@@ -129,6 +130,7 @@ enum Event_Type
 	EVENT_MOVE_BLOCKED,
 	EVENT_DROP_TILE,
 	EVENT_FIREBALL_SHOT,
+	EVENT_FIREBALL_OFFSHOOT,
 };
 
 struct Event
@@ -149,6 +151,11 @@ struct Event
 			Pos start;
 			Pos end;
 		} fireball_shot;
+		struct {
+			f32 duration;
+			Pos start;
+			Pos end;
+		} fireball_offshoot;
 	};
 };
 
@@ -163,6 +170,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_MOVE_BLOCKED: return 0;
 	case EVENT_DROP_TILE: return 0;
 	case EVENT_FIREBALL_SHOT: return 0;
+	case EVENT_FIREBALL_OFFSHOOT: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -444,6 +452,11 @@ struct Transaction
 			Pos start;
 			Pos end;
 		struct {
+			f32 start_time;
+			Pos start;
+			v2_i16 dir;
+			u32 cur_step;
+			u32 num_steps;
 		} fireball_offshoot;
 	};
 };
@@ -877,6 +890,55 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 				t->type = TRANSACTION_REMOVE;
 
+				f32 start_time = time + 1.0f;
+				Transaction offshoot = {};
+				offshoot.type = TRANSACTION_FIREBALL_OFFSHOOT;
+				offshoot.start_time = start_time;
+				offshoot.fireball_offshoot.start_time = start_time;
+				offshoot.fireball_offshoot.start = t->fireball_shot.end;
+				for (i16 dy = -1; dy <= 1; ++dy) {
+					for (i16 dx = -1; dx <= 1; ++dx) {
+						if (dx == 0 && dy == 0) {
+							continue;
+						}
+						offshoot.fireball_offshoot.dir = V2_i16(dx, dy);
+						offshoot.fireball_offshoot.cur_step = 0;
+						offshoot.fireball_offshoot.num_steps = 3;
+
+						transactions.append(offshoot);
+					}
+				}
+
+				break;
+			}
+			case TRANSACTION_FIREBALL_OFFSHOOT: {
+				u32 cur_step = t->fireball_offshoot.cur_step;
+				u32 num_steps = t->fireball_offshoot.num_steps;
+				v2_i16 dir = t->fireball_offshoot.dir;
+				v2_i16 start = (v2_i16)t->fireball_offshoot.start;
+				v2_i16 pos = start + (i16)cur_step * dir;
+
+				u8 is_over = pos.x < 1 || pos.x > 254 || pos.y < 1 || pos.y > 254;
+				is_over |= cur_step == num_steps;
+
+				if (is_over) {
+					Event e = {};
+					e.type = EVENT_FIREBALL_OFFSHOOT;
+					e.time = t->fireball_offshoot.start_time;
+					e.fireball_offshoot.duration = (f32)cur_step;
+					e.fireball_offshoot.start = t->fireball_offshoot.start;
+					v2_i16 end = start + (i16)cur_step * dir;
+					e.fireball_offshoot.end = (Pos)end;
+					events.append(e);
+
+					t->type = TRANSACTION_REMOVE;
+
+					break;
+				}
+
+				++t->fireball_offshoot.cur_step;
+				t->start_time += 1.0f;
+
 				break;
 			}
 			}
@@ -1252,6 +1314,17 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			a.projectile.duration = ANIM_MOVE_DURATION;
 			a.projectile.start = (v2)event->fireball_shot.start;
 			a.projectile.end = (v2)event->fireball_shot.end;
+			anims.append(a);
+			++world_anim->num_active_anims;
+			break;
+		}
+		case EVENT_FIREBALL_OFFSHOOT: {
+			Anim a = {};
+			a.type = ANIM_PROJECTILE_EFFECT_32;
+			a.projectile.start_time = event->time;
+			a.projectile.duration = event->fireball_offshoot.duration;
+			a.projectile.start = (v2)event->fireball_offshoot.start;
+			a.projectile.end = (v2)event->fireball_offshoot.end;
 			anims.append(a);
 			++world_anim->num_active_anims;
 			break;
@@ -1707,7 +1780,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			if (dt < 0.0f) {
 				break;
 			}
-			dt = dt * dt;
+			// dt = dt * dt;
 
 			Sprite_Sheet_Instance instance = {};
 			instance.sprite_pos = anim->sprite_coords;
@@ -2785,7 +2858,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	*/
 
 	// do stuff
-	imgui_begin(&program->imgui);
+	imgui_begin(&program->imgui, input, screen_size);
 	imgui_set_text_cursor(&program->imgui, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
 	char buffer[1024];
 	snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Pos: (%u, %u)",
@@ -2822,6 +2895,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		program->draw.camera.world_center.x,
 		program->draw.camera.world_center.y);
 	imgui_text(&program->imgui, buffer);
+	constants_do_imgui(&program->imgui);
 }
 
 struct Process_Frame_Aux_Thread_Args
@@ -2879,7 +2953,7 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 				sleep(0);
 			}
 		} else {
-			imgui_begin(&program->imgui);
+			imgui_begin(&program->imgui, input, screen_size);
 			imgui_set_text_cursor(&program->imgui,
 			                      { 1.0f, 0.0f, 1.0f, 1.0f },
 			                      { 5.0f, 5.0f });

@@ -1,0 +1,8 @@
+BEGIN_SECTION(anims)
+	BEGIN_SECTION(move)
+		F32(duration, 1.0f)
+	END_SECTION(move)
+	BEGIN_SECTION(fireball)
+		F32(min_speed, 5.0f)
+	END_SECTION(fireball)
+END_SECTION(anims)
