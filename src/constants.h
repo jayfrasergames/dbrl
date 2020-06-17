@@ -7,7 +7,7 @@ struct Constants
 {
 #define BEGIN_SECTION(name) struct {
 #define END_SECTION(name) } name;
-#define F32(name, val) f32 name = val;
+#define F32(name, val, _min, _max) f32 name = val;
 	#include "constants.edit.h"
 #undef BEGIN_SECTION
 #undef END_SECTION
@@ -20,12 +20,36 @@ void constants_do_imgui(IMGUI_Context* imgui);
 
 #ifndef JFG_HEADER_ONLY
 
+#define BEGIN_SECTION(_name)       + 1
+#define END_SECTION(_name)         + 1
+#define F32(name, val, _min, _max) + 1
+	const u32 constants_num_lines = 0
+	#include "constants.edit.h"
+	;
+#undef BEGIN_SECTION
+#undef END_SECTION
+#undef F32
+
+uptr constants_offsets[constants_num_lines];
+
 void constants_do_imgui(IMGUI_Context* imgui)
 {
-	uptr cur_offset = (uptr)&constants;
+	uptr cur_offset = 0;
+
+#define BEGIN_SECTION(_name)
+#define END_SECTION(_name)
+#define F32(name, val, _min, _max) constants_offsets[__LINE__] = cur_offset; cur_offset += sizeof(f32);
+	#include "constants.edit.h"
+#undef BEGIN_SECTION
+#undef END_SECTION
+#undef F32
+
+	uptr base = (uptr)&constants;
+	cur_offset = 0;
 #define BEGIN_SECTION(name) if (imgui_tree_begin(imgui, #name)) {
 #define END_SECTION(name)   imgui_tree_end(imgui); }
-#define F32(name, _val)     imgui_f32(imgui, #name, (f32*)cur_offset); cur_offset += sizeof(f32);
+#define F32(name, _val, min_val, max_val) \
+		imgui_f32(imgui, #name, (f32*)(base + constants_offsets[__LINE__]), min_val, max_val);
 	#include "constants.edit.h"
 #undef BEGIN_SECTION
 #undef END_SECTION

@@ -52,16 +52,6 @@ Pos u16_to_pos(u16 n)
 
 typedef u16 Entity_ID;
 
-#define ANIM_MOVE_DURATION 0.5f
-
-#define Z_OFFSET_FLOOR            0.0f
-#define Z_OFFSET_WALL             1.0f
-#define Z_OFFSET_WALL_SHADOW      0.1f
-#define Z_OFFSET_CHARACTER        1.0f
-#define Z_OFFSET_CHARACTER_SHADOW 0.9f
-#define Z_OFFSET_WATER_EDGE       0.05f
-#define Z_OFFSET_ITEM             0.15f
-
 struct Program;
 thread_local Program* global_program;
 void debug_pause();
@@ -495,13 +485,32 @@ void game_dispatch_message(Game*               game,
 			break;
 		}
 		case MESSAGE_HANDLER_DROP_TILE:
-			if (h.trap.pos.x == message.move.start.x
-			 && h.trap.pos.y == message.move.start.y) {
+			if (h.trap.pos == message.move.start) {
 				// game->tiles[h.trap.pos].type = TILE_EMPTY;
 				Transaction t = {};
 				t.type = TRANSACTION_DROP_TILE;
 				t.start_time = time + 0.05f;
 				t.drop_tile.pos = h.trap.pos;
+				transactions.append(t);
+			}
+			break;
+		case MESSAGE_HANDLER_TRAP_FIREBALL:
+			if (h.trap.pos == message.move.end) {
+				Transaction t = {};
+				t.type = TRANSACTION_FIREBALL_OFFSHOOT;
+				t.start_time = time;
+				t.fireball_offshoot.start_time = time;
+				t.fireball_offshoot.start = h.trap.pos;
+				t.fireball_offshoot.cur_step = 0;
+				t.fireball_offshoot.num_steps = 3;
+
+				t.fireball_offshoot.dir = V2_i16( 0,  1);
+				transactions.append(t);
+				t.fireball_offshoot.dir = V2_i16( 0, -1);
+				transactions.append(t);
+				t.fireball_offshoot.dir = V2_i16( 1,  0);
+				transactions.append(t);
+				t.fireball_offshoot.dir = V2_i16(-1,  0);
 				transactions.append(t);
 			}
 			break;
@@ -883,14 +892,14 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 				Event event = {};
 				event.type = EVENT_FIREBALL_SHOT;
 				event.time = time;
-				event.fireball_shot.duration = 1.0f;
+				event.fireball_shot.duration = constants.anims.fireball.shot_duration;
 				event.fireball_shot.start = t->fireball_shot.start;
 				event.fireball_shot.end = t->fireball_shot.end;
 				events.append(event);
 
 				t->type = TRANSACTION_REMOVE;
 
-				f32 start_time = time + 1.0f;
+				f32 start_time = time + constants.anims.fireball.shot_duration;
 				Transaction offshoot = {};
 				offshoot.type = TRANSACTION_FIREBALL_OFFSHOOT;
 				offshoot.start_time = start_time;
@@ -925,7 +934,8 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 					Event e = {};
 					e.type = EVENT_FIREBALL_OFFSHOOT;
 					e.time = t->fireball_offshoot.start_time;
-					e.fireball_offshoot.duration = (f32)cur_step;
+					e.fireball_offshoot.duration = (f32)cur_step
+						/ constants.anims.fireball.min_speed;
 					e.fireball_offshoot.start = t->fireball_offshoot.start;
 					v2_i16 end = start + (i16)cur_step * dir;
 					e.fireball_offshoot.end = (Pos)end;
@@ -1269,7 +1279,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == event->move.entity_id) {
 					anim->type = ANIM_MOVE;
-					anim->move.duration = ANIM_MOVE_DURATION;
+					anim->move.duration = constants.anims.move.duration;
 					anim->move.start_time = event->time;
 					anim->move.start.x = (f32)event->move.start.x;
 					anim->move.start.y = (f32)event->move.start.y;
@@ -1284,7 +1294,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == event->move.entity_id) {
 					anim->type = ANIM_MOVE_BLOCKED;
-					anim->move.duration = ANIM_MOVE_DURATION;
+					anim->move.duration = constants.anims.move.duration;
 					anim->move.start_time = event->time;
 					anim->move.start.x = (f32)event->move.start.x;
 					anim->move.start.y = (f32)event->move.start.y;
@@ -1300,7 +1310,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == tile_id) {
 					anim->type = ANIM_DROP_TILE;
-					anim->drop_tile.duration = ANIM_MOVE_DURATION;
+					anim->drop_tile.duration = constants.anims.move.duration;
 					anim->drop_tile.start_time = event->time;
 					++world_anim->num_active_anims;
 				}
@@ -1311,7 +1321,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			Anim a = {};
 			a.type = ANIM_PROJECTILE_EFFECT_32;
 			a.projectile.start_time = event->time;
-			a.projectile.duration = ANIM_MOVE_DURATION;
+			a.projectile.duration = constants.anims.fireball.shot_duration;
 			a.projectile.start = (v2)event->fireball_shot.start;
 			a.projectile.end = (v2)event->fireball_shot.end;
 			anims.append(a);
@@ -1354,7 +1364,7 @@ void world_anim_do_events(World_Anim_State* world_anim, Event_Buffer* event_buff
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == event->move.entity_id) {
 					anim->type = ANIM_MOVE;
-					anim->move.duration = ANIM_MOVE_DURATION;
+					anim->move.duration = constants.anims.move.duration;
 					anim->move.start_time = time;
 					anim->move.start.x = (f32)event->move.start.x;
 					anim->move.start.y = (f32)event->move.start.y;
@@ -1392,7 +1402,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ca.sprite_coords = appearance_get_creature_sprite_coords(app);
 			ca.world_coords = (v2)pos;
 			ca.entity_id = e->id;
-			ca.depth_offset = Z_OFFSET_CHARACTER;
+			ca.depth_offset = constants.z_offsets.character;
 			ca.idle.duration = 0.8f + 0.4f * rand_f32();
 			ca.idle.offset = 0.0f;
 			world_anim->anims.append(ca);
@@ -1404,7 +1414,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ta.sprite_coords = appearance_get_floor_sprite_coords(app);
 			ta.world_coords = { (f32)pos.x, (f32)pos.y };
 			ta.entity_id = e->id;
-			ta.depth_offset = Z_OFFSET_FLOOR;
+			ta.depth_offset = constants.z_offsets.floor;
 			world_anim->anims.append(ta);
 			continue;
 		}
@@ -1421,7 +1431,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ta.sprite_coords = appearance_get_liquid_sprite_coords(app);
 			ta.world_coords = { (f32)pos.x, (f32)pos.y };
 			ta.entity_id = e->id;
-			ta.depth_offset = Z_OFFSET_FLOOR;
+			ta.depth_offset = constants.z_offsets.floor;
 			world_anim->anims.append(ta);
 			u32 index = pos.y * 256 + pos.x;
 			liquid_id_grid[index] = appearance_get_liquid_id(app);
@@ -1433,7 +1443,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ia.sprite_coords = appearance_get_item_sprite_coords(app);
 			ia.world_coords = (v2)pos;
 			ia.entity_id = e->id;
-			ia.depth_offset = Z_OFFSET_ITEM;
+			ia.depth_offset = constants.z_offsets.item;
 			world_anim->anims.append(ia);
 			continue;
 		}
@@ -1454,7 +1464,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 				anim.sprite_coords = sprite_coords;
 				anim.world_coords = (v2)p;
 				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
-				anim.depth_offset = Z_OFFSET_FLOOR;
+				anim.depth_offset = constants.z_offsets.floor;
 				world_anim->anims.append(anim);
 				break;
 			}
@@ -1488,13 +1498,13 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 				anim.sprite_coords = appearance_get_wall_sprite_coords(app, connection_mask);
 				anim.world_coords = (v2)p;
 				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
-				anim.depth_offset = Z_OFFSET_WALL;
+				anim.depth_offset = constants.z_offsets.wall;
 				world_anim->anims.append(anim);
 
 				if (tiles[(Pos)((v2_i16)p + V2_i16( 0,  1))].type != TILE_WALL) {
 					anim.sprite_coords = { 30.0f, 36.0f };
 					anim.world_coords = (v2)p + V2_f32(0.0f, 1.0f);
-					anim.depth_offset = Z_OFFSET_WALL_SHADOW;
+					anim.depth_offset = constants.z_offsets.wall_shadow;
 					world_anim->anims.append(anim);
 				}
 
@@ -1507,7 +1517,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 				anim.sprite_coords = sprite_coords;
 				anim.world_coords = (v2)p;
 				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
-				anim.depth_offset = Z_OFFSET_FLOOR;
+				anim.depth_offset = constants.z_offsets.floor;
 				world_anim->anims.append(anim);
 
 				Tile_Type t = c.type;
@@ -1527,7 +1537,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 					anim.sprite_coords = { (f32)(mask % 16), (f32)(15 - mask / 16) };
 					anim.world_coords = (v2)p;
 					anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
-					anim.depth_offset = Z_OFFSET_WATER_EDGE;
+					anim.depth_offset = constants.z_offsets.water_edge;
 					anim.water_edge.color = { 0x58, 0x80, 0xC0, 0xFF };
 					world_anim->anims.append(anim);
 				}
@@ -1561,7 +1571,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 				anim.sprite_coords = { (f32)(mask % 16), (f32)(15 - mask / 16) };
 				anim.world_coords = { (f32)x, (f32)y };
 				anim.entity_id = liquid_entity_id_grid[index];
-				anim.depth_offset = Z_OFFSET_WATER_EDGE;
+				anim.depth_offset = constants.z_offsets.water_edge;
 				anim.water_edge.color = { 0x58, 0x80, 0xc0, 255 };
 				world_anim->anims.append(anim);
 			}
@@ -2141,7 +2151,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 				Card_Hand_Pos *e = &anim->hand_to_hand.end;
 				f32 dt = (time - anim->hand_to_hand.start_time)
 				         / anim->hand_to_hand.duration;
-				dt = clamp(0.0f, 1.0f, dt);
+				dt = clamp(dt, 0.0f, 1.0f);
 				before_pos.angle  = lerp(s->angle,  e->angle,  dt);
 				before_pos.zoom   = lerp(s->zoom,   e->zoom,   dt);
 				before_pos.radius = lerp(s->radius, e->radius, dt);
