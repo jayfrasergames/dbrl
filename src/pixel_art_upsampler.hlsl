@@ -14,17 +14,18 @@ RWTexture2D<float4>                 output    : register(u0);
 [numthreads(PIXEL_ART_UPSAMPLER_WIDTH, PIXEL_ART_UPSAMPLER_HEIGHT, 1)]
 void cs_pixel_art_upsampler(int2 tid : SV_DispatchThreadID)
 {
-	int2 sample_tl  = (tid * constants.input_size) / constants.output_size;
-	int2 sample_br  = ((tid + 1) * constants.input_size) / constants.output_size;
-	float4 sample_00 = input[constants.input_offset + sample_tl];
-	float4 sample_10 = input[constants.input_offset + int2(sample_br.x, sample_tl.y)];
-	float4 sample_01 = input[constants.input_offset + int2(sample_tl.x, sample_br.y)];
-	float4 sample_11 = input[constants.input_offset + sample_br];
+	float2 tidf = float2(tid);
+	int2 sample_tl  = int2(constants.input_offset + (tidf * constants.input_size) / constants.output_size);
+	int2 sample_br  = int2(constants.input_offset + ((tidf + 1.0f) * constants.input_size) / constants.output_size);
+	float4 sample_00 = input[sample_tl];
+	float4 sample_10 = input[int2(sample_br.x, sample_tl.y)];
+	float4 sample_01 = input[int2(sample_tl.x, sample_br.y)];
+	float4 sample_11 = input[sample_br];
 
 	float2 input_size_float  = float2(constants.input_size);
 	float2 output_size_float = float2(constants.output_size);
-	float2 weight_tl = float2(tid) * (input_size_float / output_size_float);
-	float2 weight_br = (float2(tid) + 1.0f) * (input_size_float / output_size_float);
+	float2 weight_tl = tidf * (input_size_float / output_size_float);
+	float2 weight_br = (tidf + 1.0f) * (input_size_float / output_size_float);
 	float2 center = floor(weight_br);
 	float2 weight = min((weight_br - center) / (weight_br - weight_tl), 1.0f);
 

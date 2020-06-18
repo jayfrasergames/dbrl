@@ -356,6 +356,27 @@ struct Game
 	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
 };
 
+Pos game_get_player_pos(Game* game)
+{
+	auto& controllers = game->controllers;
+	Entity_ID player_id = 0;
+	for (u32 i = 0; i < controllers.len; ++i) {
+		if (controllers[i].type == CONTROLLER_PLAYER) {
+			player_id = controllers[i].player.entity_id;
+			break;
+		}
+	}
+	ASSERT(player_id);
+	for (u32 i = 0; i < game->num_entities; ++i) {
+		Entity *e = &game->entities[i];
+		if (e->id == player_id) {
+			return e->pos;
+		}
+	}
+	ASSERT(0);
+	return { 0, 0 };
+}
+
 Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
 {
 	for (u32 i = 0; i < game->num_entities; ++i) {
@@ -1661,7 +1682,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			Sprite_Sheet_Instance ci = {};
 
 			v2 world_pos = anim->world_coords;
-			world_pos.y -= 3.0f / 24.0f;
+			ci.y_offset = -3.0f;
 			ci.sprite_pos = { 4.0f, 22.0f };
 			ci.world_pos = world_pos;
 			ci.sprite_id = anim->entity_id;
@@ -1676,7 +1697,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 				sprite_pos.y += 1.0f;
 			}
 			ci.sprite_pos = sprite_pos;
-			world_pos.y -= 3.0f / 24.0f;
+			ci.y_offset = -6.0f;
 			ci.world_pos = world_pos;
 			ci.depth_offset += 0.5f;
 
@@ -1710,7 +1731,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			Sprite_Sheet_Instance ci = {};
 
 			// draw shadow
-			world_pos.y -= 3.0f / 24.0f;
+			ci.y_offset = -3.0f;
 			ci.sprite_pos = { 4.0f, 22.0f };
 			ci.world_pos = world_pos;
 			ci.sprite_id = anim->entity_id;
@@ -1723,7 +1744,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 				sprite_pos.y += 1.0f;
 			}
 			ci.sprite_pos = sprite_pos;
-			world_pos.y -= 3.0f / 24.0f + 0.5f * dt*(1.0f - dt);
+			ci.y_offset = -6.0f - constants.anims.move.jump_height * 4.0f * dt*(1.0f - dt);
 			ci.world_pos = world_pos;
 			ci.depth_offset += 0.5f;
 
@@ -1746,7 +1767,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			Sprite_Sheet_Instance ci = {};
 
 			// draw shadow
-			world_pos.y -= 3.0f / 24.0f;
+			ci.y_offset = -3.0f;
 			ci.sprite_pos = { 4.0f, 22.0f };
 			ci.world_pos = world_pos;
 			ci.sprite_id = anim->entity_id;
@@ -1759,7 +1780,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 				sprite_pos.y += 1.0f;
 			}
 			ci.sprite_pos = sprite_pos;
-			world_pos.y -= 3.0f / 24.0f + 0.5f * dt*(1.0f - dt);
+			ci.y_offset = -6.0f - constants.anims.move.jump_height * 4.0f * dt*(1.0f - dt);
 			ci.world_pos = world_pos;
 			ci.depth_offset += 0.5f;
 
@@ -1775,7 +1796,8 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 
 			Sprite_Sheet_Instance ti = {};
 			ti.sprite_pos = anim->sprite_coords;
-			ti.world_pos = anim->world_coords + V2_f32(0, dy);
+			ti.world_pos = anim->world_coords;
+			ti.y_offset = 24.0f * dy;
 			ti.sprite_id = anim->entity_id;
 			ti.depth_offset = anim->depth_offset - dy;
 
@@ -2446,8 +2468,9 @@ void program_init(Program* program, Platform_Functions platform_functions)
 		"#.............#..........................#\n"
 		"##########################################\n");
 
-	program->draw.camera.zoom = 4.0f;
-	program->draw.camera.world_center = { 0.0f, 0.0f };
+	program->draw.camera.zoom = 14.0f;
+	Pos player_pos = game_get_player_pos(&program->game);
+	program->draw.camera.world_center = (v2)player_pos;
 
 	Event_Buffer tmp_buffer = {};
 
@@ -2713,13 +2736,11 @@ error_init_output_texture:
 	return 0;
 }
 
-static v2_i32 screen_pos_to_world_pos(Camera* camera, v2_u32 screen_size, v2_u32 screen_pos)
+static v2 screen_pos_to_world_pos(Camera* camera, v2_u32 screen_size, v2_u32 screen_pos)
 {
-	v2_i32 world_pos = {};
-	v2_i32 p = { (i32)screen_pos.x - (i32)screen_size.w / 2,
-	             (i32)screen_pos.y - (i32)screen_size.h / 2 };
-	world_pos.x = (i32)((f32)p.x / camera->zoom - 24.0f * camera->world_center.x);
-	world_pos.y = (i32)((f32)p.y / camera->zoom - 24.0f * camera->world_center.y);
+	v2 p = (v2)screen_pos - ((v2)screen_size / 2.0f);
+	f32 raw_zoom = (f32)screen_size.y / (camera->zoom * 24.0f);
+	v2 world_pos = p / raw_zoom + 24.0f * camera->world_center;
 	return world_pos;
 }
 
@@ -2756,9 +2777,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		break;
 	case GIS_DRAGGING_MAP:
 		if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags & INPUT_BUTTON_FLAG_HELD_DOWN) {
-			f32 zoom = 24.0f * program->draw.camera.zoom;
-			program->draw.camera.world_center.x += (f32)input->mouse_delta.x / zoom;
-			program->draw.camera.world_center.y += (f32)input->mouse_delta.y / zoom;
+			f32 raw_zoom = (f32)screen_size.y / program->draw.camera.zoom;
+			program->draw.camera.world_center -= (v2)input->mouse_delta / raw_zoom;
 		} else if (!(input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags
 		             & INPUT_BUTTON_FLAG_ENDED_DOWN)) {
 			program->program_input_state = GIS_NONE;
@@ -2770,9 +2790,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	f32 time = (f32)program->frame_number / 60.0f;
 	world_anim_draw(&program->world_anim, &program->draw, time);
 
-	v2_i32 world_mouse_pos = screen_pos_to_world_pos(&program->draw.camera,
-	                                                 screen_size,
-	                                                 input->mouse_pos);
+	v2_i32 world_mouse_pos = (v2_i32)screen_pos_to_world_pos(&program->draw.camera,
+	                                                         screen_size,
+	                                                         input->mouse_pos);
 	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw.renderer, (v2_u32)world_mouse_pos);
 
 	if (sprite_id && input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
@@ -2988,23 +3008,21 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	sprite_sheet_renderer_d3d11_end(&program->draw.renderer, dc);
 
 	f32 zoom = program->draw.camera.zoom;
-	/* v2_u32 input_size = { (u32)(((f32)screen_size_u32.w) / zoom),
-	                      (u32)(((f32)screen_size_u32.h) / zoom) }; */
-	v2_i32 world_tl = screen_pos_to_world_pos(&program->draw.camera,
-	                                          screen_size_u32,
-	                                          { 0, 0 });
-	v2_i32 world_br = screen_pos_to_world_pos(&program->draw.camera,
-	                                          screen_size_u32,
-	                                          screen_size_u32);
-	v2_u32 input_size = { (u32)(world_br.x - world_tl.x), (u32)(world_br.y - world_tl.y) };
+	v2 world_tl = screen_pos_to_world_pos(&program->draw.camera,
+	                                      screen_size_u32,
+	                                      { 0, 0 });
+	v2 world_br = screen_pos_to_world_pos(&program->draw.camera,
+	                                      screen_size_u32,
+	                                      screen_size_u32);
+	v2 input_size = world_br - world_tl;
 	pixel_art_upsampler_d3d11_draw(&program->pixel_art_upsampler,
 	                               dc,
 	                               program->draw.renderer.d3d11.output_srv,
 	                               program->d3d11.output_uav,
 	                               input_size,
 	                               world_tl,
-	                               screen_size_u32,
-	                               { 0, 0 });
+	                               (v2)screen_size_u32,
+	                               { 0.0f, 0.0f });
 
 	card_render_d3d11_draw(&program->draw.card_render,
 	                       dc,

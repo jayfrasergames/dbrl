@@ -159,5 +159,8 @@ python ..\assets\make_metadata_header.py ^
 	-o ../src/gen/appearance.data.h
 python ..\assets\build_cards.py ^
 	-o ../src/gen/cards.data.h
+python ..\assets\make_boxy_bold.py ^
+	-i ../assets/boxy_font.png ^
+	-o ../src/gen/boxy_bold.data.h
 
 EXIT /B 0

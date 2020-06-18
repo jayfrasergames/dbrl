@@ -96,10 +96,10 @@ void pixel_art_upsampler_d3d11_draw(Pixel_Art_Upsampler*       pixel_art_upsampl
                                     ID3D11DeviceContext*       dc,
                                     ID3D11ShaderResourceView*  input_srv,
                                     ID3D11UnorderedAccessView* output_uav,
-                                    v2_u32 input_size,
-                                    v2_i32 input_offset,
-                                    v2_u32 output_size,
-                                    v2_i32 output_offset)
+                                    v2 input_size,
+                                    v2 input_offset,
+                                    v2 output_size,
+                                    v2 output_offset)
 {
 	Pixel_Art_Upsampler_D3D11 *pau_d3d11 = &pixel_art_upsampler->d3d11;
 	Pixel_Art_Upsampler_Constant_Buffer constant_buffer = {};

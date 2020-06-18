@@ -1,29 +1,28 @@
-* urgent bug fix
-  * change world center to actually be a world center in world units
-    right now it is an offset
-
-* scenarios:
-  * invisible wall
-  * fireball trap
-
 * tasks:
-  * make constants (e.g. bounce duration) tunable with IMGUI in something like constants.edit.h
-  * make zoom level screen size independent
-  * make equality operator for vectors
+  * boxybold font world space drawing
+  * move all constants to constants.edit.h (card, event etc)
+  * variable move duration depending on user input frequency
+    * animation "speeding up" when moves made rapidly
   * improve imgui
     * snprintf replacement
     * global context
     * debug imgui global context
     * member functions
+  * card user interface
+    * hand-to-hand animation for card drawing
+    * move card to active area
+  * hide mouse/use custom mouse cursor
+  * scenario loading
 
-* scenarios
+* scenarios:
+  * invisible wall
+  * draw poison card/take damage/get additional poison card
   * fireball hits barrels, chain reaction
-  * movement
-    * enter trap (trap explodes once fully entered)
-    * stuck in web (game allows "move action", web prevents movement)
-    * hit invisible wall (game allows "move action", player gets knocked back)
-    * tile falls after leaving space
-  * draw card and take poison damage
+  * enemies
+    * slime, splitting
+    * lich/skeletons
+    * spiders (traps)
+  * doors
 
 * features
   * game
@@ -35,8 +34,6 @@
     * imgui
       * display log
     * input
-    * math functions
-       * vector data types, multiplication by scalars, casting etc
     * dll reloading - don't reload if compile unsuccessful (i.e. don't write "written_library" in that case)
     * memory functions/context
     * global context/global error message
@@ -49,7 +46,6 @@
   * code reloading stopped working (happened when adding debug pause)
   * events not sent if mouse leaves window - need to turn off map dragging mode when re-entering the
     window
-  * pixel art upsampler handle fractional input_size/input_offsets
   * card renderer to do proper anti aliasing/alpha transparency (also mip mapping)
 
 

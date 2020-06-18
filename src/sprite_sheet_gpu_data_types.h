@@ -25,6 +25,7 @@ struct Sprite_Sheet_Instance
 
 	U1 sprite_id;
 	F1 depth_offset;
+	F1 y_offset;
 
 	F4 color_mod;
 };
