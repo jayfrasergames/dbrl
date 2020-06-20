@@ -22,6 +22,7 @@
 #include "gen/sprite_sheet_tiles.data.h"
 #include "gen/sprite_sheet_water_edges.data.h"
 #include "gen/sprite_sheet_effects_32.data.h"
+#include "gen/boxy_bold.data.h"
 
 #include "gen/pass_through_dxbc_vertex_shader.data.h"
 #include "gen/pass_through_dxbc_pixel_shader.data.h"
@@ -121,6 +122,9 @@ enum Event_Type
 	EVENT_DROP_TILE,
 	EVENT_FIREBALL_SHOT,
 	EVENT_FIREBALL_OFFSHOOT,
+	EVENT_STUCK,
+	EVENT_DAMAGED,
+	EVENT_DEATH,
 };
 
 struct Event
@@ -134,6 +138,10 @@ struct Event
 			Pos start, end;
 		} move;
 		struct {
+			Entity_ID entity_id;
+			Pos pos;
+		} stuck;
+		struct {
 			Pos pos;
 		} drop_tile;
 		struct {
@@ -146,6 +154,11 @@ struct Event
 			Pos start;
 			Pos end;
 		} fireball_offshoot;
+		struct {
+			Entity_ID entity_id;
+			Pos pos;
+			u32 amount;
+		} damaged;
 	};
 };
 
@@ -161,6 +174,9 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_DROP_TILE: return 0;
 	case EVENT_FIREBALL_SHOT: return 0;
 	case EVENT_FIREBALL_OFFSHOOT: return 0;
+	case EVENT_STUCK: return 0;
+	case EVENT_DAMAGED: return 0;
+	case EVENT_DEATH: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -181,6 +197,7 @@ struct Entity
 	u16           block_mask;
 	Pos           pos;
 	Appearance    appearance;
+	i32           hit_points;
 };
 
 enum Controller_Type
@@ -490,8 +507,7 @@ void game_dispatch_message(Game*               game,
 		}
 		switch (h.type) {
 		case MESSAGE_HANDLER_PREVENT_EXIT: {
-			if (h.prevent_exit.pos.x == message.move.start.x
-			 && h.prevent_exit.pos.y == message.move.start.y) {
+			if (h.prevent_exit.pos == message.move.start) {
 				u8 *can_exit = (u8*)data;
 				*can_exit = 0;
 			}
@@ -602,6 +618,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 						pm.start = start;
 						pm.end = end;
 						pm.weight = uniform_f32(0.0f, 1.0f);
+						// pm.weight = 1.0f;
 						potential_moves.append(pm);
 					}
 				}
@@ -820,6 +837,12 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 #endif
 
 				if (!can_exit) {
+					Event event = {};
+					event.type = EVENT_STUCK;
+					event.time = time;
+					event.stuck.entity_id = t->move.entity_id;
+					event.stuck.pos = t->move.start;
+					events.append(event);
 					t->type = TRANSACTION_REMOVE;
 					break;
 				}
@@ -967,6 +990,21 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 					break;
 				}
 
+				u32 num_entities = game->num_entities;
+				for (u32 i = 0; i < num_entities; ++i) {
+					Entity *e = &game->entities[i];
+					if (e->pos != (Pos)pos) {
+						continue;
+					}
+					Event event = {};
+					event.type = EVENT_DAMAGED;
+					event.time = time;
+					event.damaged.entity_id = e->id;
+					event.damaged.pos = e->pos;
+					event.damaged.amount = 1;
+					events.append(event);
+				}
+
 				++t->fireball_offshoot.cur_step;
 				t->start_time += 1.0f;
 
@@ -1002,6 +1040,8 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 void game_build_from_string(Game* game, char* str)
 {
+	memset(game, 0, sizeof(*game));
+
 	Pos cur_pos = { 1, 1 };
 	u32 idx = 0;
 	Entity_ID     e_id = 1;
@@ -1047,6 +1087,7 @@ void game_build_from_string(Game* game, char* str)
 			handlers.append(mh);
 
 			Entity e = {};
+			e.hit_points = 10;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = rand_u32() % 2 ?
@@ -1060,6 +1101,7 @@ void game_build_from_string(Game* game, char* str)
 			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
 
 			Entity e = {};
+			e.hit_points = 100;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = APPEARANCE_CREATURE_RED_DRAGON;
@@ -1087,6 +1129,7 @@ void game_build_from_string(Game* game, char* str)
 			handlers.append(mh);
 
 			Entity e = {};
+			e.hit_points = 10;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = APPEARANCE_ITEM_TRAP_HEX;
@@ -1111,6 +1154,7 @@ void game_build_from_string(Game* game, char* str)
 			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
 
 			Entity e = {};
+			e.hit_points = 100;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
@@ -1127,6 +1171,7 @@ void game_build_from_string(Game* game, char* str)
 			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
 
 			Entity e = {};
+			e.hit_points = 5;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.movement_type = BLOCK_FLY;
@@ -1194,6 +1239,7 @@ struct Draw
 	Sprite_Sheet_Instances creatures;
 	Sprite_Sheet_Instances water_edges;
 	Sprite_Sheet_Instances effects_32;
+	Sprite_Sheet_Font_Instances boxy_bold;
 	Card_Render card_render;
 	Debug_Line card_debug_line;
 };
@@ -1210,6 +1256,7 @@ enum Anim_Type
 	ANIM_MOVE_BLOCKED,
 	ANIM_DROP_TILE,
 	ANIM_PROJECTILE_EFFECT_32,
+	ANIM_TEXT,
 };
 
 struct Anim
@@ -1239,6 +1286,12 @@ struct Anim
 			v2 start;
 			v2 end;
 		} projectile;
+		struct {
+			f32 start_time;
+			f32 duration;
+			u8 caption[16];
+			v4 color;
+		} text;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -1295,7 +1348,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 	while (event_idx < num_events && events[event_idx].block_id == cur_block_id) {
 		Event *event = &events[event_idx];
 		switch (event->type) {
-		case EVENT_MOVE:
+		case EVENT_MOVE: {
 			for (u32 i = 0; i < anims.len; ++i) {
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == event->move.entity_id) {
@@ -1310,6 +1363,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 				}
 			}
 			break;
+		}
 		case EVENT_MOVE_BLOCKED:
 			for (u32 i = 0; i < anims.len; ++i) {
 				Anim *anim = &world_anim->anims[i];
@@ -1360,6 +1414,45 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			++world_anim->num_active_anims;
 			break;
 		}
+		case EVENT_STUCK: {
+			Anim text_anim = {};
+			text_anim.type = ANIM_TEXT;
+			text_anim.text.start_time = event->time;
+			text_anim.text.duration = constants.anims.text_duration;
+			text_anim.text.color = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+			text_anim.text.caption[0] = '*';
+			text_anim.text.caption[1] = 's';
+			text_anim.text.caption[2] = 't';
+			text_anim.text.caption[3] = 'u';
+			text_anim.text.caption[4] = 'c';
+			text_anim.text.caption[5] = 'k';
+			text_anim.text.caption[6] = '*';
+			text_anim.text.caption[7] = 0;
+			text_anim.world_coords = (v2)event->stuck.pos;
+			world_anim->anims.append(text_anim);
+			++world_anim->num_active_anims;
+			break;
+		}
+		case EVENT_DAMAGED: {
+			Anim text_anim = {};
+			text_anim.type = ANIM_TEXT;
+			text_anim.text.start_time = event->time;
+			text_anim.text.duration = constants.anims.text_duration;
+			text_anim.text.color = V4_f32(1.0f, 0.0f, 0.0f, 1.0f);
+
+			char buffer[20];
+			snprintf(buffer, ARRAY_SIZE(buffer), "-%u", event->damaged.amount);
+			u32 i = 0;
+			for (char *p = buffer; *p; ++p, ++i) {
+				text_anim.text.caption[i] = (u8)*p;
+			}
+			ASSERT(i < ARRAY_SIZE(text_anim.text.caption));
+			text_anim.text.caption[i] = 0;
+			text_anim.world_coords = (v2)event->damaged.pos;
+			world_anim->anims.append(text_anim);
+			++world_anim->num_active_anims;
+			break;
+		}
 		}
 		++event_idx;
 	}
@@ -1402,14 +1495,6 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 {
 	u32 anim_idx = 0;
 
-	u8 wall_id_grid[65536];
-	memset(wall_id_grid, 0, sizeof(wall_id_grid));
-	Entity_ID wall_entity_id_grid[65536];
-
-	u8 liquid_id_grid[65536];
-	memset(liquid_id_grid, 0, sizeof(liquid_id_grid));
-	Entity_ID liquid_entity_id_grid[65536];
-
 	for (u32 i = 0; i < game->num_entities; ++i) {
 		Entity *e = &game->entities[i];
 		Appearance app = e->appearance;
@@ -1439,13 +1524,6 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			world_anim->anims.append(ta);
 			continue;
 		}
-		if (appearance_is_wall(app)) {
-			u8 wall_id = appearance_get_wall_id(app);
-			u32 index = pos.y * 256 + pos.x;
-			wall_id_grid[index] = wall_id;
-			wall_entity_id_grid[index] = e->id;
-			continue;
-		}
 		if (appearance_is_liquid(app)) {
 			Anim ta = {};
 			ta.type = ANIM_TILE_STATIC;
@@ -1454,9 +1532,6 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ta.entity_id = e->id;
 			ta.depth_offset = constants.z_offsets.floor;
 			world_anim->anims.append(ta);
-			u32 index = pos.y * 256 + pos.x;
-			liquid_id_grid[index] = appearance_get_liquid_id(app);
-			liquid_entity_id_grid[index] = e->id;
 		}
 		if (appearance_is_item(app)) {
 			Anim ia = {};
@@ -1568,37 +1643,6 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 		}
 	}
 
-	for (u32 y = 1; y < 255; ++y) {
-		for (u32 x = 1; x < 255; ++x) {
-			u32 index = y*256 + x;
-			u8 c = liquid_id_grid[index];
-
-			if (!c) {
-				continue;
-			}
-
-			u8 mask = 0;
-			if (liquid_id_grid[index - 256] == c) { mask |= 0x01; }
-			if (liquid_id_grid[index - 255] == c) { mask |= 0x02; }
-			if (liquid_id_grid[index +   1] == c) { mask |= 0x04; }
-			if (liquid_id_grid[index + 257] == c) { mask |= 0x08; }
-			if (liquid_id_grid[index + 256] == c) { mask |= 0x10; }
-			if (liquid_id_grid[index + 255] == c) { mask |= 0x20; }
-			if (liquid_id_grid[index -   1] == c) { mask |= 0x40; }
-			if (liquid_id_grid[index - 257] == c) { mask |= 0x80; }
-			if (~mask & 0xFF) {
-				Anim anim = {};
-				anim.type = ANIM_WATER_EDGE;
-				anim.sprite_coords = { (f32)(mask % 16), (f32)(15 - mask / 16) };
-				anim.world_coords = { (f32)x, (f32)y };
-				anim.entity_id = liquid_entity_id_grid[index];
-				anim.depth_offset = constants.z_offsets.water_edge;
-				anim.water_edge.color = { 0x58, 0x80, 0xc0, 255 };
-				world_anim->anims.append(anim);
-			}
-		}
-	}
-
 	// ASSERT(anim_idx < MAX_ANIMS);
 	// world_anim->num_anims = anim_idx;
 }
@@ -1610,6 +1654,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 	sprite_sheet_instances_reset(&draw->creatures);
 	sprite_sheet_instances_reset(&draw->water_edges);
 	sprite_sheet_instances_reset(&draw->effects_32);
+	sprite_sheet_font_instances_reset(&draw->boxy_bold);
 
 	f32 dyn_time = time - world_anim->dynamic_anim_start_time;
 
@@ -1651,6 +1696,12 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 				continue;
 			}
 			break;
+		case ANIM_TEXT:
+			if (anim->text.start_time + anim->text.duration <= dyn_time) {
+				anims.remove(i);
+				--world_anim->num_active_anims;
+				continue;
+			}
 		}
 		++i;
 	}
@@ -1822,6 +1873,37 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 			instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
 
 			sprite_sheet_instances_add(&draw->effects_32, instance);
+			break;
+		}
+		case ANIM_TEXT: {
+			f32 dt = (dyn_time - anim->text.start_time) / anim->text.duration;
+			if (dt < 0.0f) {
+				break;
+			}
+
+			u32 width = 1, height = 0;
+			for (u8 *p = anim->text.caption; *p; ++p) {
+				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
+				width += glyph.dimensions.w - 1;
+				height = max(height, glyph.dimensions.h);
+			}
+
+			Sprite_Sheet_Font_Instance instance = {};
+			instance.world_pos = anim->world_coords + 0.5f;
+			instance.world_pos.y -= dt;
+			instance.world_offset = { -(f32)(width / 2), -(f32)(height / 2) };
+			instance.zoom = 1.0f;
+			instance.color_mod = anim->text.color;
+			for (u8 *p = anim->text.caption; *p; ++p) {
+				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
+				instance.glyph_pos = (v2)glyph.top_left;
+				instance.glyph_size = (v2)glyph.dimensions;
+
+				sprite_sheet_font_instances_add(&draw->boxy_bold, instance);
+
+				instance.world_offset.x += (f32)glyph.dimensions.w - 1.0f;
+			}
+
 			break;
 		}
 		}
@@ -2411,48 +2493,28 @@ void set_global_state(Program* program)
 #undef PLATFORM_FUNCTION
 }
 
-void program_init(Program* program, Platform_Functions platform_functions)
+void build_level_default(Program* program)
 {
-	memset(program, 0, sizeof(*program));
-
-#define PLATFORM_FUNCTION(_return_type, name, ...) program->platform_functions.name = platform_functions.name;
-	PLATFORM_FUNCTIONS
-#undef PLATFORM_FUNCTION
-
-	set_global_state(program);
-	program->state = PROGRAM_STATE_NO_PAUSE;
-	program->random_state.seed(0);
-
-	sprite_sheet_renderer_init(&program->draw.renderer,
-	                           &program->draw.tiles, 4,
-	                           { 1600, 900 });
-
-
-	program->draw.tiles.data       = SPRITE_SHEET_TILES;
-	program->draw.creatures.data   = SPRITE_SHEET_CREATURES;
-	program->draw.water_edges.data = SPRITE_SHEET_WATER_EDGES;
-	program->draw.effects_32.data  = SPRITE_SHEET_EFFECTS_32;
-
 	game_build_from_string(&program->game,
 		"##########################################\n"
-		"#bbbbb........#b#........................#\n"
-		"#bb..b.#..w...#b#........................#\n"
-		"#bbbbb###.....#b#.......###.......d......#\n"
-		"#bbbb#####....#b#.......#x#..............#\n"
-		"#.b.##.#.##...#b#.....###x#.#.......d....#\n"
+		"#.........b...#b#........................#\n"
+		"#......#.bwb..#b#........................#\n"
+		"#.....###.b...#b#.......###..............#\n"
+		"#....#####....#b#.......#x#..............#\n"
+		"#...##.#.##...#b#.....###x#.#............#\n"
 		"#..##..#..##..#b#.....#xxxxx#............#\n"
-		"#......#......#b#.....###x###.....d......#\n"
-		"#...w..#......#w#.......#x#..............#\n"
-		"#w.....#.......@........###..............#\n"
-		"#......#...w..#..........................#\n"
-		"#......#......#vvv.^..^....#.............#\n"
+		"#...b..#......#b#.....###x###............#\n"
+		"#b.bwb.#......#w#.......#x#..............#\n"
+		"#wb.b..#...b..@.........###..............#\n"
+		"#b.....#..bwb.#..........................#\n"
+		"#......#...b..#vvv.^..^....#.............#\n"
 		"#......#......#vvv.......................#\n"
 		"#~~~...#.....x#vvv.^...^.....#...........#\n"
 		"#~~~~..#.....x#vvv.......................#\n"
 		"#~~~~~~..xxxxx#............#...#.........#\n"
 		"##########x####..........................#\n"
-		"#.........x...#........#.................#\n"
-		"#.........x...#.......##.................#\n"
+		"#.............#........#.................#\n"
+		"#.............#.......##.................#\n"
 		"#.............#......##.##...............#\n"
 		"#.............#.......##.................#\n"
 		"#.............#........#.................#\n"
@@ -2472,9 +2534,54 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	Pos player_pos = game_get_player_pos(&program->game);
 	program->draw.camera.world_center = (v2)player_pos;
 
-	Event_Buffer tmp_buffer = {};
-
+	memset(&program->world_anim, 0, sizeof(program->world_anim));
 	world_anim_init(&program->world_anim, &program->game);
+}
+
+void build_level_anim_test(Program* program)
+{
+	game_build_from_string(&program->game,
+		"###########\n"
+		"#b#b#b#b#b#\n"
+		"#.#.#.#.#.#\n"
+		"#^#^#^#^#^#\n"
+		"#.#.#.#.#.#\n"
+		"#....@....#\n"
+		"###########\n");
+
+	program->draw.camera.zoom = 14.0f;
+	Pos player_pos = game_get_player_pos(&program->game);
+	program->draw.camera.world_center = (v2)player_pos;
+
+	memset(&program->world_anim, 0, sizeof(program->world_anim));
+	world_anim_init(&program->world_anim, &program->game);
+}
+
+void program_init(Program* program, Platform_Functions platform_functions)
+{
+	memset(program, 0, sizeof(*program));
+
+#define PLATFORM_FUNCTION(_return_type, name, ...) program->platform_functions.name = platform_functions.name;
+	PLATFORM_FUNCTIONS
+#undef PLATFORM_FUNCTION
+
+	set_global_state(program);
+	program->state = PROGRAM_STATE_NO_PAUSE;
+	program->random_state.seed(0);
+
+	sprite_sheet_renderer_init(&program->draw.renderer,
+	                           &program->draw.tiles, 4,
+	                           { 1600, 900 });
+
+
+	program->draw.tiles.data         = SPRITE_SHEET_TILES;
+	program->draw.creatures.data     = SPRITE_SHEET_CREATURES;
+	program->draw.water_edges.data   = SPRITE_SHEET_WATER_EDGES;
+	program->draw.effects_32.data    = SPRITE_SHEET_EFFECTS_32;
+	program->draw.boxy_bold.tex_size = boxy_bold_texture_size;
+	program->draw.boxy_bold.tex_data = boxy_bold_pixel_data;
+
+	build_level_default(program);
 
 	u32 deck_size = 100;
 	Card_State *card_state = &program->game.card_state;
@@ -2578,6 +2685,10 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 		goto error_init_sprite_sheet_effects_32;
 	}
 
+	if (!sprite_sheet_font_instances_d3d11_init(&program->draw.boxy_bold, device)) {
+		goto error_init_sprite_sheet_font_boxy_bold;
+	}
+
 	if (!pixel_art_upsampler_d3d11_init(&program->pixel_art_upsampler, device)) {
 		goto error_init_pixel_art_upsampler;
 	}
@@ -2618,6 +2729,8 @@ error_init_card_render:
 error_init_imgui:
 	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
 error_init_pixel_art_upsampler:
+	sprite_sheet_font_instances_d3d11_free(&program->draw.boxy_bold);
+error_init_sprite_sheet_font_boxy_bold:
 	sprite_sheet_instances_d3d11_free(&program->draw.effects_32);
 error_init_sprite_sheet_effects_32:
 	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
@@ -2650,6 +2763,7 @@ void program_d3d11_free(Program* program)
 	card_render_d3d11_free(&program->draw.card_render);
 	imgui_d3d11_free(&program->imgui);
 	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
+	sprite_sheet_font_instances_d3d11_free(&program->draw.boxy_bold);
 	sprite_sheet_instances_d3d11_free(&program->draw.effects_32);
 	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
 	sprite_sheet_instances_d3d11_free(&program->draw.creatures);
@@ -2785,7 +2899,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 		break;
 	}
-	program->draw.camera.zoom += (f32)input->mouse_wheel_delta * 0.25f;
+	program->draw.camera.zoom -= (f32)input->mouse_wheel_delta * 0.25f;
 
 	f32 time = (f32)program->frame_number / 60.0f;
 	world_anim_draw(&program->world_anim, &program->draw, time);
@@ -2876,56 +2990,61 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	                             &program->draw.card_debug_line,
 	                             selected_card_id);
 
-	/*
-	Sprite_Sheet_Instance test_instance = {};
-	test_instance.world_pos  = V2_f32(3.0f, 3.0f);
-	test_instance.sprite_pos = V2_f32(0.0f, 5.0f);
-	test_instance.sprite_id = 0;
-	test_instance.depth_offset = 2.0f;
-	test_instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
-	sprite_sheet_instances_add(&program->draw.effects_32,
-	                           test_instance);
-	*/
+	sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
 
-	// do stuff
+	// imgui
 	imgui_begin(&program->imgui, input, screen_size);
 	imgui_set_text_cursor(&program->imgui, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
-	char buffer[1024];
-	snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Pos: (%u, %u)",
-	         input->mouse_pos.x, input->mouse_pos.y);
-	imgui_text(&program->imgui, buffer);
-	snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Delta: (%d, %d)",
-	         input->mouse_delta.x, input->mouse_delta.y);
-	imgui_text(&program->imgui, buffer);
-	snprintf(buffer, ARRAY_SIZE(buffer), "Mouse world pos: (%d, %d)",
-	         world_mouse_pos.x, world_mouse_pos.y);
-	imgui_text(&program->imgui, buffer);
-	sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
-	Pos sprite_pos;
-	{
-		u32 num_entities = program->game.num_entities;
-		Entity *entities = program->game.entities;
-		for (u32 i = 0; i < num_entities; ++i) {
-			Entity *e = &entities[i];
-			if (e->id == sprite_id) {
-				sprite_pos = e->pos;
-				break;
+	if (imgui_tree_begin(&program->imgui, "show UI")) {
+		if (imgui_tree_begin(&program->imgui, "show mouse info")) {
+			char buffer[1024];
+			snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Pos: (%u, %u)",
+				 input->mouse_pos.x, input->mouse_pos.y);
+			imgui_text(&program->imgui, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Delta: (%d, %d)",
+				 input->mouse_delta.x, input->mouse_delta.y);
+			imgui_text(&program->imgui, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "Mouse world pos: (%d, %d)",
+				 world_mouse_pos.x, world_mouse_pos.y);
+			imgui_text(&program->imgui, buffer);
+			Pos sprite_pos;
+			{
+				u32 num_entities = program->game.num_entities;
+				Entity *entities = program->game.entities;
+				for (u32 i = 0; i < num_entities; ++i) {
+					Entity *e = &entities[i];
+					if (e->id == sprite_id) {
+						sprite_pos = e->pos;
+						break;
+					}
+				}
 			}
+			snprintf(buffer, ARRAY_SIZE(buffer), "Sprite ID: %u, position: (%u, %u)",
+			         sprite_id, sprite_pos.x, sprite_pos.y);
+			imgui_text(&program->imgui, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "Card mouse pos: (%f, %f)",
+				 card_mouse_pos.x, card_mouse_pos.y);
+			imgui_text(&program->imgui, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "Selected Card ID: %u", selected_card_id);
+			imgui_text(&program->imgui, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "World Center: (%f, %f)",
+				program->draw.camera.world_center.x,
+				program->draw.camera.world_center.y);
+			imgui_text(&program->imgui, buffer);
+			imgui_tree_end(&program->imgui);
 		}
+		if (imgui_tree_begin(&program->imgui, "levels")) {
+			if (imgui_button(&program->imgui, "default")) {
+				build_level_default(program);
+			}
+			if (imgui_button(&program->imgui, "anim test")) {
+				build_level_anim_test(program);
+			}
+			imgui_tree_end(&program->imgui);
+		}
+		constants_do_imgui(&program->imgui);
+		imgui_tree_end(&program->imgui);
 	}
-	snprintf(buffer, ARRAY_SIZE(buffer), "Sprite ID: %u, position: (%u, %u)", sprite_id,
-		sprite_pos.x, sprite_pos.y);
-	imgui_text(&program->imgui, buffer);
-	snprintf(buffer, ARRAY_SIZE(buffer), "Card mouse pos: (%f, %f)",
-	         card_mouse_pos.x, card_mouse_pos.y);
-	imgui_text(&program->imgui, buffer);
-	snprintf(buffer, ARRAY_SIZE(buffer), "Selected Card ID: %u", selected_card_id);
-	imgui_text(&program->imgui, buffer);
-	snprintf(buffer, ARRAY_SIZE(buffer), "World Center: (%f, %f)",
-		program->draw.camera.world_center.x,
-		program->draw.camera.world_center.y);
-	imgui_text(&program->imgui, buffer);
-	constants_do_imgui(&program->imgui);
 }
 
 struct Process_Frame_Aux_Thread_Args
@@ -2965,17 +3084,17 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 			}
 			break;
 		case GIS_DRAGGING_MAP:
-			if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags & INPUT_BUTTON_FLAG_HELD_DOWN) {
-				f32 zoom = 24.0f * program->draw.camera.zoom;
-				program->draw.camera.world_center.x += (f32)input->mouse_delta.x / zoom;
-				program->draw.camera.world_center.y += (f32)input->mouse_delta.y / zoom;
+			if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags
+			  & INPUT_BUTTON_FLAG_HELD_DOWN) {
+				f32 raw_zoom = (f32)screen_size.y / program->draw.camera.zoom;
+				program->draw.camera.world_center -= (v2)input->mouse_delta / raw_zoom;
 			} else if (!(input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags
 				     & INPUT_BUTTON_FLAG_ENDED_DOWN)) {
 				program->program_input_state = GIS_NONE;
 			}
 			break;
 		}
-		program->draw.camera.zoom += (f32)input->mouse_wheel_delta * 0.25f;
+		program->draw.camera.zoom -= (f32)input->mouse_wheel_delta * 0.25f;
 		if (input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
 			program->state = PROGRAM_STATE_NORMAL;
 			interlocked_compare_exchange(&program->debug_resume, 1, 0);
@@ -3005,6 +3124,8 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	sprite_sheet_instances_d3d11_draw(&program->draw.creatures, dc, screen_size_u32);
 	sprite_sheet_instances_d3d11_draw(&program->draw.water_edges, dc, screen_size_u32);
 	sprite_sheet_instances_d3d11_draw(&program->draw.effects_32, dc, screen_size_u32);
+	sprite_sheet_renderer_d3d11_begin_font(&program->draw.renderer, dc);
+	sprite_sheet_font_instances_d3d11_draw(&program->draw.boxy_bold, dc, screen_size_u32);
 	sprite_sheet_renderer_d3d11_end(&program->draw.renderer, dc);
 
 	f32 zoom = program->draw.camera.zoom;

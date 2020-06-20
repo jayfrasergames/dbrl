@@ -59,7 +59,7 @@ VS_Sprite_Output vs_sprite(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 
 	float2 sprite_size = constants.sprite_size / constants.screen_size;
 	float2 world_tile_size = constants.world_tile_size / constants.screen_size;
-	float2 y_offset = instance.y_offset / constants.screen_size.y;
+	float y_offset = instance.y_offset / constants.screen_size.y;
 
 	// floa2 center = instance.world_pos * world_tile_size;
 
@@ -135,4 +135,64 @@ void cs_highlight_sprite(uint2 tid : SV_DispatchThreadID)
 	{
 		highlight_color_tex[tid] = highlight_constants.highlight_color;
 	}
+}
+
+// =============================================================================
+// Font
+
+StructuredBuffer<Sprite_Sheet_Font_Instance> font_instances : register(t0);
+Texture2D<float4>                            font_tex       : register(t0);
+
+struct VS_Font_Output
+{
+	float4 pos        : SV_Position;
+	float2 tex_coord  : TEXCOORD;
+	float4 color_mod  : COLOR_MOD;
+};
+
+struct PS_Font_Input
+{
+	float2 tex_coord  : TEXCOORD;
+	float4 color_mod  : COLOR_MOD;
+};
+
+struct PS_Font_Output
+{
+	float4 color : SV_Target0;
+};
+
+VS_Font_Output vs_font(uint vid : SV_VertexID, uint iid : SV_InstanceID)
+{
+	VS_Font_Output output;
+
+	VS_Sprite_Vertex           vertex   = SPRITE_VERTICES[vid];
+	Sprite_Sheet_Font_Instance instance = font_instances[iid];
+
+	float2 tex_coord = (instance.glyph_pos + vertex.pos * instance.glyph_size) / constants.tex_size;
+	float2 pos = (instance.world_pos * constants.world_tile_size
+	              + instance.world_offset
+	              + vertex.pos * instance.glyph_size * instance.zoom) / constants.screen_size;
+	pos = pos * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
+
+	output.color_mod = instance.color_mod;
+	output.tex_coord = tex_coord;
+	output.pos = float4(pos, 0.0f, 1.0f);
+
+	return output;
+}
+
+PS_Font_Output ps_font(VS_Font_Output input)
+{
+	PS_Font_Output output;
+
+	uint2 coord = floor(input.tex_coord * constants.tex_size);
+	float4 tex_color = tex[coord];
+
+	if (tex_color.a == 0.0f) {
+		discard;
+	}
+
+	output.color = tex_color * input.color_mod;
+
+	return output;
 }

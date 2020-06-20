@@ -243,7 +243,7 @@ void debug_draw_world_d3d11_draw(Debug_Draw_World*       context,
 	dc->Unmap(context->d3d11.triangle_instance_buffer, 0);
 
 	Debug_Draw_World_Constant_Buffer constant_buffer = {};
-	constant_buffer.center = world_center;
+	constant_buffer.center = -world_center;
 	constant_buffer.zoom = zoom;
 	hr = dc->Map(context->d3d11.triangle_constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
 	ASSERT(SUCCEEDED(hr));

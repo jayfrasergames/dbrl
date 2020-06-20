@@ -2,6 +2,7 @@
 #define SPRITE_SHEET_H
 
 #include "jfg/prelude.h"
+#include "jfg/containers.hpp"
 
 // =============================================================================
 // GFX API data defintions
@@ -13,6 +14,15 @@
 #endif
 
 struct Sprite_Sheet_D3D11_Instances
+{
+	ID3D11Buffer             *constant_buffer;
+	ID3D11Buffer             *instance_buffer;
+	ID3D11ShaderResourceView *instance_buffer_srv;
+	ID3D11Texture2D          *texture;
+	ID3D11ShaderResourceView *texture_srv;
+};
+
+struct Sprite_Sheet_D3D11_Font_Instances
 {
 	ID3D11Buffer             *constant_buffer;
 	ID3D11Buffer             *instance_buffer;
@@ -40,6 +50,9 @@ struct Sprite_Sheet_D3D11_Renderer
 	ID3D11VertexShader        *vertex_shader;
 	ID3D11PixelShader         *pixel_shader;
 	ID3D11RasterizerState     *rasterizer_state;
+	ID3D11VertexShader        *font_vertex_shader;
+	ID3D11PixelShader         *font_pixel_shader;
+	ID3D11RasterizerState     *font_rasterizer_state;
 };
 #endif
 
@@ -56,7 +69,6 @@ struct Sprite_Sheet_Data
 	u8  *mouse_map_data;
 };
 
-#ifdef SPRITE_SHEET_DEFINE_GFX
 #define SPRITE_SHEET_MAX_INSTANCES 10240
 struct Sprite_Sheet_Instances
 {
@@ -65,27 +77,47 @@ struct Sprite_Sheet_Instances
 	u32 num_instances;
 	Sprite_Sheet_Instance instances[SPRITE_SHEET_MAX_INSTANCES];
 
+#ifdef SPRITE_SHEET_DEFINE_GFX
 	union {
 	#ifdef JFG_D3D11_H
 		Sprite_Sheet_D3D11_Instances d3d11;
 	#endif
 	};
+#endif
+};
+
+struct Sprite_Sheet_Font_Instances
+{
+	v2_u32  tex_size;
+	void   *tex_data;
+
+	Max_Length_Array<Sprite_Sheet_Font_Instance, SPRITE_SHEET_MAX_INSTANCES> instances;
+
+#ifdef SPRITE_SHEET_DEFINE_GFX
+	union {
+	#ifdef JFG_D3D11_H
+		Sprite_Sheet_D3D11_Font_Instances d3d11;
+	#endif
+	};
+#endif
 };
 
 struct Sprite_Sheet_Renderer
 {
 	v2_u32 size;
-	u32                     highlighted_sprite;
-	u32                     num_instance_buffers;
-	Sprite_Sheet_Instances* instance_buffers;
+	u32                                highlighted_sprite;
+	u32                                num_instance_buffers;
+	Sprite_Sheet_Instances*            instance_buffers;
+	Slice<Sprite_Sheet_Font_Instances> font_instance_buffers;
 
+#ifdef SPRITE_SHEET_DEFINE_GFX
 	union {
 	#ifdef JFG_D3D11_H
 		Sprite_Sheet_D3D11_Renderer d3d11;
 	#endif
 	};
-};
 #endif
+};
 
 void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer,
                                 Sprite_Sheet_Instances* instance_buffers,
@@ -96,6 +128,10 @@ void sprite_sheet_renderer_highlight_sprite(Sprite_Sheet_Renderer* renderer, u32
 
 void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances);
 void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_Instance instance);
+
+void sprite_sheet_font_instances_reset(Sprite_Sheet_Font_Instances* instances);
+void sprite_sheet_font_instances_add(Sprite_Sheet_Font_Instances* instances,
+                                     Sprite_Sheet_Font_Instance   instance);
 
 #ifndef JFG_HEADER_ONLY
 
@@ -165,6 +201,17 @@ void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_
 	instances->instances[instances->num_instances++] = instance;
 }
 
+void sprite_sheet_font_instances_reset(Sprite_Sheet_Font_Instances* instances)
+{
+	instances->instances.reset();
+}
+
+void sprite_sheet_font_instances_add(Sprite_Sheet_Font_Instances* instances,
+                                     Sprite_Sheet_Font_Instance   instance)
+{
+	instances->instances.append(instance);
+}
+
 #endif
 
 // =============================================================================
@@ -175,6 +222,8 @@ void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_
 #include "gen/sprite_sheet_dxbc_pixel_shader.data.h"
 #include "gen/sprite_sheet_dxbc_clear_sprite_id_compute_shader.data.h"
 #include "gen/sprite_sheet_dxbc_highlight_sprite_compute_shader.data.h"
+#include "gen/sprite_sheet_dxbc_font_vertex_shader.data.h"
+#include "gen/sprite_sheet_dxbc_font_pixel_shader.data.h"
 
 u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
                                     ID3D11Device*          device);
@@ -183,11 +232,19 @@ void sprite_sheet_renderer_d3d11_free(Sprite_Sheet_D3D11_Renderer* renderer);
 u8 sprite_sheet_instances_d3d11_init(Sprite_Sheet_Instances* instances, ID3D11Device* device);
 void sprite_sheet_instances_d3d11_free(Sprite_Sheet_Instances* instances);
 
+u8 sprite_sheet_font_instances_d3d11_init(Sprite_Sheet_Font_Instances* instances, ID3D11Device* device);
+void sprite_sheet_font_instances_d3d11_free(Sprite_Sheet_Font_Instances* instances);
+
 void sprite_sheet_renderer_d3d11_begin(Sprite_Sheet_Renderer*  renderer,
                                        ID3D11DeviceContext*    dc);
 void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
                                        ID3D11DeviceContext*    dc,
                                        v2_u32                  screen_size);
+void sprite_sheet_renderer_d3d11_begin_font(Sprite_Sheet_Renderer* renderer,
+                                            ID3D11DeviceContext*   dc);
+void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Font_Instances* instances,
+                                            ID3D11DeviceContext*         dc,
+                                            v2_u32                       screen_size);
 void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
                                      ID3D11DeviceContext*    dc);
 
@@ -197,6 +254,40 @@ u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
                                     ID3D11Device*          device)
 {
 	HRESULT hr;
+	ID3D11VertexShader *font_vertex_shader;
+	hr = device->CreateVertexShader(SPRITE_SHEET_FONT_DXBC_VS,
+	                                ARRAY_SIZE(SPRITE_SHEET_FONT_DXBC_VS),
+	                                NULL,
+	                                &font_vertex_shader);
+	if (FAILED(hr)) {
+		goto error_init_font_vertex_shader;
+	}
+
+	ID3D11PixelShader *font_pixel_shader;
+	hr = device->CreatePixelShader(SPRITE_SHEET_FONT_DXBC_PS,
+	                               ARRAY_SIZE(SPRITE_SHEET_FONT_DXBC_PS),
+	                               NULL,
+	                               &font_pixel_shader);
+	if (FAILED(hr)) {
+		goto error_init_font_pixel_shader;
+	}
+
+	ID3D11RasterizerState *font_rasterizer_state;
+	{
+		D3D11_RASTERIZER_DESC desc = {};
+		desc.FillMode = D3D11_FILL_SOLID;
+		desc.CullMode = D3D11_CULL_NONE;
+		desc.DepthClipEnable = FALSE;
+		desc.ScissorEnable = FALSE;
+		desc.MultisampleEnable = FALSE;
+		desc.AntialiasedLineEnable = FALSE;
+
+		hr = device->CreateRasterizerState(&desc, &font_rasterizer_state);
+	}
+	if (FAILED(hr)) {
+		goto error_init_font_rasterizer_state;
+	}
+
 	ID3D11VertexShader *vertex_shader;
 	hr = device->CreateVertexShader(SPRITE_SHEET_RENDER_DXBC_VS,
 	                                ARRAY_SIZE(SPRITE_SHEET_RENDER_DXBC_VS),
@@ -444,6 +535,9 @@ u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
 	renderer->d3d11.clear_sprite_id_compute_shader = clear_sprite_id_compute_shader;
 	renderer->d3d11.highlight_sprite_compute_shader = highlight_sprite_compute_shader;
 	renderer->d3d11.highlight_constant_buffer = highlight_constant_buffer;
+	renderer->d3d11.font_rasterizer_state = font_rasterizer_state;
+	renderer->d3d11.font_pixel_shader    = font_pixel_shader;
+	renderer->d3d11.font_vertex_shader   = font_vertex_shader;
 	return 1;
 
 	highlight_constant_buffer->Release();
@@ -480,6 +574,12 @@ error_init_rasterizer_state:
 error_init_pixel_shader:
 	vertex_shader->Release();
 error_init_vertex_shader:
+	font_rasterizer_state->Release();
+error_init_font_rasterizer_state:
+	font_pixel_shader->Release();
+error_init_font_pixel_shader:
+	font_vertex_shader->Release();
+error_init_font_vertex_shader:
 	return 0;
 }
 
@@ -502,6 +602,9 @@ void sprite_sheet_renderer_d3d11_free(Sprite_Sheet_Renderer* renderer)
 	renderer->d3d11.vertex_shader->Release();
 	renderer->d3d11.pixel_shader->Release();
 	renderer->d3d11.rasterizer_state->Release();
+	renderer->d3d11.font_vertex_shader->Release();
+	renderer->d3d11.font_pixel_shader->Release();
+	renderer->d3d11.font_rasterizer_state->Release();
 }
 
 u8 sprite_sheet_instances_d3d11_init(Sprite_Sheet_Instances* instances, ID3D11Device* device)
@@ -623,6 +726,126 @@ void sprite_sheet_instances_d3d11_free(Sprite_Sheet_Instances* instances)
 	instances->d3d11.constant_buffer->Release();
 }
 
+u8 sprite_sheet_font_instances_d3d11_init(Sprite_Sheet_Font_Instances* instances, ID3D11Device* device)
+{
+	HRESULT hr;
+	ID3D11Buffer *constant_buffer;
+	{
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = sizeof(Sprite_Sheet_Constant_Buffer);
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		desc.MiscFlags = 0;
+		desc.StructureByteStride = sizeof(Sprite_Sheet_Constant_Buffer);
+
+		hr = device->CreateBuffer(&desc, NULL, &constant_buffer);
+	}
+	if (FAILED(hr)) {
+		goto error_init_constant_buffer;
+	}
+
+	ID3D11Buffer *instance_buffer;
+	{
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = sizeof(Sprite_Sheet_Font_Instance) * SPRITE_SHEET_MAX_INSTANCES;
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		desc.StructureByteStride = sizeof(Sprite_Sheet_Font_Instance);
+
+		hr = device->CreateBuffer(&desc, NULL, &instance_buffer);
+	}
+	if (FAILED(hr)) {
+		goto error_init_instance_buffer;
+	}
+
+	ID3D11ShaderResourceView *instance_buffer_srv;
+	{
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+		srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+		srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srv_desc.Buffer.ElementOffset = 0;
+		srv_desc.Buffer.ElementWidth = SPRITE_SHEET_MAX_INSTANCES;
+
+		hr = device->CreateShaderResourceView(instance_buffer,
+		                                      &srv_desc,
+		                                      &instance_buffer_srv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_instance_buffer_srv;
+	}
+
+	ID3D11Texture2D *texture;
+	{
+		D3D11_TEXTURE2D_DESC tex_desc = {};
+		tex_desc.Width = instances->tex_size.w;
+		tex_desc.Height = instances->tex_size.h;
+		tex_desc.MipLevels = 1;
+		tex_desc.ArraySize = 1;
+		tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		tex_desc.SampleDesc.Count = 1;
+		tex_desc.SampleDesc.Quality = 0;
+		tex_desc.Usage = D3D11_USAGE_IMMUTABLE;
+		tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		tex_desc.CPUAccessFlags = 0;
+		tex_desc.MiscFlags = 0;
+
+		D3D11_SUBRESOURCE_DATA data_desc = {};
+		data_desc.pSysMem = instances->tex_data;
+		data_desc.SysMemPitch = instances->tex_size.w * sizeof(u32);
+		data_desc.SysMemSlicePitch = 0;
+
+		hr = device->CreateTexture2D(&tex_desc, &data_desc, &texture);
+	}
+	if (FAILED(hr)) {
+		goto error_init_texture;
+	}
+
+	ID3D11ShaderResourceView *texture_srv;
+	{
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+		srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srv_desc.Texture2D.MostDetailedMip = 0;
+		srv_desc.Texture2D.MipLevels = 1;
+
+		hr = device->CreateShaderResourceView(texture, &srv_desc, &texture_srv);
+	}
+	if (FAILED(hr)) {
+		goto error_init_srv;
+	}
+
+	instances->d3d11.constant_buffer = constant_buffer;
+	instances->d3d11.instance_buffer = instance_buffer;
+	instances->d3d11.instance_buffer_srv = instance_buffer_srv;
+	instances->d3d11.texture = texture;
+	instances->d3d11.texture_srv = texture_srv;
+	return 1;
+
+	texture_srv->Release();
+error_init_srv:
+	texture->Release();
+error_init_texture:
+	instance_buffer_srv->Release();
+error_init_instance_buffer_srv:
+	instance_buffer->Release();
+error_init_instance_buffer:
+	constant_buffer->Release();
+error_init_constant_buffer:
+	return 0;
+}
+
+void sprite_sheet_font_instances_d3d11_free(Sprite_Sheet_Font_Instances* instances)
+{
+	instances->d3d11.texture_srv->Release();
+	instances->d3d11.texture->Release();
+	instances->d3d11.instance_buffer_srv->Release();
+	instances->d3d11.instance_buffer->Release();
+	instances->d3d11.constant_buffer->Release();
+}
+
 void sprite_sheet_renderer_d3d11_begin(Sprite_Sheet_Renderer*  renderer,
                                        ID3D11DeviceContext*    dc)
 {
@@ -688,6 +911,54 @@ void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
 	dc->VSSetConstantBuffers(0, 1, &instances->d3d11.constant_buffer);
 
 	dc->DrawInstanced(6, instances->num_instances, 0, 0);
+}
+
+void sprite_sheet_renderer_d3d11_begin_font(Sprite_Sheet_Renderer*  renderer,
+                                            ID3D11DeviceContext*    dc)
+{
+	dc->IASetInputLayout(NULL);
+	dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	dc->VSSetShader(renderer->d3d11.font_vertex_shader, NULL, 0);
+	dc->PSSetShader(renderer->d3d11.font_pixel_shader, NULL, 0);
+	dc->RSSetState(renderer->d3d11.font_rasterizer_state);
+
+	dc->OMSetDepthStencilState(NULL, 0);
+	dc->OMSetRenderTargets(1, &renderer->d3d11.output_rtv, NULL);
+}
+
+void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Font_Instances* instances,
+                                            ID3D11DeviceContext*         dc,
+                                            v2_u32                       screen_size)
+{
+	Sprite_Sheet_Constant_Buffer constant_buffer = {};
+	constant_buffer.screen_size = (v2)screen_size;
+	// constant_buffer.sprite_size = (v2)instances->data.sprite_size;
+	constant_buffer.world_tile_size = V2_f32(24.0f, 24.0f);
+	constant_buffer.tex_size = (v2)instances->tex_size;
+
+	D3D11_MAPPED_SUBRESOURCE mapped_buffer = {};
+
+	HRESULT hr;
+	hr = dc->Map(instances->d3d11.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_buffer);
+	ASSERT(SUCCEEDED(hr));
+	memcpy(mapped_buffer.pData,
+	       &instances->instances.items,
+	       sizeof(instances->instances[0]) * instances->instances.len);
+	dc->Unmap(instances->d3d11.instance_buffer, 0);
+
+	hr = dc->Map(instances->d3d11.constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
+		&mapped_buffer);
+	ASSERT(SUCCEEDED(hr));
+	memcpy(mapped_buffer.pData, &constant_buffer, sizeof(constant_buffer));
+	dc->Unmap(instances->d3d11.constant_buffer, 0);
+
+	dc->PSSetShaderResources(0, 1, &instances->d3d11.texture_srv);
+	dc->PSSetConstantBuffers(0, 1, &instances->d3d11.constant_buffer);
+	dc->VSSetShaderResources(0, 1, &instances->d3d11.instance_buffer_srv);
+	dc->VSSetConstantBuffers(0, 1, &instances->d3d11.constant_buffer);
+
+	dc->DrawInstanced(6, instances->instances.len, 0, 0);
 }
 
 void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,

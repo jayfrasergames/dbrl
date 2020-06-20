@@ -30,6 +30,19 @@ struct Sprite_Sheet_Instance
 	F4 color_mod;
 };
 
+struct Sprite_Sheet_Font_Instance
+{
+	F2 glyph_pos;
+	F2 glyph_size;
+
+	F2 world_pos;
+	F2 world_offset;
+
+	F1 zoom;
+
+	F4 color_mod;
+};
+
 struct Sprite_Sheet_Highlight_Constant_Buffer
 {
 	F4 highlight_color;
