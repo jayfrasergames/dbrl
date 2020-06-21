@@ -120,6 +120,7 @@ enum Event_Type
 	EVENT_MOVE,
 	EVENT_MOVE_BLOCKED,
 	EVENT_DROP_TILE,
+	EVENT_FIREBALL_HIT,
 	EVENT_FIREBALL_SHOT,
 	EVENT_FIREBALL_OFFSHOOT,
 	EVENT_STUCK,
@@ -150,6 +151,9 @@ struct Event
 			Pos end;
 		} fireball_shot;
 		struct {
+			Pos pos;
+		} fireball_hit;
+		struct {
 			f32 duration;
 			Pos start;
 			Pos end;
@@ -159,6 +163,9 @@ struct Event
 			Pos pos;
 			u32 amount;
 		} damaged;
+		struct {
+			Entity_ID entity_id;
+		} death;
 	};
 };
 
@@ -172,6 +179,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_MOVE: return 0;
 	case EVENT_MOVE_BLOCKED: return 0;
 	case EVENT_DROP_TILE: return 0;
+	case EVENT_FIREBALL_HIT: return 0;
 	case EVENT_FIREBALL_SHOT: return 0;
 	case EVENT_FIREBALL_OFFSHOOT: return 0;
 	case EVENT_STUCK: return 0;
@@ -335,6 +343,7 @@ struct Message_Handler
 {
 	Message_Handler_Type type;
 	u32                  handle_mask;
+	Entity_ID            owner_id;
 	union {
 		struct {
 			Pos pos;
@@ -372,6 +381,57 @@ struct Game
 
 	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
 };
+
+void game_remove_entity(Game* game, Entity_ID entity_id)
+{
+	u32 num_entities = game->num_entities;
+	Entity *e = game->entities;
+	for (u32 i = 0; i < num_entities; ++i, ++e) {
+		if (e->id == entity_id) {
+			*e = game->entities[--game->num_entities];
+			break;
+		}
+	}
+
+	auto& controllers = game->controllers;
+	for (u32 i = 0; i < controllers.len; ++i) {
+		Controller *c = &controllers[i];
+		switch (c->type) {
+		case CONTROLLER_PLAYER:
+			// TODO -- post player death event?
+			if (c->player.entity_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
+			break;
+		case CONTROLLER_RANDOM_MOVE:
+			if (c->random_move.entity_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
+			break;
+		case CONTROLLER_RANDOM_SNAKE:
+			ASSERT(0);
+			break;
+		case CONTROLLER_DRAGON:
+			if (c->dragon.entity_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
+			break;
+		}
+	}
+break_loop: ;
+
+	auto& handlers = game->handlers;
+	for (u32 i = 0; i < handlers.len; ) {
+		if (handlers[i].owner_id == entity_id) {
+			handlers.remove(i);
+			continue;
+		}
+		++i;
+	}
+}
 
 Pos game_get_player_pos(Game* game)
 {
@@ -495,10 +555,12 @@ void game_dispatch_message(Game*               game,
                            Message             message,
                            f32                 time,
                            Transaction_Buffer* transaction_buffer,
+                           Event_Buffer*       event_buffer,
                            void*               data)
 {
 	auto& handlers = game->handlers;
 	auto& transactions = *transaction_buffer;
+	auto& events = *event_buffer;
 	u32 num_handlers = handlers.len;
 	for (u32 i = 0; i < num_handlers; ++i) {
 		Message_Handler h = handlers[i];
@@ -549,6 +611,12 @@ void game_dispatch_message(Game*               game,
 				transactions.append(t);
 				t.fireball_offshoot.dir = V2_i16(-1,  0);
 				transactions.append(t);
+
+				Event e = {};
+				e.type = EVENT_FIREBALL_HIT;
+				e.time = time;
+				e.fireball_hit.pos = h.trap.pos;
+				events.append(e);
 			}
 			break;
 		}
@@ -810,8 +878,17 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 	auto& handlers = game->handlers;
 	Event_Buffer& events = *event_buffer;
 
+	struct Entity_Damage
+	{
+		Entity_ID entity_id;
+		i32       damage;
+		Pos       pos;
+	};
+	Max_Length_Array<Entity_Damage, MAX_ENTITIES> entity_damage;
+
 	f32 time = 0.0f;
 	while (transactions) {
+		entity_damage.reset();
 		for (u32 i = 0; i < transactions.len; ++i) {
 			Transaction *t = &transactions[i];
 			ASSERT(t->start_time >= time);
@@ -827,7 +904,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 				m.move.entity_id = t->move.entity_id;
 				m.move.start = t->move.start;
 				m.move.end = t->move.end;
-				game_dispatch_message(game, m, time, &transactions, &can_exit);
+				game_dispatch_message(game, m, time, &transactions, event_buffer, &can_exit);
 
 #ifdef DEBUG_TRANSACTION_PROCESSING
 				debug_draw_world_reset();
@@ -856,7 +933,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 				// post-exit
 				m.type = MESSAGE_MOVE_POST_EXIT;
-				game_dispatch_message(game, m, time, &transactions, NULL);
+				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
 
 				t->type = TRANSACTION_MOVE_ENTER;
 				t->start_time += 0.5f;
@@ -872,7 +949,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 				m.move.entity_id = t->move.entity_id;
 				m.move.start = start;
 				m.move.end = end;
-				game_dispatch_message(game, m, time, &transactions, &can_enter);
+				game_dispatch_message(game, m, time, &transactions, event_buffer, &can_enter);
 
 #ifdef DEBUG_TRANSACTION_PROCESSING
 				debug_draw_world_reset();
@@ -911,7 +988,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 					event.type = EVENT_MOVE_BLOCKED;
 				}
 				m.type = MESSAGE_MOVE_POST_ENTER;
-				game_dispatch_message(game, m, time, &transactions, NULL);
+				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
 
 				t->type = TRANSACTION_REMOVE;
 				events.append(event);
@@ -939,6 +1016,11 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 				event.fireball_shot.duration = constants.anims.fireball.shot_duration;
 				event.fireball_shot.start = t->fireball_shot.start;
 				event.fireball_shot.end = t->fireball_shot.end;
+				events.append(event);
+
+				event.type = EVENT_FIREBALL_HIT;
+				event.time = time + constants.anims.fireball.shot_duration;
+				event.fireball_hit.pos = t->fireball_shot.end;
 				events.append(event);
 
 				t->type = TRANSACTION_REMOVE;
@@ -996,21 +1078,66 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 					if (e->pos != (Pos)pos) {
 						continue;
 					}
-					Event event = {};
-					event.type = EVENT_DAMAGED;
-					event.time = time;
-					event.damaged.entity_id = e->id;
-					event.damaged.pos = e->pos;
-					event.damaged.amount = 1;
-					events.append(event);
+
+					Entity_ID entity_id = e->id;
+					u8 written = 0;
+					for (u32 i = 0; i < entity_damage.len; ++i) {
+						Entity_Damage *ed = &entity_damage[i];
+						if (ed->entity_id == entity_id) {
+							ed->damage += 1;
+							written = 1;
+							break;
+						}
+					}
+					if (!written) {
+						Entity_Damage ed = {};
+						ed.entity_id = entity_id;
+						ed.damage = 1;
+						ed.pos = e->pos;
+						entity_damage.append(ed);
+					}
 				}
 
 				++t->fireball_offshoot.cur_step;
-				t->start_time += 1.0f;
+				t->start_time += 1.0f / constants.anims.fireball.min_speed;
 
 				break;
 			}
 			}
+		}
+
+		// process entity damage events
+		for (u32 i = 0; i < entity_damage.len; ++i) {
+			Entity_Damage *ed = &entity_damage[i];
+			Entity_ID entity_id = ed->entity_id;
+
+			u32 num_entities = game->num_entities;
+			Entity *e = game->entities;
+			for (u32 i = 0; i < num_entities; ++i, ++e) {
+				if (e->id == entity_id) {
+					break;
+				}
+			}
+			ASSERT(e->id == entity_id);
+
+			e->hit_points -= ed->damage;
+			if (e->hit_points <= 0) {
+				Event death_event = {};
+				death_event.type = EVENT_DEATH;
+				death_event.time = time;
+				death_event.death.entity_id = entity_id;
+				events.append(death_event);
+				// *e = game->entities[--game->num_entities];
+				game_remove_entity(game, entity_id);
+			}
+
+			Event event = {};
+			event.type = EVENT_DAMAGED;
+			event.time = time;
+			event.damaged.entity_id = entity_id;
+			event.damaged.amount = ed->damage;
+			event.damaged.pos = ed->pos;
+			events.append(event);
 		}
 
 		// remove finished transactions
@@ -1080,19 +1207,20 @@ void game_build_from_string(Game* game, char* str)
 			tiles[cur_pos].type = TILE_FLOOR;
 			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
 
-			Message_Handler mh = {};
-			mh.type = MESSAGE_HANDLER_PREVENT_EXIT;
-			mh.handle_mask = MESSAGE_MOVE_PRE_EXIT;
-			mh.prevent_exit.pos = cur_pos;
-			handlers.append(mh);
-
 			Entity e = {};
-			e.hit_points = 10;
+			e.hit_points = 1;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = rand_u32() % 2 ?
 			               APPEARANCE_ITEM_SPIDERWEB_1 : APPEARANCE_ITEM_SPIDERWEB_2;
 			game->entities[idx++] = e;
+
+			Message_Handler mh = {};
+			mh.type = MESSAGE_HANDLER_PREVENT_EXIT;
+			mh.handle_mask = MESSAGE_MOVE_PRE_EXIT;
+			mh.owner_id = e.id;
+			mh.prevent_exit.pos = cur_pos;
+			handlers.append(mh);
 
 			break;
 		}
@@ -1122,18 +1250,19 @@ void game_build_from_string(Game* game, char* str)
 			tiles[cur_pos].type = TILE_FLOOR;
 			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
 
-			Message_Handler mh = {};
-			mh.type = MESSAGE_HANDLER_TRAP_FIREBALL;
-			mh.handle_mask = MESSAGE_MOVE_POST_ENTER;
-			mh.trap.pos = cur_pos;
-			handlers.append(mh);
-
 			Entity e = {};
-			e.hit_points = 10;
+			e.hit_points = 1;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = APPEARANCE_ITEM_TRAP_HEX;
 			game->entities[idx++] = e;
+
+			Message_Handler mh = {};
+			mh.type = MESSAGE_HANDLER_TRAP_FIREBALL;
+			mh.handle_mask = MESSAGE_MOVE_POST_ENTER;
+			mh.owner_id = e.id;
+			mh.trap.pos = cur_pos;
+			handlers.append(mh);
 
 			break;
 		}
@@ -1228,6 +1357,7 @@ void peek_move_resolve(Slice<Action> moves)
 struct Camera
 {
 	v2  world_center;
+	v2  offset;
 	f32 zoom;
 };
 
@@ -1257,6 +1387,9 @@ enum Anim_Type
 	ANIM_DROP_TILE,
 	ANIM_PROJECTILE_EFFECT_32,
 	ANIM_TEXT,
+	ANIM_CAMERA_SHAKE,
+	ANIM_SOUND,
+	ANIM_DEATH,
 };
 
 struct Anim
@@ -1292,6 +1425,19 @@ struct Anim
 			u8 caption[16];
 			v4 color;
 		} text;
+		struct {
+			f32 start_time;
+			f32 duration;
+			f32 power;
+		} camera_shake;
+		struct {
+			f32 start_time;
+			Sound_ID sound_id;
+		} sound;
+		struct {
+			f32 time;
+			Entity_ID entity_id;
+		} death;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -1311,6 +1457,7 @@ struct World_Anim_State
 	u32                               total_anim_blocks;
 	u32                               event_buffer_idx;
 	Event_Buffer                      events_to_be_animated;
+	v2                                camera_offset;
 };
 
 void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Event_Buffer* event_buffer)
@@ -1403,6 +1550,23 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			++world_anim->num_active_anims;
 			break;
 		}
+		case EVENT_FIREBALL_HIT: {
+			Anim shake = {};
+			shake.type = ANIM_CAMERA_SHAKE;
+			shake.camera_shake.start_time = event->time;
+			shake.camera_shake.duration = constants.anims.fireball.shake_duration;
+			shake.camera_shake.power = constants.anims.fireball.shake_power;
+			anims.append(shake);
+			++world_anim->num_active_anims;
+
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_FIREBALL_EXPLOSION;
+			anims.append(sound);
+			++world_anim->num_active_anims;
+			break;
+		}
 		case EVENT_FIREBALL_OFFSHOOT: {
 			Anim a = {};
 			a.type = ANIM_PROJECTILE_EFFECT_32;
@@ -1450,6 +1614,15 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			text_anim.text.caption[i] = 0;
 			text_anim.world_coords = (v2)event->damaged.pos;
 			world_anim->anims.append(text_anim);
+			++world_anim->num_active_anims;
+			break;
+		}
+		case EVENT_DEATH: {
+			Anim anim = {};
+			anim.type = ANIM_DEATH;
+			anim.death.time = event->time;
+			anim.death.entity_id = event->death.entity_id;
+			world_anim->anims.append(anim);
 			++world_anim->num_active_anims;
 			break;
 		}
@@ -1647,7 +1820,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 	// world_anim->num_anims = anim_idx;
 }
 
-void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
+void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sound_player, f32 time)
 {
 	// reset draw state
 	sprite_sheet_instances_reset(&draw->tiles);
@@ -1702,6 +1875,36 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 				--world_anim->num_active_anims;
 				continue;
 			}
+		case ANIM_CAMERA_SHAKE:
+			if (anim->camera_shake.start_time + anim->camera_shake.duration <= dyn_time) {
+				anims.remove(i);
+				--world_anim->num_active_anims;
+				continue;
+			}
+			break;
+		case ANIM_SOUND:
+			if (anim->sound.start_time <= dyn_time) {
+				sound_player->play(anim->sound.sound_id);
+				anims.remove(i);
+				--world_anim->num_active_anims;
+				continue;
+			}
+			break;
+		case ANIM_DEATH:
+			if (anim->death.time <= dyn_time) {
+				Entity_ID entity_id = anim->death.entity_id;
+				anims.remove(i);
+				for (u32 i = 0; i < anims.len; ) {
+					if (anims[i].entity_id == entity_id) {
+						anims.remove(i);
+						continue;
+					}
+					++i;
+				}
+				--world_anim->num_active_anims;
+				continue;
+			}
+			break;
 		}
 		++i;
 	}
@@ -1715,6 +1918,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 	}
 
 
+	f32 camera_offset_mag = 0.0f;
 	// draw tile animations
 	for (u32 i = 0; i < anims.len; ++i) {
 		Anim *anim = &world_anim->anims[i];
@@ -1906,7 +2110,25 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, f32 time)
 
 			break;
 		}
+		case ANIM_CAMERA_SHAKE: {
+			f32 dt = (dyn_time - anim->camera_shake.start_time) / anim->camera_shake.duration;
+			if (dt < 0.0f) {
+				break;
+			}
+
+			f32 power = anim->camera_shake.power * (dt - 1.0f) * (dt - 1.0f);
+			camera_offset_mag = max(camera_offset_mag, power);
+
+			break;
 		}
+		}
+	}
+
+	if (camera_offset_mag > 0.0f) {
+		f32 theta = uniform_f32(0.0f, 2.0f * PI);
+		m2 m = m2::rotation(theta);
+		v2 v = m * V2_f32(camera_offset_mag, 0.0f);
+		world_anim->camera_offset = v;
 	}
 }
 
@@ -2442,6 +2664,7 @@ struct Program
 	Input  *cur_input;
 	v2_u32  cur_screen_size;
 
+	u8                  display_debug_ui;
 	Game                game;
 	Program_Input_State program_input_state;
 	World_Anim_State    world_anim;
@@ -2500,10 +2723,10 @@ void build_level_default(Program* program)
 		"#.........b...#b#........................#\n"
 		"#......#.bwb..#b#........................#\n"
 		"#.....###.b...#b#.......###..............#\n"
-		"#....#####....#b#.......#x#..............#\n"
+		"#....#####....#b#.......#x#.......d......#\n"
 		"#...##.#.##...#b#.....###x#.#............#\n"
-		"#..##..#..##..#b#.....#xxxxx#............#\n"
-		"#...b..#......#b#.....###x###............#\n"
+		"#..##..#..##..#b#.....#xxxxx#.......d....#\n"
+		"#...b..#......#b#.....###x###.....d......#\n"
 		"#b.bwb.#......#w#.......#x#..............#\n"
 		"#wb.b..#...b..@.........###..............#\n"
 		"#b.....#..bwb.#..........................#\n"
@@ -2591,6 +2814,8 @@ void program_init(Program* program, Platform_Functions platform_functions)
 		card.appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
 		card_state->discard.append(card);
 	}
+
+	// program->sound.set_ambience(SOUND_CAVE_AMBIENCE);
 
 	program->state = PROGRAM_STATE_NORMAL;
 }
@@ -2854,7 +3079,7 @@ static v2 screen_pos_to_world_pos(Camera* camera, v2_u32 screen_size, v2_u32 scr
 {
 	v2 p = (v2)screen_pos - ((v2)screen_size / 2.0f);
 	f32 raw_zoom = (f32)screen_size.y / (camera->zoom * 24.0f);
-	v2 world_pos = p / raw_zoom + 24.0f * camera->world_center;
+	v2 world_pos = p / raw_zoom + 24.0f * (camera->world_center + camera->offset);
 	return world_pos;
 }
 
@@ -2901,8 +3126,13 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 	program->draw.camera.zoom -= (f32)input->mouse_wheel_delta * 0.25f;
 
+	if (input_get_num_up_transitions(input, INPUT_BUTTON_F1) % 2) {
+		program->display_debug_ui = !program->display_debug_ui;
+	}
+
 	f32 time = (f32)program->frame_number / 60.0f;
-	world_anim_draw(&program->world_anim, &program->draw, time);
+	world_anim_draw(&program->world_anim, &program->draw, &program->sound, time);
+	program->draw.camera.offset = program->world_anim.camera_offset;
 
 	v2_i32 world_mouse_pos = (v2_i32)screen_pos_to_world_pos(&program->draw.camera,
 	                                                         screen_size,
@@ -2924,8 +3154,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		v2 dir = (v2)end - (v2)start;
 		dir = dir * dir;
 		u8 test_val = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
-		if (game_is_passable(&program->game, end, player->movement_type)
-		    && test_val == 1) {
+		if (game_is_passable(&program->game, end, player->movement_type) && test_val == 1) {
 			Action a = {};
 			a.type = ACTION_MOVE;
 			a.move.entity_id = player->id;
@@ -2994,8 +3223,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	// imgui
 	imgui_begin(&program->imgui, input, screen_size);
-	imgui_set_text_cursor(&program->imgui, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
-	if (imgui_tree_begin(&program->imgui, "show UI")) {
+	if (program->display_debug_ui) {
+		imgui_set_text_cursor(&program->imgui, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
 		if (imgui_tree_begin(&program->imgui, "show mouse info")) {
 			char buffer[1024];
 			snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Pos: (%u, %u)",
@@ -3155,7 +3384,7 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	debug_draw_world_d3d11_draw(&program->debug_draw_world,
 	                            dc,
 	                            output_rtv,
-	                            program->draw.camera.world_center,
+	                            program->draw.camera.world_center + program->draw.camera.offset,
 	                            debug_zoom);
 
 	imgui_d3d11_draw(&program->imgui, dc, program->d3d11.output_rtv, screen_size_u32);

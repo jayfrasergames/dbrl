@@ -1,5 +1,4 @@
 * tasks:
-  * boxybold font world space drawing
   * move all constants to constants.edit.h (card, event etc)
   * variable move duration depending on user input frequency
     * animation "speeding up" when moves made rapidly
@@ -12,7 +11,6 @@
     * hand-to-hand animation for card drawing
     * move card to active area
   * hide mouse/use custom mouse cursor
-  * scenario loading
 
 * scenarios:
   * invisible wall
@@ -43,7 +41,6 @@
 
 * bugs
   * don't try code reloading during debug pause
-  * code reloading stopped working (happened when adding debug pause)
   * events not sent if mouse leaves window - need to turn off map dragging mode when re-entering the
     window
   * card renderer to do proper anti aliasing/alpha transparency (also mip mapping)

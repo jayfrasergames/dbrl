@@ -158,6 +158,16 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 	case WM_RBUTTONUP:
 		input_back_buffer_button_up(INPUT_BUTTON_MOUSE_RIGHT);
 		return 0;
+	case WM_KEYDOWN:
+		switch (wparam) {
+		case VK_F1: input_back_buffer_button_down(INPUT_BUTTON_F1); break;
+		}
+		return 0;
+	case WM_KEYUP:
+		switch (wparam) {
+		case VK_F1: input_back_buffer_button_up(INPUT_BUTTON_F1); break;
+		}
+		return 0;
 	}
 	return DefWindowProc(window, msg, wparam, lparam);
 }

@@ -135,6 +135,14 @@ python ..\scripts\wave_to_header.py ^
 	-i ../assets/sound/Card_Game_Movement_Deal_Single_01.wav ^
 	-o ../src/gen/sound_deal_card.data.h ^
 	-n Sound_Deal_Card
+python ..\scripts\wave_to_header.py ^
+	-i ../assets/sound/Fire_Spell_03.wav ^
+	-o ../src/gen/sound_fireball_explosion.data.h ^
+	-n Sound_Fireball_Explosion
+python ..\scripts\wave_to_header.py ^
+	-i ../assets/sound/Card_Game_Ambience_Cave.wav ^
+	-o ../src/gen/sound_cave_ambience.data.h ^
+	-n Sound_Cave_Ambience
 python ..\scripts\make_sprite_sheet.py ^
 	-i ../assets/creatures.png ^
 	-o ../src/gen/sprite_sheet_creatures.data.h ^
