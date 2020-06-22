@@ -11,6 +11,8 @@
     * hand-to-hand animation for card drawing
     * move card to active area
   * hide mouse/use custom mouse cursor
+  * mouse over view entity health
+    * hold tab to view entity health
 
 * scenarios:
   * invisible wall
@@ -21,6 +23,16 @@
     * lich/skeletons
     * spiders (traps)
   * doors
+  * spells
+    * swap enemies
+    * blink
+    * teleport sphere (chaos sphere?)
+    * magic missile
+    * lightning (bounces of walls etc)
+    * fireball
+    * cloud/grease
+    * freeze
+    * flesh to stone
 
 * features
   * game

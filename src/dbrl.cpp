@@ -2162,47 +2162,55 @@ void hand_params_calc(Hand_Params* params)
 
 	f32 max_width = params->screen_width - params->border;
 
-	f32 theta_low = 0;
-	f32 theta_high = PI / 2.0f;
-	while (theta_high - theta_low > 1e-6f) {
-		f32 theta_mid = (theta_high + theta_low) / 2.0f;
-		f32 val = theta_mid / (1.0f - cosf(theta_mid / 2.0f));
-		if (val < target) {
-			theta_high = theta_mid;
-		} else {
-			theta_low = theta_mid;
-		}
-	}
-	f32 theta = (theta_low + theta_high) / 2.0f;
-	f32 radius = ((params->num_cards - 1.0f) * params->separation) / theta;
+	f32 theta;
+	f32 radius;
 
-	f32 card_diagonal, psi;
-	{
-		f32 w = params->card_size.w, h = params->card_size.h;
-		card_diagonal = sqrtf(w*w + h*h);
-
-		psi = atanf(w / h);
-	}
-
-	if (radius * sinf(theta / 2.0f) + card_diagonal * sinf(theta / 2.0f + psi) > max_width) {
-		target = max_width / h;
-		theta_low = 0;
-		theta_high = PI / 2.0f;
+	if (params->num_cards <= 1.0f) {
+		theta = 0.0f;
+		radius = 1.0f;
+	} else {
+		f32 theta_low = 0;
+		f32 theta_high = PI / 2.0f;
 		while (theta_high - theta_low > 1e-6f) {
 			f32 theta_mid = (theta_high + theta_low) / 2.0f;
-			f32 val = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f))
-			        + (card_diagonal / h) * sinf(theta_mid / 2.0f + psi);
-			f32 val_2 = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f));
+			f32 val = theta_mid / (1.0f - cosf(theta_mid / 2.0f));
 			if (val < target) {
 				theta_high = theta_mid;
 			} else {
 				theta_low = theta_mid;
 			}
 		}
-		theta = (theta_high + theta_low) / 2.0f;
-		// radius = max_width / sinf(theta / 2.0f);
-		radius = h / (1 - cosf(theta / 2.0f));
-		params->separation = radius * theta / (params->num_cards - 1.0f);
+		theta = (theta_low + theta_high) / 2.0f;
+		radius = ((params->num_cards - 1.0f) * params->separation) / theta;
+
+		f32 card_diagonal, psi;
+		{
+			f32 w = params->card_size.w, h = params->card_size.h;
+			card_diagonal = sqrtf(w*w + h*h);
+
+			psi = atanf(w / h);
+		}
+
+		if (radius * sinf(theta / 2.0f) + card_diagonal * sinf(theta / 2.0f + psi) > max_width) {
+			target = max_width / h;
+			theta_low = 0;
+			theta_high = PI / 2.0f;
+			while (theta_high - theta_low > 1e-6f) {
+				f32 theta_mid = (theta_high + theta_low) / 2.0f;
+				f32 val = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f))
+					+ (card_diagonal / h) * sinf(theta_mid / 2.0f + psi);
+				f32 val_2 = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f));
+				if (val < target) {
+					theta_high = theta_mid;
+				} else {
+					theta_low = theta_mid;
+				}
+			}
+			theta = (theta_high + theta_low) / 2.0f;
+			// radius = max_width / sinf(theta / 2.0f);
+			radius = h / (1 - cosf(theta / 2.0f));
+			params->separation = radius * theta / (params->num_cards - 1.0f);
+		}
 	}
 
 	v2 center = {};
@@ -2317,19 +2325,137 @@ struct Card_UI_Event
 	};
 };
 
+// TODO -- finish hand to hand animations
+struct Hand_To_Hand_Anim_Params
+{
+	Hand_Params hand_params;
+	u32 highlighted_card_id;
+	u32 selected_card_index;
+};
+
+void card_anim_create_hand_to_hand_anims(Card_Anim_State* card_anim_state,
+                                         Hand_To_Hand_Anim_Params* before_params,
+                                         Hand_To_Hand_Anim_Params* after_params,
+                                         f32 time)
+{
+	f32 before_deltas[100];
+	f32 after_deltas[100];
+
+	u32 prev_highlighted_card_id = before_params->highlighted_card_id;
+	u32 prev_highlighted_card = before_params->selected_card_index;
+	u32 highlighted_card_id = after_params->highlighted_card_id;
+	u32 highlighted_card = after_params->selected_card_index;
+
+	if (prev_highlighted_card_id) {
+		hand_calc_deltas(before_deltas,
+		                 &before_params->hand_params,
+		                 before_params->selected_card_index);
+	} else {
+		memset(before_deltas, 0,
+		       (u32)before_params->hand_params.num_cards * sizeof(before_deltas[0]));
+	}
+	if (highlighted_card_id) {
+		hand_calc_deltas(after_deltas,
+		                 &after_params->hand_params,
+		                 after_params->selected_card_index);
+	} else {
+		memset(after_deltas, 0,
+		       (u32)after_params->hand_params.num_cards * sizeof(after_deltas[0]));
+	}
+
+	f32 base_delta = 1.0f / (before_params->hand_params.num_cards - 1.0f);
+	f32 after_base_delta = 1.0f / (after_params->hand_params.num_cards - 1.0f);
+
+	u32 num_card_anims = card_anim_state->num_card_anims;
+	for (u32 i = 0; i < num_card_anims; ++i) {
+		Card_Anim *anim = &card_anim_state->card_anims[i];
+		Card_Hand_Pos before_pos = {};
+		u32 hand_index;
+		switch (anim->type) {
+		case CARD_ANIM_IN_HAND: {
+			hand_index = anim->hand.index;
+			f32 base_angle = PI/2.0f + before_params->hand_params.theta
+				       * (0.5f - (f32)hand_index * base_delta);
+			before_pos.angle = base_angle + before_deltas[hand_index];
+			before_pos.radius = before_params->hand_params.radius;
+			before_pos.zoom = i == prev_highlighted_card && prev_highlighted_card_id
+					  ? before_params->hand_params.highlighted_zoom : 1.0f;
+			break;
+		}
+		case CARD_ANIM_HAND_TO_HAND: {
+			hand_index = anim->hand_to_hand.index;
+			Card_Hand_Pos *s = &anim->hand_to_hand.start;
+			Card_Hand_Pos *e = &anim->hand_to_hand.end;
+			f32 dt = (time - anim->hand_to_hand.start_time)
+				 / anim->hand_to_hand.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+			before_pos.angle  = lerp(s->angle,  e->angle,  dt);
+			before_pos.zoom   = lerp(s->zoom,   e->zoom,   dt);
+			before_pos.radius = lerp(s->radius, e->radius, dt);
+			break;
+		}
+		default:
+			continue;
+		}
+		f32 base_angle = PI/2.0f + after_params->hand_params.theta
+		               * (0.5f - (f32)hand_index * after_base_delta);
+		Card_Hand_Pos after_pos = {};
+		after_pos.angle = base_angle + after_deltas[hand_index];
+		after_pos.zoom = i == highlighted_card && highlighted_card_id
+		               ? after_params->hand_params.highlighted_zoom : 1.0f;
+		after_pos.radius = after_params->hand_params.radius;
+		anim->type = CARD_ANIM_HAND_TO_HAND;
+		anim->hand_to_hand.start_time = time;
+		anim->hand_to_hand.duration = constants.cards_ui.hand_to_hand_time;
+		anim->hand_to_hand.start = before_pos;
+		anim->hand_to_hand.end = after_pos;
+		anim->hand_to_hand.index = hand_index;
+	}
+}
+
 void card_anim_update_anims(Card_Anim_State*  card_anim_state,
                             Slice<Card_Event> events,
                             f32               time)
 {
+	Hand_To_Hand_Anim_Params before_params = {};
+	before_params.hand_params = card_anim_state->hand_params;
+	before_params.highlighted_card_id = 0;
+	before_params.selected_card_index = 0;
+
+	u32 highlighted_card_id = card_anim_state->highlighted_card_id;
+	if (highlighted_card_id) {
+		u32 highlighted_card_index = 0;
+		u32 num_card_anims = card_anim_state->num_card_anims;
+		Card_Anim *ca = card_anim_state->card_anims;
+		for (u32 i = 0; i < num_card_anims; ++i, ++ca) {
+			if (ca->card_id == highlighted_card_id) {
+				switch (ca->type) {
+				case CARD_ANIM_IN_HAND:
+					before_params.highlighted_card_id = highlighted_card_id;
+					before_params.selected_card_index = ca->hand.index;
+					break;
+				case CARD_ANIM_HAND_TO_HAND:
+					before_params.highlighted_card_id = highlighted_card_id;
+					before_params.selected_card_index = ca->hand_to_hand.index;
+					break;
+				}
+				break;
+			}
+		}
+	}
+
+	u8 do_hand_to_hand = 0;
+
 	for (u32 i = 0; i < events.len; ++i) {
 		Card_Event *event = &events[i];
 		switch (event->type) {
 		case CARD_EVENT_DRAW: {
+			do_hand_to_hand = 1;
 			u32 hand_index = card_anim_state->hand_size++;
 			Card_Anim anim = {};
 			anim.type = CARD_ANIM_DRAW;
 			anim.draw.start_time = time;
-			anim.draw.duration = 1.0f;
+			anim.draw.duration = constants.cards_ui.draw_duration;
 			anim.draw.hand_index = hand_index;
 			anim.card_id = event->draw.card_id;
 			anim.card_face = card_appearance_get_sprite_coords(event->draw.appearance);
@@ -2337,6 +2463,22 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 			break;
 		}
 		}
+	}
+
+	if (do_hand_to_hand) {
+		Hand_Params hand_params = card_anim_state->hand_params;
+		hand_params.num_cards = card_anim_state->hand_size;
+		hand_params_calc(&hand_params);
+
+		Hand_To_Hand_Anim_Params after_params = {};
+		after_params.hand_params = hand_params;
+		after_params.highlighted_card_id = 0;
+		after_params.selected_card_index = 0;
+
+		card_anim_create_hand_to_hand_anims(card_anim_state,
+		                                    &before_params,
+		                                    &after_params,
+		                                    time);
 	}
 }
 
@@ -2440,65 +2582,21 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	u8 hi_card_is_hand = highlighted_card_id && highlighted_card_id < (u32)-2;
 	if (prev_highlighted_card_id != highlighted_card_id
 	 && (prev_hi_card_was_hand || hi_card_is_hand)) {
-		f32 before_deltas[100];
-		f32 after_deltas[100];
 
-		if (prev_highlighted_card_id) {
-			hand_calc_deltas(before_deltas, params, prev_highlighted_card);
-		} else {
-			memset(before_deltas, 0, (u32)params->num_cards * sizeof(before_deltas[0]));
-		}
-		if (highlighted_card_id) {
-			hand_calc_deltas(after_deltas, params, highlighted_card);
-		} else {
-			memset(after_deltas, 0, (u32)params->num_cards * sizeof(after_deltas[0]));
-		}
+		Hand_To_Hand_Anim_Params before_params = {};
+		before_params.hand_params = *params;
+		before_params.highlighted_card_id = prev_highlighted_card_id;
+		before_params.selected_card_index = prev_highlighted_card;
 
-		f32 base_delta = 1.0f / (params->num_cards - 1.0f);
+		Hand_To_Hand_Anim_Params after_params = {};
+		after_params.hand_params = *params;
+		after_params.highlighted_card_id = highlighted_card_id;
+		after_params.selected_card_index = highlighted_card;
 
-		for (u32 i = 0; i < num_card_anims; ++i) {
-			Card_Anim *anim = &card_anim_state->card_anims[i];
-			Card_Hand_Pos before_pos = {};
-			u32 hand_index;
-			switch (anim->type) {
-			case CARD_ANIM_IN_HAND: {
-				hand_index = anim->hand.index;
-				f32 base_angle = PI/2.0f + params->theta
-				               * (0.5f - (f32)hand_index * base_delta);
-				before_pos.angle = base_angle + before_deltas[hand_index];
-				before_pos.radius = params->radius;
-				before_pos.zoom = i == prev_highlighted_card && prev_highlighted_card_id
-				                  ? params->highlighted_zoom : 1.0f;
-				break;
-			}
-			case CARD_ANIM_HAND_TO_HAND: {
-				hand_index = anim->hand_to_hand.index;
-				Card_Hand_Pos *s = &anim->hand_to_hand.start;
-				Card_Hand_Pos *e = &anim->hand_to_hand.end;
-				f32 dt = (time - anim->hand_to_hand.start_time)
-				         / anim->hand_to_hand.duration;
-				dt = clamp(dt, 0.0f, 1.0f);
-				before_pos.angle  = lerp(s->angle,  e->angle,  dt);
-				before_pos.zoom   = lerp(s->zoom,   e->zoom,   dt);
-				before_pos.radius = lerp(s->radius, e->radius, dt);
-				break;
-			}
-			default:
-				continue;
-			}
-			f32 base_angle = PI/2.0f + params->theta * (0.5f - (f32)hand_index * base_delta);
-			Card_Hand_Pos after_pos = {};
-			after_pos.angle = base_angle + after_deltas[hand_index];
-			after_pos.zoom = i == highlighted_card && highlighted_card_id
-			               ? params->highlighted_zoom : 1.0f;
-			after_pos.radius = params->radius;
-			anim->type = CARD_ANIM_HAND_TO_HAND;
-			anim->hand_to_hand.start_time = time;
-			anim->hand_to_hand.duration = 0.1f;
-			anim->hand_to_hand.start = before_pos;
-			anim->hand_to_hand.end = after_pos;
-			anim->hand_to_hand.index = hand_index;
-		}
+		card_anim_create_hand_to_hand_anims(card_anim_state,
+		                                    &before_params,
+		                                    &after_params,
+		                                    time);
 	}
 
 	u8 is_a_card_highlighted = card_anim_state->highlighted_card_id
@@ -2522,7 +2620,13 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			f32 dist_to_highlighted = (f32)i - (f32)highlighted_card;
 
 			v2 card_pos = {};
-			f32 angle = PI / 2.0f + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
+			f32 angle; //  = PI / 2.0f + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
+			if (hand_size > 1) {
+				angle = PI / 2.0f
+				      + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
+			} else {
+				angle = PI / 2.0f;
+			}
 			angle += deltas[i];
 			f32 r = params->radius;
 			if (is_a_card_highlighted && highlighted_card == i) {
@@ -2569,7 +2673,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			                         + smooth * (end_rotation - start_rotation);
 			instance.screen_pos.x = start_pos.x + smooth * (end_pos.x - start_pos.x);
 			instance.screen_pos.y = start_pos.y + smooth * (end_pos.y - start_pos.y);
-			instance.screen_pos.y += 0.1f * jump;
+			instance.screen_pos.y += constants.cards_ui.draw_jump_height * jump;
 			instance.horizontal_rotation = (1.0f - dt) * PI;
 			instance.card_pos = anim->card_face;
 			instance.card_id = anim->card_id;
@@ -2588,11 +2692,12 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			f32 a = lerp(s->angle,  e->angle,  dt);
 			f32 r = lerp(s->radius, e->radius, dt);
 			f32 z = lerp(s->zoom,   e->zoom,   dt);
-			r += (z - 1.0f) * params->card_size.h;
+			f32 r2 = r + (z - 1.0f) * params->card_size.h;
+			// r += (z - 1.0f) * params->card_size.h;
 
 			v2 pos = {};
-			pos.x = r * cosf(a) + params->center.x;
-			pos.y = r * sinf(a) + params->center.y;
+			pos.x = r2 * cosf(a) + params->center.x;
+			pos.y = r2 * sinf(a) + params->top - r;
 
 			Card_Render_Instance instance = {};
 			instance.screen_rotation = a - PI / 2.0f;
@@ -3170,10 +3275,10 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	Event_Buffer event_buffer = {};
 
 	// program->card_anim_state.hand_params.screen_width = ratio;
-	program->card_anim_state.hand_params.height = 0.5f;
-	program->card_anim_state.hand_params.border = 0.4;
-	program->card_anim_state.hand_params.top = -0.7f;
-	program->card_anim_state.hand_params.bottom = -0.9f;
+	program->card_anim_state.hand_params.height = constants.cards_ui.height;
+	program->card_anim_state.hand_params.border = constants.cards_ui.border;
+	program->card_anim_state.hand_params.top    = constants.cards_ui.top;
+	program->card_anim_state.hand_params.bottom = constants.cards_ui.bottom;
 	// XXX - ugh
 	program->card_anim_state.hand_params.card_size = { 0.5f*0.4f*48.0f/80.0f, 0.5f*0.4f*1.0f };
 
