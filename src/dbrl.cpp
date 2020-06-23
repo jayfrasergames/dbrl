@@ -274,6 +274,7 @@ struct Card_State
 	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        deck;
 	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        discard;
 	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        hand;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        in_play;
 	Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> events;
 
 	void draw()
@@ -294,6 +295,10 @@ struct Card_State
 		event.draw.card_id    = card.id;
 		event.draw.appearance = card.appearance;
 		events.append(event);
+	}
+
+	void play(u32 card_id)
+	{
 	}
 };
 
@@ -2161,6 +2166,7 @@ void hand_params_calc(Hand_Params* params)
 	f32 target = ((params->num_cards - 1.0f) * params->separation) / h;
 
 	f32 max_width = params->screen_width - params->border;
+	f32 origin_separation = params->separation;
 
 	f32 theta;
 	f32 radius;
@@ -2211,6 +2217,11 @@ void hand_params_calc(Hand_Params* params)
 			radius = h / (1 - cosf(theta / 2.0f));
 			params->separation = radius * theta / (params->num_cards - 1.0f);
 		}
+	}
+
+	if (radius < constants.cards_ui.min_radius) {
+		radius = constants.cards_ui.min_radius;
+		theta = params->separation * (params->num_cards - 1.0f) / radius;
 	}
 
 	v2 center = {};
@@ -2363,8 +2374,18 @@ void card_anim_create_hand_to_hand_anims(Card_Anim_State* card_anim_state,
 		       (u32)after_params->hand_params.num_cards * sizeof(after_deltas[0]));
 	}
 
-	f32 base_delta = 1.0f / (before_params->hand_params.num_cards - 1.0f);
-	f32 after_base_delta = 1.0f / (after_params->hand_params.num_cards - 1.0f);
+	f32 base_delta;
+	if (before_params->hand_params.num_cards > 1.0f) {
+		base_delta = 1.0f / (before_params->hand_params.num_cards - 1.0f);
+	} else {
+		base_delta = 0.0f;
+	}
+	f32 after_base_delta;
+	if (after_params->hand_params.num_cards > 1.0f) {
+		after_base_delta = 1.0f / (after_params->hand_params.num_cards - 1.0f);
+	} else {
+		after_base_delta = 0.0f;
+	}
 
 	u32 num_card_anims = card_anim_state->num_card_anims;
 	for (u32 i = 0; i < num_card_anims; ++i) {
@@ -2483,6 +2504,7 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 }
 
 Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
+                             Card_State*      card_state,
                              Card_Render*     card_render,
                              v2_u32           screen_size,
                              f32              time,
@@ -2656,7 +2678,12 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			f32 start_rotation = 0.0f;
 
 			v2 end_pos = {};
-			f32 angle = PI / 2.0f + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
+			f32 angle;
+			if (hand_size > 1) {
+				angle = PI / 2.0f + params->theta * (0.5f - ((f32)i / (f32)(hand_size - 1)));
+			} else {
+				angle = PI / 2.0f;
+			}
 			end_pos.x = params->radius * cosf(angle) + params->center.x;
 			end_pos.y = params->radius * sinf(angle) + params->center.y;
 			f32 end_rotation = angle - PI / 2.0f;
@@ -2714,7 +2741,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	}
 
 	// add draw pile card
-	{
+	if (card_state->deck) {
 		Card_Render_Instance instance = {};
 		instance.screen_rotation = 0.0f;
 		instance.screen_pos = { -ratio + params->border / 2.0f,
@@ -2726,7 +2753,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	}
 
 	// add discard pile card
-	{
+	if (card_state->discard) {
 		Card_Render_Instance instance = {};
 		instance.screen_rotation = 0.0f;
 		instance.screen_pos = { ratio - params->border / 2.0f,
@@ -3285,6 +3312,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	debug_line_reset(&program->draw.card_debug_line);
 	// card_anim_update_anims
 	Card_UI_Event card_event = card_anim_draw(&program->card_anim_state,
+	                                          &program->game.card_state,
 	                                          &program->draw.card_render,
 	                                          screen_size,
 	                                          time,
@@ -3300,8 +3328,11 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		program->sound.play(SOUND_DEAL_CARD);
 		break;
 	case CARD_UI_EVENT_DISCARD_CLICKED:
+		card_state->draw();
+		program->sound.play(SOUND_DEAL_CARD);
 		break;
 	case CARD_UI_EVENT_HAND_CLICKED:
+		
 		break;
 	}
 
