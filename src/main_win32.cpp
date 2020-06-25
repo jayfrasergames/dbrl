@@ -161,11 +161,13 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 	case WM_KEYDOWN:
 		switch (wparam) {
 		case VK_F1: input_back_buffer_button_down(INPUT_BUTTON_F1); break;
+		case VK_F5: input_back_buffer_button_down(INPUT_BUTTON_F5); break;
 		}
 		return 0;
 	case WM_KEYUP:
 		switch (wparam) {
 		case VK_F1: input_back_buffer_button_up(INPUT_BUTTON_F1); break;
+		case VK_F5: input_back_buffer_button_up(INPUT_BUTTON_F5); break;
 		}
 		return 0;
 	}
@@ -425,6 +427,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	program_dsound_init(program, dsound);
 
+	u8 draw_debug_info = 0;
 	for (u32 frame_number = 0; running; ++frame_number) {
 
 #ifdef DEBUG
@@ -467,6 +470,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		swap_input_buffers();
 
+		if (input_get_num_up_transitions(input_front_buffer, INPUT_BUTTON_F5)) {
+			draw_debug_info = !draw_debug_info;
+		}
+
 		POINT point;
 		if (GetCursorPos(&point) && ScreenToClient(window, &point)) {
 			if (point.x < screen_size.x && point.y < screen_size.y) {
@@ -494,7 +501,6 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		imgui_begin(&imgui, input_front_buffer, screen_size);
 		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
-		imgui_text(&imgui, "Hello, world!");
 		char buffer[1024];
 		snprintf(buffer, ARRAY_SIZE(buffer), "Frame: %u", frame_number);
 		imgui_text(&imgui, buffer);
@@ -519,6 +525,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 		// render any d3d11 messages we may have
 		u64 num_messages = info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
 		if (num_messages) {
+			draw_debug_info = 1;
 			char buffer[1024] = {};
 			snprintf(buffer,
 			         ARRAY_SIZE(buffer),
@@ -554,7 +561,9 @@ DWORD __stdcall game_loop(void *uncast_args)
 			}
 		}
 
-		imgui_d3d11_draw(&imgui, context, back_buffer_rtv, screen_size);
+		if (draw_debug_info) {
+			imgui_d3d11_draw(&imgui, context, back_buffer_rtv, screen_size);
+		}
 
 		swap_chain->Present(1, 0);
 	}

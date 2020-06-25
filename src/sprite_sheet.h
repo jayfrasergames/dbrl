@@ -187,7 +187,7 @@ u32 sprite_sheet_renderer_id_in_pos(Sprite_Sheet_Renderer* renderer, v2_u32 pos)
 
 void sprite_sheet_renderer_highlight_sprite(Sprite_Sheet_Renderer* renderer, u32 sprite_id)
 {
-	renderer->highlighted_sprite = sprite_id;
+	renderer->highlighted_sprite = sprite_id ? sprite_id : (u32)-1;
 }
 
 void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances)
