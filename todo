@@ -1,5 +1,7 @@
 * tasks:
-  * move all constants to constants.edit.h (card, event etc)
+  * animation block processing
+    * do turn after player casts fireball
+    * poison take damage after draw as first block, enemy turn as second block
   * variable move duration depending on user input frequency
     * animation "speeding up" when moves made rapidly
   * improve imgui
@@ -8,11 +10,15 @@
     * debug imgui global context
     * member functions
   * card user interface
-    * hand-to-hand animation for card drawing
-    * move card to active area
+    * card discarding
+    * card "param selecting" state
   * hide mouse/use custom mouse cursor
   * mouse over view entity health
     * hold tab to view entity health
+  * sound
+    * playing the same sound more than once simultaneously
+  * transaction processing
+    * only collapse "Entity_Damage" events after processing transactions
 
 * scenarios:
   * invisible wall
@@ -23,9 +29,8 @@
     * lich/skeletons
     * spiders (traps)
   * doors
-  * spells
-    * swap enemies
-    * blink
+  * spells/cards
+    * poison card (take damage, anims etc)
     * teleport sphere (chaos sphere?)
     * magic missile
     * lightning (bounces of walls etc)
@@ -33,6 +38,9 @@
     * cloud/grease
     * freeze
     * flesh to stone
+  * improve anims etc
+    * exchange
+    * blink
 
 * features
   * game
@@ -52,6 +60,7 @@
     * strings
 
 * bugs
+  * "release" mode compile
   * don't try code reloading during debug pause
   * events not sent if mouse leaves window - need to turn off map dragging mode when re-entering the
     window

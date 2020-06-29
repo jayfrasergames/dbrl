@@ -97,6 +97,8 @@ enum Action_Type
 	ACTION_WAIT,
 	ACTION_FIREBALL,
 	ACTION_EXCHANGE,
+	ACTION_BLINK,
+	ACTION_POISON,
 };
 
 struct Action
@@ -116,10 +118,20 @@ struct Action
 			Entity_ID a;
 			Entity_ID b;
 		} exchange;
+		struct {
+			Entity_ID caster;
+			Pos       target;
+		} blink;
+		struct {
+			Entity_ID target;
+		} poison;
 	};
 
 	operator bool() { return type; }
 };
+
+#define GAME_MAX_ACTIONS 1024
+typedef Max_Length_Array<Action, GAME_MAX_ACTIONS> Action_Buffer;
 
 // Transactions
 
@@ -136,6 +148,7 @@ enum Event_Type
 	EVENT_DAMAGED,
 	EVENT_DEATH,
 	EVENT_EXCHANGE,
+	EVENT_BLINK,
 };
 
 struct Event
@@ -179,6 +192,10 @@ struct Event
 		struct {
 			Entity_ID a, b;
 		} exchange;
+		struct {
+			Entity_ID caster_id;
+			Pos       target;
+		} blink;
 	};
 };
 
@@ -199,6 +216,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_DAMAGED: return 0;
 	case EVENT_DEATH: return 0;
 	case EVENT_EXCHANGE: return 0;
+	case EVENT_BLINK: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -294,26 +312,6 @@ struct Card_State
 	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        hand;
 	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        in_play;
 	Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> events;
-
-	void draw()
-	{
-		if (!deck) {
-			while (discard) {
-				u32 idx = rand_u32() % discard.len;
-				deck.append(discard[idx]);
-				discard[idx] = discard[discard.len - 1];
-				--discard.len;
-			}
-		}
-		ASSERT(deck);
-		Card card = deck.pop();
-		hand.append(card);
-		Card_Event event = {};
-		event.type = CARD_EVENT_DRAW;
-		event.draw.card_id    = card.id;
-		event.draw.appearance = card.appearance;
-		events.append(event);
-	}
 };
 
 enum Tile_Type
@@ -523,9 +521,39 @@ u8 game_is_passable(Game* game, Pos pos, u16 move_mask)
 	return result;
 }
 
-#define GAME_MAX_ACTIONS GAME_MAX_CONTROLLERS
+void card_state_draw(Card_State* card_state, Game* game, Action_Buffer* action_buffer)
+{
+	auto& actions = *action_buffer;
+	actions.reset();
+	if (!card_state->deck) {
+		while (card_state->discard) {
+			u32 idx = rand_u32() % card_state->discard.len;
+			card_state->deck.append(card_state->discard[idx]);
+			card_state->discard[idx] = card_state->discard[card_state->discard.len - 1];
+			--card_state->discard.len;
+		}
+	}
+	ASSERT(card_state->deck);
+	Card card = card_state->deck.pop();
+	card_state->hand.append(card);
+	Card_Event event = {};
+	event.type = CARD_EVENT_DRAW;
+	event.draw.card_id    = card.id;
+	event.draw.appearance = card.appearance;
+	card_state->events.append(event);
+	switch (card.appearance) {
+	case CARD_APPEARANCE_POISON: {
+		Action action = {};
+		action.type = ACTION_POISON;
+		Controller *c = &game->controllers[0];
+		ASSERT(c->type == CONTROLLER_PLAYER);
+		action.poison.target = c->player.entity_id;
+		actions.append(action);
+		break;
+	}
+	}
+}
 
-typedef Max_Length_Array<Action, GAME_MAX_ACTIONS> Action_Buffer;
 
 #define GAME_MAX_TRANSACTIONS 65536
 
@@ -540,6 +568,10 @@ enum Transaction_Type
 	TRANSACTION_FIREBALL_OFFSHOOT,
 	TRANSACTION_EXCHANGE_CAST,
 	TRANSACTION_EXCHANGE,
+	TRANSACTION_BLINK_CAST,
+	TRANSACTION_BLINK,
+	TRANSACTION_POISON_CAST,
+	TRANSACTION_POISON,
 };
 
 struct Transaction
@@ -570,6 +602,13 @@ struct Transaction
 			Entity_ID a;
 			Entity_ID b;
 		} exchange;
+		struct {
+			Entity_ID caster_id;
+			Pos       target;
+		} blink;
+		struct {
+			Entity_ID entity_id;
+		} poison;
 	};
 };
 
@@ -696,6 +735,23 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			t.start_time = 0.0f;
 			t.exchange.a = action.exchange.a;
 			t.exchange.b = action.exchange.b;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_BLINK: {
+			Transaction t = {};
+			t.type = TRANSACTION_BLINK_CAST;
+			t.start_time = 0.0f;
+			t.blink.caster_id = action.blink.caster;
+			t.blink.target = action.blink.target;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_POISON: {
+			Transaction t = {};
+			t.type = TRANSACTION_POISON_CAST;
+			t.start_time = 0.0f;
+			t.poison.entity_id = action.poison.target;
 			transactions.append(t);
 			break;
 		}
@@ -987,6 +1043,67 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				Pos tmp = a->pos;
 				a->pos = b->pos;
 				b->pos = tmp;
+				break;
+			}
+			case TRANSACTION_BLINK_CAST: {
+				// TODO -- add cast event
+				// maybe should have things like "anti magic fields" etc?
+				t->type = TRANSACTION_BLINK;
+				t->start_time += constants.anims.blink.cast_time;
+				break;
+			}
+			case TRANSACTION_BLINK: {
+				t->type = TRANSACTION_REMOVE;
+
+				Event event = {};
+				event.type = EVENT_BLINK;
+				event.time = time;
+				event.blink.caster_id = t->blink.caster_id;
+				event.blink.target = t->blink.target;
+				events.append(event);
+
+				Entity *e = game_get_entity_by_id(game, t->blink.caster_id);
+
+				// TODO -- should check if pos is free to enter?
+				Pos start = e->pos;
+				Pos end = t->blink.target;
+
+				occupied.unset(start);
+				e->pos = end;
+				occupied.set(end);
+
+				Message m = {};
+				m.type = MESSAGE_MOVE_POST_EXIT;
+				m.move.entity_id = e->id;
+				m.move.start = start;
+				m.move.end = end;
+				game_dispatch_message(game, m, time, &transactions, event_buffer, 0);
+
+				m.type = MESSAGE_MOVE_POST_ENTER;
+				game_dispatch_message(game, m, time, &transactions, event_buffer, 0);
+				break;
+			}
+			case TRANSACTION_POISON_CAST: {
+				t->type = TRANSACTION_POISON;
+				t->start_time += constants.anims.poison.cast_time;
+				break;
+			}
+			case TRANSACTION_POISON: {
+				t->type = TRANSACTION_REMOVE;
+
+				Entity_ID e_id = t->poison.entity_id;
+				Entity *e = game_get_entity_by_id(game, e_id);
+				ASSERT(e);
+
+				// XXX -- this currently is a bug
+				// should combine Entity_Damage events _here_ in current version
+				// but will change to collapsing after this loop in future
+				Entity_Damage damage = {};
+				damage.entity_id = e_id;
+				damage.damage = 3;
+				damage.pos = e->pos;
+				entity_damage.append(damage);
+
 				break;
 			}
 			}
@@ -1482,6 +1599,7 @@ enum Anim_Type
 	ANIM_SOUND,
 	ANIM_DEATH,
 	ANIM_EXCHANGE,
+	ANIM_BLINK,
 };
 
 struct Anim
@@ -1534,6 +1652,11 @@ struct Anim
 			f32 time;
 			Entity_ID a, b;
 		} exchange;
+		struct {
+			f32 time;
+			Entity_ID entity_id;
+			v2 target;
+		} blink;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -1556,6 +1679,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_SOUND:                return 1;
 	case ANIM_DEATH:                return 1;
 	case ANIM_EXCHANGE:             return 1;
+	case ANIM_BLINK:                return 1;
 	}
 	ASSERT(0);
 	return 0;
@@ -1739,6 +1863,16 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			ex.exchange.a = event->exchange.a;
 			ex.exchange.b = event->exchange.b;
 			world_anim->anims.append(ex);
+			break;
+		}
+		case EVENT_BLINK: {
+			// TODO -- spell casting sounds/anims/particle effect stuff
+			Anim anim = {};
+			anim.type = ANIM_BLINK;
+			anim.blink.time = event->time;
+			anim.blink.entity_id = event->blink.caster_id;
+			anim.blink.target = (v2)event->blink.target;
+			world_anim->anims.append(anim);
 			break;
 		}
 		}
@@ -2030,6 +2164,20 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				b->world_coords = tmp;
 				anims.remove(i);
 				continue;
+			}
+			break;
+		case ANIM_BLINK:
+			if (anim->blink.time <= dyn_time) {
+				Entity_ID e_id = anim->blink.entity_id;
+				Anim *caster_anim = anims.items;
+				for (u32 i = 0; i < anims.len; ++i, ++caster_anim) {
+					if (caster_anim->entity_id == e_id) {
+						break;
+					}
+				}
+				ASSERT(caster_anim->entity_id == e_id);
+				caster_anim->world_coords = anim->blink.target;
+				anims.remove(i);
 			}
 			break;
 		}
@@ -2382,12 +2530,6 @@ void hand_calc_deltas(f32* deltas, Hand_Params* params, u32 selected_card)
 	}
 }
 
-enum Card_Anim_State_Type
-{
-	CARD_ANIM_STATE_DRAWING,
-	CARD_ANIM_STATE_SELECT,
-};
-
 struct Card_Hand_Pos
 {
 	f32 angle;
@@ -2469,7 +2611,6 @@ struct Card_Anim
 #define MAX_CARD_ANIMS 1024
 struct Card_Anim_State
 {
-	Card_Anim_State_Type state;
 	Hand_Params          hand_params;
 	u32                  hand_size;
 	u32                  highlighted_card_id;
@@ -3082,6 +3223,7 @@ enum Card_Param_Type
 {
 	CARD_PARAM_TARGET,
 	CARD_PARAM_CREATURE,
+	CARD_PARAM_AVAILABLE_TILE,
 };
 
 struct Card_Param
@@ -3094,6 +3236,10 @@ struct Card_Param
 		struct {
 			Entity_ID *id;
 		} creature;
+		struct {
+			Entity_ID  entity_id;
+			Pos       *dest;
+		} available_tile;
 	};
 };
 
@@ -3231,6 +3377,37 @@ void build_level_anim_test(Program* program)
 	world_anim_init(&program->world_anim, &program->game);
 }
 
+void build_deck_random_100(Program *program)
+{
+	// cards
+	Card_State *card_state = &program->game.card_state;
+	Card_Anim_State *card_anim_state = &program->card_anim_state;
+	memset(card_state, 0, sizeof(*card_state));
+	memset(card_anim_state, 0, sizeof(*card_anim_state));
+
+	for (u32 i = 0; i < 100; ++i) {
+		Card card = {};
+		card.id = i + 1;
+		card.appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
+		card_state->discard.append(card);
+	}
+}
+
+void build_deck_poison(Program *program)
+{
+	Card_State *card_state = &program->game.card_state;
+	Card_Anim_State *card_anim_state = &program->card_anim_state;
+	memset(card_state, 0, sizeof(*card_state));
+	memset(card_anim_state, 0, sizeof(*card_anim_state));
+
+	for (u32 i = 0; i < 10; ++i) {
+		Card card = {};
+		card.id = i + 1;
+		card.appearance = CARD_APPEARANCE_POISON;
+		card_state->discard.append(card);
+	}
+}
+
 void program_init(Program* program, Platform_Functions platform_functions)
 {
 	memset(program, 0, sizeof(*program));
@@ -3256,15 +3433,7 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	program->draw.boxy_bold.tex_data = boxy_bold_pixel_data;
 
 	build_level_default(program);
-
-	u32 deck_size = 100;
-	Card_State *card_state = &program->game.card_state;
-	for (u32 i = 0; i < deck_size; ++i) {
-		Card card = {};
-		card.id = i + 1;
-		card.appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
-		card_state->discard.append(card);
-	}
+	build_deck_random_100(program);
 
 	// program->sound.set_ambience(SOUND_CAVE_AMBIENCE);
 
@@ -3645,16 +3814,26 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		switch (card_event.type) {
 		case CARD_UI_EVENT_NONE:
 			break;
-		case CARD_UI_EVENT_DECK_CLICKED:
-			card_state->draw();
+		case CARD_UI_EVENT_DECK_CLICKED: {
+			Action_Buffer actions;
+			card_state_draw(card_state, &program->game, &actions);
+			program->sound.play(SOUND_DEAL_CARD);
+			player_action.type = ACTION_WAIT;
+			if (actions) {
+				Event_Buffer events;
+				events.reset();
+				game_simulate_actions(&program->game, actions, &events);
+				world_anim_build_events_to_be_animated(&program->world_anim, &events);
+			}
+			break;
+		}
+		case CARD_UI_EVENT_DISCARD_CLICKED: {
+			Action_Buffer actions;
+			card_state_draw(card_state, &program->game, &actions);
 			program->sound.play(SOUND_DEAL_CARD);
 			player_action.type = ACTION_WAIT;
 			break;
-		case CARD_UI_EVENT_DISCARD_CLICKED:
-			card_state->draw();
-			program->sound.play(SOUND_DEAL_CARD);
-			player_action.type = ACTION_WAIT;
-			break;
+		}
 		case CARD_UI_EVENT_HAND_CLICKED: {
 			u32 card_id = card_event.hand.card_id;
 			u32 hand_index = card_state->hand.len;
@@ -3725,6 +3904,31 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				param.creature.id = &program->action_being_built.exchange.a;
 				program->card_params_stack.push(param);
 				param.creature.id = &program->action_being_built.exchange.b;
+				program->card_params_stack.push(param);
+				program->program_input_state_stack.push(GIS_CARD_PARAMS);
+
+				break;
+			}
+			case CARD_APPEARANCE_BLINK: {
+				Card_Event card_event = {};
+				card_event.type = CARD_EVENT_HAND_TO_IN_PLAY;
+				card_event.hand_to_in_play.card_id = card_id;
+				card_state->events.append(card_event);
+
+				card_state->hand.remove(hand_index);
+				card_state->in_play.append(*card);
+
+				Controller *c = &program->game.controllers.items[0];
+				ASSERT(c->type == CONTROLLER_PLAYER);
+				Entity *player = game_get_entity_by_id(&program->game,
+				                                       c->player.entity_id);
+				program->action_being_built.type = ACTION_BLINK;
+				program->action_being_built.blink.caster = player->id;
+
+				Card_Param param = {};
+				param.type = CARD_PARAM_AVAILABLE_TILE;
+				param.available_tile.entity_id = player->id;
+				param.available_tile.dest = &program->action_being_built.blink.target;
 				program->card_params_stack.push(param);
 				program->program_input_state_stack.push(GIS_CARD_PARAMS);
 
@@ -3804,6 +4008,31 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 			break;
 		}
+		case CARD_PARAM_AVAILABLE_TILE: {
+			sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, 0);
+			Pos target;
+			if (sprite_id < MAX_ENTITIES) {
+				Entity *e = game_get_entity_by_id(&program->game, sprite_id);
+				if (!e) {
+					break;
+				}
+				target = e->pos;
+			} else {
+				target = u16_to_pos(sprite_id - MAX_ENTITIES);
+			}
+			Entity *mover_e = game_get_entity_by_id(&program->game,
+			                                        param->available_tile.entity_id);
+			ASSERT(mover_e);
+			if (!game_is_passable(&program->game, target, mover_e->movement_type)) {
+				break;
+			}
+			sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
+			if (input_get_num_up_transitions(input, INPUT_BUTTON_MOUSE_LEFT)) {
+				*param->available_tile.dest = target;
+				program->card_params_stack.pop();
+			}
+			break;
+		}
 		}
 
 		if (!program->card_params_stack) {
@@ -3876,6 +4105,15 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 			if (imgui_button(&program->imgui, "anim test")) {
 				build_level_anim_test(program);
+			}
+			imgui_tree_end(&program->imgui);
+		}
+		if (imgui_tree_begin(&program->imgui, "cards")) {
+			if (imgui_button(&program->imgui, "random 100")) {
+				build_deck_random_100(program);
+			}
+			if (imgui_button(&program->imgui, "poison")) {
+				build_deck_poison(program);
 			}
 			imgui_tree_end(&program->imgui);
 		}
