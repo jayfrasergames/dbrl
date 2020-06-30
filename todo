@@ -1,7 +1,4 @@
 * tasks:
-  * animation block processing
-    * do turn after player casts fireball
-    * poison take damage after draw as first block, enemy turn as second block
   * variable move duration depending on user input frequency
     * animation "speeding up" when moves made rapidly
   * improve imgui
@@ -22,7 +19,6 @@
 
 * scenarios:
   * invisible wall
-  * draw poison card/take damage/get additional poison card
   * fireball hits barrels, chain reaction
   * enemies
     * slime, splitting
@@ -30,17 +26,24 @@
     * spiders (traps)
   * doors
   * spells/cards
-    * poison card (take damage, anims etc)
-    * teleport sphere (chaos sphere?)
     * magic missile
-    * lightning (bounces of walls etc)
     * fireball
+    * lightning (bounces off walls etc)
+    * teleport sphere (chaos sphere?)
     * cloud/grease
     * freeze
     * flesh to stone
+    * disease (card can't be discarded)
   * improve anims etc
     * exchange
+      * cast sound
+      * "particle" effects
     * blink
+      * cast sound
+      * "particle" effects
+    * poison card (take damage, anims etc)
+      * card flash
+      * sound effect
 
 * features
   * game

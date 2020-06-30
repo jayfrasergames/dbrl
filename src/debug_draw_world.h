@@ -74,7 +74,7 @@ void debug_draw_world_arrow(v2 start, v2 end)
 	ASSERT(debug_draw_world_context);
 	ASSERT((start.x != end.x) || (start.y != end.y));
 	v2 dir = end - start;
-	f32 angle = atan2(dir.y, dir.x);
+	f32 angle = atan2f(dir.y, dir.x);
 	m2 rot = m2::rotation(angle);
 
 	v2 end_offset = end + 0.5f;
@@ -109,7 +109,7 @@ void debug_draw_world_circle(v2 center, f32 radius)
 	center = center + 0.5f;
 	v2 v = V2_f32(radius, 0.0f);
 
-	m2 m = m2::rotation(2.0f * PI / (f32)(4 * num_points));
+	m2 m = m2::rotation(2.0f * PI_F32 / (f32)(4 * num_points));
 
 	Debug_Draw_World_Triangle t = {};
 	t.color = debug_draw_world_context->current_color;

@@ -37,6 +37,7 @@ echo build_debug_runner
 
 cl ..\src\main_win32.cpp ^
 	user32.lib ^
+	/W3 ^
 	/I ..\src ^
 	/Fe: %project_name%_d.exe ^
 	/Fd: %project_name%_d.pdb ^
@@ -65,6 +66,7 @@ set day_str=%date_str:~0,2%
 set time_str=%year_str%-%mon_str%-%day_str%-%hour_str%-%min_str%-%sec_str%
 
 cl ..\src\dbrl.cpp ^
+	/W3 ^
 	/I ..\src ^
 	/Fe: %project_name%_d.dll ^
 	/Fd: pdb\%project_name%_lib_d_%time_str%_2.pdb ^
@@ -120,6 +122,7 @@ echo build_debug_release
 
 cl ..\src\main_win32.cpp ^
 	user32.lib ^
+	/W3 ^
 	/I ..\src ^
 	/Fe: %project_name%.exe ^
 	/Ot /MT ^

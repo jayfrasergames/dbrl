@@ -120,8 +120,8 @@ void pixel_art_upsampler_d3d11_draw(Pixel_Art_Upsampler*       pixel_art_upsampl
 	dc->CSSetConstantBuffers(0, 1, &pau_d3d11->constant_buffer);
 	dc->CSSetShader(pau_d3d11->upsampler, NULL, 0);
 
-	dc->Dispatch((output_size.w + PIXEL_ART_UPSAMPLER_WIDTH  - 1) / PIXEL_ART_UPSAMPLER_WIDTH,
-	             (output_size.h + PIXEL_ART_UPSAMPLER_HEIGHT - 1) / PIXEL_ART_UPSAMPLER_HEIGHT,
+	dc->Dispatch(((u32)output_size.w + PIXEL_ART_UPSAMPLER_WIDTH  - 1) / PIXEL_ART_UPSAMPLER_WIDTH,
+	             ((u32)output_size.h + PIXEL_ART_UPSAMPLER_HEIGHT - 1) / PIXEL_ART_UPSAMPLER_HEIGHT,
 	             1);
 
 	ID3D11UnorderedAccessView *null_uav = NULL;

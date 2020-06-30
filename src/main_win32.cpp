@@ -50,7 +50,7 @@ DWORD __stdcall start_thread_aux(void* uncast_args)
 	return 1;
 }
 
-void start_thread(Thread_Function thread_function, void* thread_args)
+void win32_start_thread(Thread_Function thread_function, void* thread_args)
 {
 	Start_Thread_Aux_Args *args = (Start_Thread_Aux_Args*)malloc(sizeof(Start_Thread_Aux_Args));
 	args->thread_function = thread_function;
@@ -64,7 +64,7 @@ void start_thread(Thread_Function thread_function, void* thread_args)
 		NULL);
 }
 
-void sleep(u32 time_in_milliseconds)
+void win32_sleep(u32 time_in_milliseconds)
 {
 	Sleep(time_in_milliseconds);
 }
@@ -372,8 +372,8 @@ DWORD __stdcall game_loop(void *uncast_args)
 	prev_screen_size = screen_size;
 
 	Platform_Functions platform_functions = {};
-	platform_functions.start_thread = start_thread;
-	platform_functions.sleep = sleep;
+	platform_functions.start_thread = win32_start_thread;
+	platform_functions.sleep = win32_sleep;
 	program_init(program, platform_functions);
 	u8 d3d11_init_success = program_d3d11_init(program, device, screen_size);
 
@@ -476,7 +476,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		POINT point;
 		if (GetCursorPos(&point) && ScreenToClient(window, &point)) {
-			if (point.x < screen_size.x && point.y < screen_size.y) {
+			if (point.x < (i32)screen_size.x && point.y < (i32)screen_size.y) {
 				mouse_pos = { (u32)point.x, (u32)point.y };
 			} else {
 				mouse_pos = prev_mouse_pos;

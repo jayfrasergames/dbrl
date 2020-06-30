@@ -238,6 +238,7 @@ struct Entity
 	Pos           pos;
 	Appearance    appearance;
 	i32           hit_points;
+	i32           max_hit_points;
 };
 
 enum Controller_Type
@@ -1417,6 +1418,7 @@ void game_build_from_string(Game* game, char* str)
 
 			Entity e = {};
 			e.hit_points = 1;
+			e.max_hit_points = 1;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = rand_u32() % 2 ?
@@ -1438,6 +1440,7 @@ void game_build_from_string(Game* game, char* str)
 
 			Entity e = {};
 			e.hit_points = 100;
+			e.max_hit_points = 100;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = APPEARANCE_CREATURE_RED_DRAGON;
@@ -1460,6 +1463,7 @@ void game_build_from_string(Game* game, char* str)
 
 			Entity e = {};
 			e.hit_points = 1;
+			e.max_hit_points = 1;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = APPEARANCE_ITEM_TRAP_HEX;
@@ -1492,6 +1496,7 @@ void game_build_from_string(Game* game, char* str)
 
 			Entity e = {};
 			e.hit_points = 100;
+			e.max_hit_points = 100;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
@@ -1509,6 +1514,7 @@ void game_build_from_string(Game* game, char* str)
 
 			Entity e = {};
 			e.hit_points = 5;
+			e.max_hit_points = 5;
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.movement_type = BLOCK_FLY;
@@ -1693,16 +1699,27 @@ struct World_Anim_State
 	Max_Length_Array<Anim, MAX_ANIMS> anims;
 	f32                               dynamic_anim_start_time;
 	u32                               anim_block_number;
-	u32                               total_anim_blocks;
 	u32                               event_buffer_idx;
 	Event_Buffer                      events_to_be_animated;
 	v2                                camera_offset;
 };
 
+u8 world_anim_is_animating(World_Anim_State *world_anim)
+{
+	auto& anims = world_anim->anims;
+	for (u32 i = 0; i < anims.len; ++i) {
+		if (anim_is_active(&anims[i])) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Event_Buffer* event_buffer)
 {
 	u32 num_events = event_buffer->len;
-	u32 cur_block_number = 0;
+	u32 new_blocks = 0;
+	u32 cur_block_number = world_anim->anim_block_number;
 	Event_Buffer *dest = &world_anim->events_to_be_animated;
 	u8 prev_event_is_blocking = 1;
 	for (u32 i = 0; i < num_events; ++i) {
@@ -1711,14 +1728,12 @@ void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Event_
 		prev_event_is_blocking = event_type_is_blocking(cur_event->type);
 		if (create_new_block) {
 			++cur_block_number;
+			++new_blocks;
 		}
-		dest->items[i] = *cur_event;
-		dest->items[i].block_id = cur_block_number;
+		cur_event->block_id = cur_block_number;
+		dest->append(*cur_event);
 	}
-	world_anim->anim_block_number = 1;
-	world_anim->total_anim_blocks = cur_block_number;
-	world_anim->event_buffer_idx = 0;
-	dest->len = num_events;
+	world_anim->anim_block_number = cur_block_number;
 }
 
 void world_anim_animate_next_event_block(World_Anim_State* world_anim)
@@ -1726,8 +1741,13 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 	u32 num_anims = world_anim->anims.len;
 	u32 event_idx = world_anim->event_buffer_idx;
 	u32 num_events = world_anim->events_to_be_animated.len;
-	u32 cur_block_id = world_anim->anim_block_number++;
 	Event *events = world_anim->events_to_be_animated.items;
+
+	if (event_idx >= num_events) {
+		return;
+	}
+
+	u32 cur_block_id = events[event_idx].block_id;
 
 	auto& anims = world_anim->anims;
 
@@ -1879,31 +1899,11 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 		++event_idx;
 	}
 
-	world_anim->event_buffer_idx = event_idx;
-}
-
-void world_anim_do_events(World_Anim_State* world_anim, Event_Buffer* event_buffer, f32 time)
-{
-	u32 num_anims = world_anim->anims.len;
-	u32 num_events = event_buffer->len;
-	for (u32 i = 0; i < num_events; ++i) {
-		Event *event = &event_buffer->items[i];
-		switch (event->type) {
-		case EVENT_MOVE:
-			for (u32 i = 0; i < num_anims; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->move.entity_id) {
-					anim->type = ANIM_MOVE;
-					anim->move.duration = constants.anims.move.duration;
-					anim->move.start_time = time;
-					anim->move.start.x = (f32)event->move.start.x;
-					anim->move.start.y = (f32)event->move.start.y;
-					anim->move.end.x   = (f32)event->move.end.x;
-					anim->move.end.y   = (f32)event->move.end.y;
-				}
-			}
-			break;
-		}
+	if (event_idx < num_events) {
+		world_anim->event_buffer_idx = event_idx;
+	} else {
+		world_anim->events_to_be_animated.len = 0;
+		world_anim->event_buffer_idx = 0;
 	}
 }
 
@@ -2058,9 +2058,6 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 
 		}
 	}
-
-	// ASSERT(anim_idx < MAX_ANIMS);
-	// world_anim->num_anims = anim_idx;
 }
 
 void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sound_player, f32 time)
@@ -2188,10 +2185,15 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 	}
 
 	// prepare next events if we're still animating
-	if (!active_anims_remaining && world_anim->anim_block_number <= world_anim->total_anim_blocks) {
-		world_anim_animate_next_event_block(world_anim);
-		world_anim->dynamic_anim_start_time = time;
-		dyn_time = 0.0f;
+	if (!active_anims_remaining) {
+		if (world_anim->event_buffer_idx < world_anim->events_to_be_animated.len) {
+			world_anim_animate_next_event_block(world_anim);
+			world_anim->dynamic_anim_start_time = time;
+			dyn_time = 0.0f;
+		} else {
+			world_anim->event_buffer_idx = 0;
+			world_anim->events_to_be_animated.reset();
+		}
 	}
 
 
@@ -2224,7 +2226,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 
 			v2 sprite_pos = anim->sprite_coords;
 			f32 dt = time + anim->idle.offset;
-			dt = fmod(dt, anim->idle.duration) / anim->idle.duration;
+			dt = fmodf(dt, anim->idle.duration) / anim->idle.duration;
 			if (dt > 0.5f) {
 				sprite_pos.y += 1.0f;
 			}
@@ -2402,7 +2404,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 	}
 
 	if (camera_offset_mag > 0.0f) {
-		f32 theta = uniform_f32(0.0f, 2.0f * PI);
+		f32 theta = uniform_f32(0.0f, 2.0f * PI_F32);
 		m2 m = m2::rotation(theta);
 		v2 v = m * V2_f32(camera_offset_mag, 0.0f);
 		world_anim->camera_offset = v;
@@ -2448,7 +2450,7 @@ void hand_params_calc(Hand_Params* params)
 		radius = 1.0f;
 	} else {
 		f32 theta_low = 0;
-		f32 theta_high = PI / 2.0f;
+		f32 theta_high = PI_F32 / 2.0f;
 		while (theta_high - theta_low > 1e-6f) {
 			f32 theta_mid = (theta_high + theta_low) / 2.0f;
 			f32 val = theta_mid / (1.0f - cosf(theta_mid / 2.0f));
@@ -2472,12 +2474,11 @@ void hand_params_calc(Hand_Params* params)
 		if (radius * sinf(theta / 2.0f) + card_diagonal * sinf(theta / 2.0f + psi) > max_width) {
 			target = max_width / h;
 			theta_low = 0;
-			theta_high = PI / 2.0f;
+			theta_high = PI_F32 / 2.0f;
 			while (theta_high - theta_low > 1e-6f) {
 				f32 theta_mid = (theta_high + theta_low) / 2.0f;
 				f32 val = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f))
 					+ (card_diagonal / h) * sinf(theta_mid / 2.0f + psi);
-				f32 val_2 = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f));
 				if (val < target) {
 					theta_high = theta_mid;
 				} else {
@@ -2708,13 +2709,13 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 
 			u32 hand_index = anim->draw.hand_index;
 			f32 theta = hand_params.theta;
-			f32 base_angle = PI / 2.0f + theta * (0.5f - (f32)hand_index * base_delta);
+			f32 base_angle = PI_F32 / 2.0f + theta * (0.5f - (f32)hand_index * base_delta);
 
 			f32 a = base_angle + deltas[hand_index];
 			f32 r = hand_params.radius;
 
 			v2 end_pos = r * V2_f32(cosf(a), sinf(a)) + hand_params.center;
-			f32 end_rotation = a - PI / 2.0f;
+			f32 end_rotation = a - PI_F32 / 2.0f;
 
 			f32 dt = (time - anim->draw.start_time) / anim->draw.duration;
 			dt = clamp(dt, 0.0f, 1.0f);
@@ -2737,7 +2738,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 		case CARD_ANIM_IN_HAND: {
 			u32 hand_index = anim->hand.index;
 			f32 theta = hand_params.theta;
-			f32 base_angle = PI / 2.0f + theta * (0.5f - (f32)hand_index * base_delta);
+			f32 base_angle = PI_F32 / 2.0f + theta * (0.5f - (f32)hand_index * base_delta);
 
 			anim->pos.z_offset = (f32)anim->hand.index / hand_params.num_cards;
 			anim->pos.type = CARD_POS_HAND;
@@ -2770,7 +2771,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			v2 start_pos = r2 * V2_f32(cosf(a), sinf(a));
 			start_pos.x += hand_params.center.x;
 			start_pos.y += hand_params.top - r;
-			f32 start_angle = a - PI / 2.0f;
+			f32 start_angle = a - PI_F32 / 2.0f;
 			f32 start_zoom = z;
 
 			v2 end_pos = V2_f32(ratio - hand_params.border / 2.0f,
@@ -2833,7 +2834,7 @@ void card_anim_create_hand_to_hand_anims(Card_Anim_State* card_anim_state,
 		before_pos.angle = anim->pos.hand.angle;
 		before_pos.zoom = anim->pos.hand.zoom;
 
-		f32 base_angle = PI/2.0f + params->hand_params.theta
+		f32 base_angle = PI_F32 / 2.0f + params->hand_params.theta
 		               * (0.5f - (f32)hand_index * base_delta);
 		Card_Hand_Pos after_pos = {};
 		after_pos.angle = base_angle + deltas[hand_index];
@@ -2951,7 +2952,7 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 
 	if (do_hand_to_hand) {
 		Hand_Params hand_params = card_anim_state->hand_params;
-		hand_params.num_cards = card_anim_state->hand_size;
+		hand_params.num_cards = (f32)card_anim_state->hand_size;
 		hand_params_calc(&hand_params);
 
 		Hand_To_Hand_Anim_Params after_params = {};
@@ -3140,7 +3141,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			v2 pos = r2 * V2_f32(cosf(a), sinf(a));
 			pos.y += params->top - r;
 
-			instance.screen_rotation = anim->pos.hand.angle - PI / 2.0f;
+			instance.screen_rotation = anim->pos.hand.angle - PI_F32 / 2.0f;
 			instance.screen_pos = pos;
 			instance.card_pos = anim->card_face;
 			instance.card_id = anim->card_id;
@@ -3162,7 +3163,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		switch (anim->type) {
 		case CARD_ANIM_DRAW: {
 			f32 dt = (time - anim->draw.start_time) / anim->draw.duration;
-			instance.horizontal_rotation = (1.0f - dt) * PI;
+			instance.horizontal_rotation = (1.0f - dt) * PI_F32;
 			break;
 		}
 		}
@@ -3210,12 +3211,24 @@ enum Program_State
 	PROGRAM_STATE_NO_PAUSE,
 };
 
+#define PROGRAM_INPUT_STATES \
+	PROGRAM_INPUT_STATE(NONE) \
+	PROGRAM_INPUT_STATE(DRAGGING_MAP) \
+	PROGRAM_INPUT_STATE(CARD_PARAMS) \
+	PROGRAM_INPUT_STATE(ANIMATING)
+
 #define MAX_PROGRAM_INPUT_STATES 32
 enum Program_Input_State
 {
-	GIS_NONE,
-	GIS_DRAGGING_MAP,
-	GIS_CARD_PARAMS,
+#define PROGRAM_INPUT_STATE(name) GIS_##name,
+	PROGRAM_INPUT_STATES
+#undef PROGRAM_INPUT_STATE
+};
+
+char *PROGRAM_INPUT_STATE_NAMES[] = {
+#define PROGRAM_INPUT_STATE(name) #name,
+	PROGRAM_INPUT_STATES
+#undef PROGRAM_INPUT_STATE
 };
 
 #define MAX_CARD_PARAMS 32
@@ -3731,6 +3744,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	// process input
 	switch (program->program_input_state_stack.peek()) {
+	case GIS_ANIMATING:
 	case GIS_CARD_PARAMS:
 	case GIS_NONE:
 		if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags & INPUT_BUTTON_FLAG_ENDED_DOWN) {
@@ -3756,6 +3770,11 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	f32 time = (f32)program->frame_number / 60.0f;
 	world_anim_draw(&program->world_anim, &program->draw, &program->sound, time);
 	program->draw.camera.offset = program->world_anim.camera_offset;
+
+	if (program->program_input_state_stack.peek() == GIS_ANIMATING
+	 && !world_anim_is_animating(&program->world_anim)) {
+		program->program_input_state_stack.pop();
+	}
 
 	v2_i32 world_mouse_pos = (v2_i32)screen_pos_to_world_pos(&program->draw.camera,
 	                                                         screen_size,
@@ -3805,6 +3824,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 	switch (program->program_input_state_stack.peek()) {
+	case GIS_ANIMATING:
+		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, 0);
+		break;
 	case GIS_NONE: {
 		Action player_action = {};
 		player_action.type = ACTION_NONE;
@@ -3824,6 +3846,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				events.reset();
 				game_simulate_actions(&program->game, actions, &events);
 				world_anim_build_events_to_be_animated(&program->world_anim, &events);
+				program->program_input_state_stack.push(GIS_ANIMATING);
 			}
 			break;
 		}
@@ -3972,6 +3995,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			Event_Buffer event_buffer;
 			game_do_turn(&program->game, &event_buffer);
 			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
+			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
 
 		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
@@ -4046,16 +4070,48 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			                      slice_one(&program->action_being_built),
 			                      &event_buffer);
 			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
-			// c->player.action.type = ACTION_WAIT;
-			// game_do_turn(&program->game, &event_buffer);
-			// world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
+			c->player.action.type = ACTION_WAIT;
+			game_do_turn(&program->game, &event_buffer);
+			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
 			program->program_input_state_stack.pop();
+			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
 		break;
 	}
 	case GIS_DRAGGING_MAP:
 		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, 0);
 		break;
+	}
+
+	// do sprite tooltip
+	if (sprite_id && sprite_id < MAX_ENTITIES) {
+		Entity *e = game_get_entity_by_id(&program->game, sprite_id);
+		if (e) {
+			char buffer[1024];
+			snprintf(buffer, ARRAY_SIZE(buffer), "%d/%d", e->hit_points, e->max_hit_points);
+
+			u32 width = 1, height = 0;
+			for (u8 *p = (u8*)buffer; *p; ++p) {
+				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
+				width += glyph.dimensions.w - 1;
+				height = max(height, glyph.dimensions.h);
+			}
+
+			Sprite_Sheet_Font_Instance instance = {};
+			instance.world_pos = (v2)e->pos + V2_f32(0.5f, -0.25f);
+			instance.world_offset = { -(f32)(width / 2), -(f32)(height / 2) };
+			instance.zoom = 1.0f;
+			instance.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
+			for (u8 *p = (u8*)buffer; *p; ++p) {
+				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
+				instance.glyph_pos = (v2)glyph.top_left;
+				instance.glyph_size = (v2)glyph.dimensions;
+
+				sprite_sheet_font_instances_add(&program->draw.boxy_bold, instance);
+
+				instance.world_offset.x += (f32)glyph.dimensions.w - 1.0f;
+			}
+		}
 	}
 
 	// imgui
@@ -4097,6 +4153,16 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				program->draw.camera.world_center.x,
 				program->draw.camera.world_center.y);
 			imgui_text(&program->imgui, buffer);
+			// draw input state stack
+			{
+				imgui_text(&program->imgui, "Program Input State Stack:");
+				auto& state_stack = program->program_input_state_stack;
+				for (u32 i = 0; i < state_stack.top; ++i) {
+					snprintf(buffer, ARRAY_SIZE(buffer), "    State: %s",
+					         PROGRAM_INPUT_STATE_NAMES[state_stack.items[i]]);
+					imgui_text(&program->imgui, buffer);
+				}
+			}
 			imgui_tree_end(&program->imgui);
 		}
 		if (imgui_tree_begin(&program->imgui, "levels")) {
@@ -4211,6 +4277,7 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	sprite_sheet_instances_d3d11_draw(&program->draw.creatures, dc, screen_size_u32);
 	sprite_sheet_instances_d3d11_draw(&program->draw.water_edges, dc, screen_size_u32);
 	sprite_sheet_instances_d3d11_draw(&program->draw.effects_32, dc, screen_size_u32);
+	sprite_sheet_renderer_d3d11_highlight_sprite(&program->draw.renderer, dc);
 	sprite_sheet_renderer_d3d11_begin_font(&program->draw.renderer, dc);
 	sprite_sheet_font_instances_d3d11_draw(&program->draw.boxy_bold, dc, screen_size_u32);
 	sprite_sheet_renderer_d3d11_end(&program->draw.renderer, dc);

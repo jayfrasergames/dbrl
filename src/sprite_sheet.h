@@ -125,6 +125,8 @@ void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer,
                                 v2_u32 size);
 u32 sprite_sheet_renderer_id_in_pos(Sprite_Sheet_Renderer* renderer, v2_u32 pos);
 void sprite_sheet_renderer_highlight_sprite(Sprite_Sheet_Renderer* renderer, u32 sprite_id);
+void sprite_sheet_renderer_d3d11_highlight_sprite(Sprite_Sheet_Renderer* renderer,
+                                                  ID3D11DeviceContext*   dc);
 
 void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances);
 void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_Instance instance);
@@ -961,25 +963,22 @@ void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Font_Instances* instanc
 	dc->DrawInstanced(6, instances->instances.len, 0, 0);
 }
 
-void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
-                                     ID3D11DeviceContext*    dc)
+void sprite_sheet_renderer_d3d11_highlight_sprite(Sprite_Sheet_Renderer* renderer,
+                                                  ID3D11DeviceContext*   dc)
 {
-	// TODO -- set the viewport
-
-	dc->VSSetShader(NULL, NULL, 0);
-	dc->PSSetShader(NULL, NULL, 0);
-
 	ID3D11RenderTargetView *rtvs[] = { NULL, NULL };
-	dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, NULL);
 	ID3D11ShaderResourceView *null_srv = NULL;
+	ID3D11UnorderedAccessView *null_uav = NULL;
+
+	dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, NULL);
 	dc->VSSetShaderResources(0, 1, &null_srv);
 	dc->PSSetShaderResources(0, 1, &null_srv);
 
 	Sprite_Sheet_Highlight_Constant_Buffer constant_buffer = {};
 	constant_buffer.highlight_color = { 1.0f, 0.0f, 0.0f, 1.0f };
 	constant_buffer.sprite_id = renderer->highlighted_sprite;
-
 	HRESULT hr;
+
 	D3D11_MAPPED_SUBRESOURCE mapped_resource;
 	hr = dc->Map(renderer->d3d11.highlight_constant_buffer,
 	             0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource);
@@ -999,9 +998,23 @@ void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
 	ID3D11Buffer *null_cb = NULL;
 	dc->CSSetConstantBuffers(0, 1, &null_cb);
 	dc->CSSetShaderResources(0, 1, &null_srv);
-	ID3D11UnorderedAccessView *null_uav = NULL;
 	dc->CSSetUnorderedAccessViews(0, 1, &null_uav, NULL);
 	dc->CSSetShader(NULL, NULL, 0);
+}
+
+void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
+                                     ID3D11DeviceContext*    dc)
+{
+	// TODO -- set the viewport
+
+	dc->VSSetShader(NULL, NULL, 0);
+	dc->PSSetShader(NULL, NULL, 0);
+
+	ID3D11RenderTargetView *rtvs[] = { NULL, NULL };
+	dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, NULL);
+	ID3D11ShaderResourceView *null_srv = NULL;
+	dc->VSSetShaderResources(0, 1, &null_srv);
+	dc->PSSetShaderResources(0, 1, &null_srv);
 }
 
 #endif // JFG_HEADER_ONLY
