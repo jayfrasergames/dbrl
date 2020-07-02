@@ -149,6 +149,7 @@ enum Event_Type
 	EVENT_DEATH,
 	EVENT_EXCHANGE,
 	EVENT_BLINK,
+	EVENT_SLIME_SPLIT,
 };
 
 struct Event
@@ -196,6 +197,12 @@ struct Event
 			Entity_ID caster_id;
 			Pos       target;
 		} blink;
+		struct {
+			Entity_ID original_id;
+			Entity_ID new_id;
+			v2 start;
+			v2 end;
+		} slime_split;
 	};
 };
 
@@ -217,6 +224,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_DEATH: return 0;
 	case EVENT_EXCHANGE: return 0;
 	case EVENT_BLINK: return 0;
+	case EVENT_SLIME_SPLIT: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -247,6 +255,7 @@ enum Controller_Type
 	CONTROLLER_RANDOM_MOVE,
 	CONTROLLER_RANDOM_SNAKE,
 	CONTROLLER_DRAGON,
+	CONTROLLER_SLIME,
 
 	NUM_CONTROLLERS,
 };
@@ -272,6 +281,10 @@ struct Controller
 		struct {
 			Entity_ID entity_id;
 		} dragon;
+		struct {
+			Entity_ID entity_id;
+			u32       split_cooldown;
+		} slime;
 	};
 };
 
@@ -335,6 +348,7 @@ enum Message_Type : u32
 	MESSAGE_MOVE_POST_EXIT  = 1 << 1,
 	MESSAGE_MOVE_PRE_ENTER  = 1 << 2,
 	MESSAGE_MOVE_POST_ENTER = 1 << 3,
+	MESSAGE_DAMAGE          = 1 << 4,
 };
 
 struct Message
@@ -346,6 +360,11 @@ struct Message
 			Pos       start;
 			Pos       end;
 		} move;
+		struct {
+			Entity_ID entity_id;
+			i32       amount;
+			u8        entity_died;
+		} damage;
 	};
 };
 
@@ -355,6 +374,7 @@ enum Message_Handler_Type
 	MESSAGE_HANDLER_PREVENT_ENTER,
 	MESSAGE_HANDLER_DROP_TILE,
 	MESSAGE_HANDLER_TRAP_FIREBALL,
+	MESSAGE_HANDLER_SLIME_SPLIT,
 };
 
 struct Message_Handler
@@ -388,8 +408,7 @@ struct Game
 	u32 cur_block_id;
 	f32 block_time;
 
-	u32 num_entities;
-	Entity entities[MAX_ENTITIES];
+	Max_Length_Array<Entity, MAX_ENTITIES> entities;
 
 	Map_Cache<Tile> tiles;
 
@@ -400,13 +419,42 @@ struct Game
 	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
 };
 
+Entity_ID game_add_slime(Game *game, Pos pos, u32 hit_points)
+{
+	Entity_ID entity_id = game->next_entity_id++;
+
+	Entity e = {};
+	e.hit_points = min(hit_points, 5);
+	e.max_hit_points = 5;
+	e.id = entity_id;
+	e.pos = pos;
+	e.appearance = APPEARANCE_CREATURE_GREEN_SLIME;
+	e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+	e.movement_type = BLOCK_WALK;
+	game->entities.append(e);
+
+	Controller c = {};
+	c.type = CONTROLLER_SLIME;
+	c.slime.entity_id = entity_id;
+	c.slime.split_cooldown = 5;
+	game->controllers.append(c);
+
+	Message_Handler mh = {};
+	mh.type = MESSAGE_HANDLER_SLIME_SPLIT;
+	mh.handle_mask = MESSAGE_DAMAGE;
+	mh.owner_id = entity_id;
+	game->handlers.append(mh);
+
+	return entity_id;
+}
+
 void game_remove_entity(Game* game, Entity_ID entity_id)
 {
-	u32 num_entities = game->num_entities;
-	Entity *e = game->entities;
+	u32 num_entities = game->entities.len;
+	Entity *e = game->entities.items;
 	for (u32 i = 0; i < num_entities; ++i, ++e) {
 		if (e->id == entity_id) {
-			*e = game->entities[--game->num_entities];
+			game->entities.remove(i);
 			break;
 		}
 	}
@@ -437,6 +485,11 @@ void game_remove_entity(Game* game, Entity_ID entity_id)
 				goto break_loop;
 			}
 			break;
+		case CONTROLLER_SLIME:
+			if (c->slime.entity_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
 		}
 	}
 break_loop: ;
@@ -462,7 +515,7 @@ Pos game_get_player_pos(Game* game)
 		}
 	}
 	ASSERT(player_id);
-	for (u32 i = 0; i < game->num_entities; ++i) {
+	for (u32 i = 0; i < game->entities.len; ++i) {
 		Entity *e = &game->entities[i];
 		if (e->id == player_id) {
 			return e->pos;
@@ -474,7 +527,7 @@ Pos game_get_player_pos(Game* game)
 
 Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
 {
-	for (u32 i = 0; i < game->num_entities; ++i) {
+	for (u32 i = 0; i < game->entities.len; ++i) {
 		if (game->entities[i].id == entity_id) {
 			return &game->entities[i];
 		}
@@ -509,8 +562,8 @@ u8 game_is_passable(Game* game, Pos pos, u16 move_mask)
 	if (!tile_is_passable(t, move_mask)) {
 		return 0;
 	}
-	u32 num_entities = game->num_entities;
-	Entity *e = game->entities;
+	u32 num_entities = game->entities.len;
+	Entity *e = game->entities.items;
 	u8 result = 1;
 	for (u32 i = 0; i < num_entities; ++i, ++e) {
 		if (e->pos.x == pos.x && e->pos.y == pos.y) {
@@ -573,7 +626,10 @@ enum Transaction_Type
 	TRANSACTION_BLINK,
 	TRANSACTION_POISON_CAST,
 	TRANSACTION_POISON,
+	TRANSACTION_SLIME_SPLIT,
 };
+
+#define TRANSACTION_EPSILON 1e-6f;
 
 struct Transaction
 {
@@ -610,6 +666,10 @@ struct Transaction
 		struct {
 			Entity_ID entity_id;
 		} poison;
+		struct {
+			Entity_ID slime_id;
+			u32       hit_points;
+		} slime_split;
 	};
 };
 
@@ -683,6 +743,24 @@ void game_dispatch_message(Game*               game,
 				events.append(e);
 			}
 			break;
+		case MESSAGE_HANDLER_SLIME_SPLIT:
+			if (h.owner_id == message.damage.entity_id && !message.damage.entity_died) {
+				Entity *e = game_get_entity_by_id(game, h.owner_id);
+				Pos p = e->pos;
+				/*
+				debug_draw_world_reset();
+				debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+				debug_draw_world_circle((v2)p, 0.25f);
+				debug_pause();
+				*/
+				Transaction t = {};
+				t.type = TRANSACTION_SLIME_SPLIT;
+				t.start_time = time + TRANSACTION_EPSILON;
+				t.slime_split.slime_id = h.owner_id;
+				t.slime_split.hit_points = e->hit_points;
+				transactions.append(t);
+			}
+			break;
 		}
 	}
 }
@@ -693,7 +771,7 @@ void game_dispatch_message(Game*               game,
 
 void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* event_buffer)
 {
-	u32 num_entities = game->num_entities;
+	u32 num_entities = game->entities.len;
 	auto& tiles = game->tiles;
 
 	// =====================================================================
@@ -764,7 +842,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 	Map_Cache_Bool occupied;
 	occupied.reset();
 
-	Entity *entities = game->entities;
+	Entity *entities = game->entities.items;
 	for (u32 i = 0; i < num_entities; ++i) {
 		Entity *e = &entities[i];
 		if (e->block_mask) {
@@ -994,7 +1072,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 					break;
 				}
 
-				u32 num_entities = game->num_entities;
+				u32 num_entities = game->entities.len;
 				for (u32 i = 0; i < num_entities; ++i) {
 					Entity *e = &game->entities[i];
 					if (e->pos != (Pos)pos) {
@@ -1078,10 +1156,10 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				m.move.entity_id = e->id;
 				m.move.start = start;
 				m.move.end = end;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, 0);
+				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
 
 				m.type = MESSAGE_MOVE_POST_ENTER;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, 0);
+				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
 				break;
 			}
 			case TRANSACTION_POISON_CAST: {
@@ -1107,6 +1185,45 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 				break;
 			}
+			case TRANSACTION_SLIME_SPLIT: {
+				t->type = TRANSACTION_REMOVE;
+
+				Entity *e = game_get_entity_by_id(game, t->slime_split.slime_id);
+				if (!e) {
+					break;
+				}
+				Pos p = e->pos;
+				v2_i16 start = (v2_i16)p;
+				Max_Length_Array<Pos, 8> poss;
+				poss.reset();
+				for (i16 dy = -1; dy <= 1; ++dy) {
+					for (i16 dx = -1; dx <= 1; ++dx) {
+						if (!dx && !dy) {
+							continue;
+						}
+						v2_i16 end = start + V2_i16(dx, dy);
+						Pos pend = (Pos)end;
+						if (game_is_passable(game, pend, BLOCK_WALK)) {
+							poss.append((Pos)end);
+						}
+					}
+				}
+				if (poss) {
+					Pos end = poss[rand_u32() % poss.len];
+					Entity_ID new_id = game_add_slime(game,
+					                                  end,
+					                                  t->slime_split.hit_points);
+					Event event = {};
+					event.type = EVENT_SLIME_SPLIT;
+					event.time = time;
+					event.slime_split.original_id = e->id;
+					event.slime_split.new_id = new_id;
+					event.slime_split.start = (v2)start;
+					event.slime_split.end = (v2)end;
+					events.append(event);
+				}
+				break;
+			}
 			}
 		}
 
@@ -1115,8 +1232,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			Entity_Damage *ed = &entity_damage[i];
 			Entity_ID entity_id = ed->entity_id;
 
-			u32 num_entities = game->num_entities;
-			Entity *e = game->entities;
+			u32 num_entities = game->entities.len;
+			Entity *e = game->entities.items;
 			for (u32 i = 0; i < num_entities; ++i, ++e) {
 				if (e->id == entity_id) {
 					break;
@@ -1125,7 +1242,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			ASSERT(e->id == entity_id);
 
 			e->hit_points -= ed->damage;
-			if (e->hit_points <= 0) {
+			u8 entity_died = e->hit_points <= 0;
+			if (entity_died) {
 				Event death_event = {};
 				death_event.type = EVENT_DEATH;
 				death_event.time = time;
@@ -1134,6 +1252,13 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				// *e = game->entities[--game->num_entities];
 				game_remove_entity(game, entity_id);
 			}
+
+			Message m = {};
+			m.type = MESSAGE_DAMAGE;
+			m.damage.entity_id = entity_id;
+			m.damage.amount = ed->damage;
+			m.damage.entity_died = entity_died;
+			game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
 
 			Event event = {};
 			event.type = EVENT_DAMAGED;
@@ -1194,6 +1319,8 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 	Map_Cache_Bool occupied;
 	occupied.reset();
 
+	Pos player_pos = game_get_player_pos(game);
+
 	auto& tiles = game->tiles;
 
 	u32 num_controllers = game->controllers.len;
@@ -1206,6 +1333,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 				pm.entity_id = c->player.entity_id;
 				pm.start = c->player.action.move.start;
 				pm.end = c->player.action.move.end;
+				player_pos = pm.end;
 				// XXX -- weight here should be infinite
 				pm.weight = 10.0f;
 				potential_moves.append(pm);
@@ -1235,12 +1363,41 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 			}
 			break;
 		}
+		case CONTROLLER_SLIME: {
+			Entity *e = game_get_entity_by_id(game, c->slime.entity_id);
+			// Pos p = e->pos;
+			v2_i16 start = (v2_i16)e->pos;
+			v2_i16 iplayer_pos = (v2_i16)player_pos;
+			v2_i16 d = iplayer_pos - start;
+			u32 distance_squared = (u32)(d.x*d.x + d.y*d.y);
+			for (i16 dy = -1; dy <= 1; ++dy) {
+				for (i16 dx = -1; dx <= 1; ++dx) {
+					if (!dx && !dy) {
+						continue;
+					}
+					v2_i16 end = start + (V2_i16)(dx, dy);
+					d = iplayer_pos - end;
+					Pos pend = (Pos)end;
+					Tile t = tiles[pend];
+					if ((u32)(d.x*d.x + d.y*d.y) <= distance_squared
+					 && tile_is_passable(t, e->movement_type)) {
+						Potential_Move pm = {};
+						pm.entity_id = e->id;
+						pm.start = (Pos)start;
+						pm.end = (Pos)end;
+						pm.weight = uniform_f32(1.9f, 2.1f);
+						potential_moves.append(pm);
+					}
+				}
+			}
+			break;
+		}
 		case CONTROLLER_RANDOM_SNAKE:
 			break;
 		}
 	}
 
-	u32 num_entities = game->num_entities;
+	u32 num_entities = game->entities.len;
 	for (u32 i = 0; i < num_entities; ++i) {
 		Entity *e = &game->entities[i];
 		if (e->block_mask) {
@@ -1337,7 +1494,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 		case CONTROLLER_DRAGON: {
 			Entity *e = game_get_entity_by_id(game, c->dragon.entity_id);
 			u16 move_mask = e->movement_type;
-			u32 t_idx = rand_u32() % game->num_entities;
+			u32 t_idx = rand_u32() % game->entities.len;
 			Entity *t = &game->entities[t_idx];
 			Action a = {};
 			a.type = ACTION_FIREBALL;
@@ -1379,7 +1536,6 @@ void game_build_from_string(Game* game, char* str)
 	memset(game, 0, sizeof(*game));
 
 	Pos cur_pos = { 1, 1 };
-	u32 idx = 0;
 	Entity_ID     e_id = 1;
 	Controller_ID c_id = 1;
 
@@ -1423,7 +1579,7 @@ void game_build_from_string(Game* game, char* str)
 			e.pos = cur_pos;
 			e.appearance = rand_u32() % 2 ?
 			               APPEARANCE_ITEM_SPIDERWEB_1 : APPEARANCE_ITEM_SPIDERWEB_2;
-			game->entities[idx++] = e;
+			game->entities.append(e);
 
 			Message_Handler mh = {};
 			mh.type = MESSAGE_HANDLER_PREVENT_EXIT;
@@ -1431,6 +1587,17 @@ void game_build_from_string(Game* game, char* str)
 			mh.owner_id = e.id;
 			mh.prevent_exit.pos = cur_pos;
 			handlers.append(mh);
+
+			break;
+		}
+		case 's': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			// XXX - ugly hack
+			game->next_entity_id = e_id;
+			game_add_slime(game, cur_pos, 5);
+			e_id = game->next_entity_id;
 
 			break;
 		}
@@ -1446,7 +1613,7 @@ void game_build_from_string(Game* game, char* str)
 			e.appearance = APPEARANCE_CREATURE_RED_DRAGON;
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e.movement_type = BLOCK_WALK;
-			game->entities[idx++] = e;
+			game->entities.append(e);
 
 			Controller c = {};
 			c.id = c_id++;
@@ -1467,7 +1634,7 @@ void game_build_from_string(Game* game, char* str)
 			e.id = e_id++;
 			e.pos = cur_pos;
 			e.appearance = APPEARANCE_ITEM_TRAP_HEX;
-			game->entities[idx++] = e;
+			game->entities.append(e);
 
 			Message_Handler mh = {};
 			mh.type = MESSAGE_HANDLER_TRAP_FIREBALL;
@@ -1502,7 +1669,7 @@ void game_build_from_string(Game* game, char* str)
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e.appearance = APPEARANCE_CREATURE_MALE_BERSERKER;
 			e.movement_type = BLOCK_WALK;
-			game->entities[idx++] = e;
+			game->entities.append(e);
 
 			player_controller->player.entity_id = e.id;
 
@@ -1520,7 +1687,7 @@ void game_build_from_string(Game* game, char* str)
 			e.movement_type = BLOCK_FLY;
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e.appearance = APPEARANCE_CREATURE_RED_BAT;
-			game->entities[idx++] = e;
+			game->entities.append(e);
 
 			Controller c = {};
 			c.id = c_id++;
@@ -1539,7 +1706,6 @@ void game_build_from_string(Game* game, char* str)
 		}
 		++cur_pos.x;
 	}
-	game->num_entities = idx;
 	game->next_entity_id = e_id;
 	game->next_controller_id = c_id;
 }
@@ -1606,6 +1772,7 @@ enum Anim_Type
 	ANIM_DEATH,
 	ANIM_EXCHANGE,
 	ANIM_BLINK,
+	ANIM_SLIME_SPLIT,
 };
 
 struct Anim
@@ -1663,6 +1830,14 @@ struct Anim
 			Entity_ID entity_id;
 			v2 target;
 		} blink;
+		struct {
+			f32 time;
+			f32 duration;
+			Entity_ID original_id;
+			Entity_ID new_id;
+			v2 start;
+			v2 end;
+		} slime_split;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -1686,6 +1861,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_DEATH:                return 1;
 	case ANIM_EXCHANGE:             return 1;
 	case ANIM_BLINK:                return 1;
+	case ANIM_SLIME_SPLIT:          return 1;
 	}
 	ASSERT(0);
 	return 0;
@@ -1895,6 +2071,23 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			world_anim->anims.append(anim);
 			break;
 		}
+		case EVENT_SLIME_SPLIT: {
+			Anim anim = {};
+			anim.depth_offset = constants.z_offsets.character;
+			anim.type = ANIM_SLIME_SPLIT;
+			anim.slime_split.time = event->time;
+			anim.slime_split.duration = constants.anims.slime_split.duration;
+			anim.slime_split.original_id = event->slime_split.original_id;
+			anim.slime_split.new_id = event->slime_split.new_id;
+			anim.slime_split.start = event->slime_split.start;
+			anim.slime_split.end = event->slime_split.end;
+			anim.world_coords = event->slime_split.end;
+			anim.entity_id = event->slime_split.new_id;
+			anim.sprite_coords = appearance_get_creature_sprite_coords(
+				APPEARANCE_CREATURE_GREEN_SLIME);
+			world_anim->anims.append(anim);
+			break;
+		}
 		}
 		++event_idx;
 	}
@@ -1910,8 +2103,9 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 void world_anim_init(World_Anim_State* world_anim, Game* game)
 {
 	u32 anim_idx = 0;
+	u32 num_entities = game->entities.len;
 
-	for (u32 i = 0; i < game->num_entities; ++i) {
+	for (u32 i = 0; i < num_entities; ++i) {
 		Entity *e = &game->entities[i];
 		Appearance app = e->appearance;
 		if (!app) {
@@ -2177,6 +2371,15 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				anims.remove(i);
 			}
 			break;
+		case ANIM_SLIME_SPLIT:
+			if (anim->slime_split.time + anim->slime_split.duration <= dyn_time) {
+				anim->entity_id = anim->slime_split.new_id;
+				anim->world_coords = anim->slime_split.end;
+				anim->type = ANIM_CREATURE_IDLE;
+				anim->idle.offset = time;
+				anim->idle.duration = uniform_f32(0.8f, 1.2f);
+			}
+			break;
 		}
 		++i;
 		if (anim_is_active(anim)) {
@@ -2397,6 +2600,39 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 
 			f32 power = anim->camera_shake.power * (dt - 1.0f) * (dt - 1.0f);
 			camera_offset_mag = max(camera_offset_mag, power);
+
+			break;
+		}
+		case ANIM_SLIME_SPLIT: {
+			f32 dt = (dyn_time - anim->slime_split.time) / anim->slime_split.duration;
+			if (dt < 0.0f) {
+				break;
+			}
+			v2 start = anim->slime_split.start;
+			v2 end = anim->slime_split.end;
+			v2 world_pos = lerp(start, end, dt);
+
+			Sprite_Sheet_Instance ci = {};
+
+			// draw shadow
+			ci.y_offset = -3.0f;
+			ci.sprite_pos = { 4.0f, 22.0f };
+			ci.world_pos = world_pos;
+			ci.sprite_id = anim->entity_id;
+			ci.depth_offset = anim->depth_offset;
+			ci.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
+			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			v2 sprite_pos = anim->sprite_coords;
+			if (dt > 0.5f) {
+				sprite_pos.y += 1.0f;
+			}
+			ci.sprite_pos = sprite_pos;
+			ci.y_offset = -6.0f - constants.anims.move.jump_height * 4.0f * dt*(1.0f - dt);
+			ci.world_pos = world_pos;
+			ci.depth_offset += 0.5f;
+
+			sprite_sheet_instances_add(&draw->creatures, ci);
 
 			break;
 		}
@@ -3390,6 +3626,40 @@ void build_level_anim_test(Program* program)
 	world_anim_init(&program->world_anim, &program->game);
 }
 
+void build_level_slime_test(Program* program)
+{
+	game_build_from_string(&program->game,
+		"##############################\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#.............s..............#\n"
+		"#............................#\n"
+		"#........s........s..........#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#......s......@......s.......#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#........s.........s.........#\n"
+		"#.............s..............#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"##############################\n");
+
+	program->draw.camera.zoom = 14.0f;
+	Pos player_pos = game_get_player_pos(&program->game);
+	program->draw.camera.world_center = (v2)player_pos;
+
+	memset(&program->world_anim, 0, sizeof(program->world_anim));
+	world_anim_init(&program->world_anim, &program->game);
+}
+
 void build_deck_random_100(Program *program)
 {
 	// cards
@@ -4131,8 +4401,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			imgui_text(&program->imgui, buffer);
 			Pos sprite_pos;
 			{
-				u32 num_entities = program->game.num_entities;
-				Entity *entities = program->game.entities;
+				u32 num_entities = program->game.entities.len;
+				Entity *entities = program->game.entities.items;
 				for (u32 i = 0; i < num_entities; ++i) {
 					Entity *e = &entities[i];
 					if (e->id == sprite_id) {
@@ -4171,6 +4441,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 			if (imgui_button(&program->imgui, "anim test")) {
 				build_level_anim_test(program);
+			}
+			if (imgui_button(&program->imgui, "slime test")) {
+				build_level_slime_test(program);
 			}
 			imgui_tree_end(&program->imgui);
 		}
