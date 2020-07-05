@@ -5,7 +5,8 @@ typedef void (*Thread_Function)(void* data);
 
 #define PLATFORM_FUNCTIONS \
 	PLATFORM_FUNCTION(void, start_thread, Thread_Function thread_function, void* thread_args) \
-	PLATFORM_FUNCTION(void, sleep, u32 time_in_milliseconds)
+	PLATFORM_FUNCTION(void, sleep, u32 time_in_milliseconds) \
+	PLATFORM_FUNCTION(u32, try_read_file, char* filename, void* dest, u32 max_size)
 
 struct Platform_Functions
 {

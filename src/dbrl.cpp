@@ -8,6 +8,7 @@
 #include "jfg/random.h"
 #include "jfg/thread.h"
 
+#include "assets.h"
 #include "constants.h"
 #include "debug_draw_world.h"
 #include "sound.h"
@@ -1992,7 +1993,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			Anim sound = {};
 			sound.type = ANIM_SOUND;
 			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_FIREBALL_EXPLOSION;
+			sound.sound.sound_id = SOUND_FIRE_SPELL_13;
 			anims.append(sound);
 			break;
 		}
@@ -3539,6 +3540,9 @@ struct Program
 			ID3D11PixelShader*         output_ps;
 		} d3d11;
 	};
+
+	Assets_Header assets_header;
+	u8 assets_data[ASSETS_DATA_MAX_SIZE];
 };
 
 Memory_Spec get_program_size()
@@ -3718,15 +3722,18 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	build_level_default(program);
 	build_deck_random_100(program);
 
-	// program->sound.set_ambience(SOUND_CAVE_AMBIENCE);
+	program->sound.set_ambience(SOUND_CARD_GAME_AMBIENCE_CAVE);
 
 	program->state = PROGRAM_STATE_NORMAL;
 	program->program_input_state_stack.push(GIS_NONE);
+
+	u8 loaded_assets = try_load_assets(&platform_functions, &program->assets_header);
+	ASSERT(loaded_assets);
 }
 
 u8 program_dsound_init(Program* program, IDirectSound* dsound)
 {
-	return sound_player_dsound_init(&program->sound, dsound);
+	return sound_player_dsound_init(&program->sound, &program->assets_header, dsound);
 }
 
 void program_dsound_free(Program* program)
@@ -4109,7 +4116,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		case CARD_UI_EVENT_DECK_CLICKED: {
 			Action_Buffer actions;
 			card_state_draw(card_state, &program->game, &actions);
-			program->sound.play(SOUND_DEAL_CARD);
+			program->sound.play(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01);
 			player_action.type = ACTION_WAIT;
 			if (actions) {
 				Event_Buffer events;
@@ -4123,7 +4130,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		case CARD_UI_EVENT_DISCARD_CLICKED: {
 			Action_Buffer actions;
 			card_state_draw(card_state, &program->game, &actions);
-			program->sound.play(SOUND_DEAL_CARD);
+			program->sound.play(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01);
 			player_action.type = ACTION_WAIT;
 			break;
 		}

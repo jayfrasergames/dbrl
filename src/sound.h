@@ -3,21 +3,7 @@
 
 #include "jfg/prelude.h"
 #include "jfg/containers.hpp"
-
-// SOUND(name, header, data)
-#define SOUNDS \
-	SOUND(DEAL_CARD) \
-	SOUND(FIREBALL_EXPLOSION) \
-	/* SOUND(CAVE_AMBIENCE) */
-
-enum Sound_ID
-{
-#define SOUND(name) SOUND_##name,
-	SOUNDS
-#undef SOUND
-
-	NUM_SOUNDS
-};
+#include "assets.h"
 
 #ifdef JFG_DSOUND_H
 
@@ -52,54 +38,28 @@ struct Sound_Player
 };
 
 #ifdef JFG_DSOUND_H
-u8 sound_player_dsound_init(Sound_Player* player, IDirectSound* dsound);
+u8 sound_player_dsound_init(Sound_Player* player, Assets_Header* assets_header, IDirectSound* dsound);
 void sound_player_dsound_free(Sound_Player* player);
 void sound_player_dsound_play(Sound_Player* player);
 #endif
 
 #ifndef JFG_HEADER_ONLY
-#include "gen/sound_deal_card.data.h"
-#include "gen/sound_fireball_explosion.data.h"
-// #include "gen/sound_cave_ambience.data.h"
 
-u8 sound_player_dsound_init(Sound_Player* player, IDirectSound* dsound)
+u8 sound_player_dsound_init(Sound_Player* player, Assets_Header* assets_header, IDirectSound* dsound)
 {
 	HRESULT hr;
 
-	struct Sound_Data
-	{
-		u8   num_channels;
-		u8   sample_width;
-		u32  sample_rate;
-		u32  num_samples;
-		u8  *data;
-		u32  data_size;
-	};
-
-	Sound_Data sound_data[] = {
-#define SOUND(name) \
-		{ \
-			SOUND_##name##_HEADER.num_channels, \
-			SOUND_##name##_HEADER.sample_width, \
-			SOUND_##name##_HEADER.sample_rate, \
-			SOUND_##name##_HEADER.num_samples, \
-			SOUND_##name##_HEADER.data, \
-			sizeof(SOUND_##name##_DATA), \
-		},
-	SOUNDS
-#undef SOUND
-	};
-
 	u32 num_sounds_inited = 0;
 	for (u32 i = 0; i < NUM_SOUNDS; ++i) {
-		Sound_Data *sd = &sound_data[i];
+		Sound_Header *sh = &assets_header->sound_headers[i];
+		Asset_Entry  *ae = &assets_header->asset_entries[sound_id_to_asset_id((Sound_ID)i)];
 		IDirectSoundBuffer *sound_buffer = NULL;
 		{
 			WAVEFORMATEX waveformat = {};
 			waveformat.wFormatTag = WAVE_FORMAT_PCM;
-			waveformat.nChannels = sd->num_channels;
-			waveformat.nSamplesPerSec = sd->sample_rate;
-			waveformat.wBitsPerSample = sd->sample_width * 8;
+			waveformat.nChannels = sh->num_channels;
+			waveformat.nSamplesPerSec = sh->sample_rate;
+			waveformat.wBitsPerSample = sh->sample_width * 8;
 			waveformat.nBlockAlign = waveformat.nChannels * waveformat.wBitsPerSample / 8;
 			waveformat.nAvgBytesPerSec = waveformat.nSamplesPerSec * waveformat.nBlockAlign;
 			waveformat.cbSize = 0;
@@ -107,7 +67,7 @@ u8 sound_player_dsound_init(Sound_Player* player, IDirectSound* dsound)
 			DSBUFFERDESC desc = {};
 			desc.dwSize = sizeof(desc);
 			desc.dwFlags = DSBCAPS_GLOBALFOCUS;
-			desc.dwBufferBytes = sd->data_size;
+			desc.dwBufferBytes = ae->size;
 			desc.lpwfxFormat = &waveformat;
 
 			hr = dsound->CreateSoundBuffer(&desc, &sound_buffer, NULL);
@@ -118,14 +78,14 @@ u8 sound_player_dsound_init(Sound_Player* player, IDirectSound* dsound)
 		} else {
 			void *data_1, *data_2;
 			DWORD len_1, len_2;
-			hr = sound_buffer->Lock(0, sizeof(SOUND_DEAL_CARD_DATA),
-						   &data_1, &len_1,
-						   &data_2, &len_2,
-						   DSBLOCK_ENTIREBUFFER);
+			hr = sound_buffer->Lock(0, ae->size,
+			                        &data_1, &len_1,
+			                        &data_2, &len_2,
+			                        DSBLOCK_ENTIREBUFFER);
 			ASSERT(SUCCEEDED(hr));
-			memcpy(data_1, sd->data, len_1);
+			memcpy(data_1, ae->data, len_1);
 			if (data_2) {
-				memcpy(data_2, sd->data + len_1, len_2);
+				memcpy(data_2, (u8*)ae->data + len_1, len_2);
 			}
 			hr = sound_buffer->Unlock(data_1, len_1, data_2, len_2);
 			ASSERT(SUCCEEDED(hr));

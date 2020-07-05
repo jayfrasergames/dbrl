@@ -16,6 +16,33 @@
 
 #include "dbrl.h"
 
+u32 win32_try_read_file(char* filename, void* dest, u32 max_size)
+{
+	HANDLE file_handle = CreateFile(filename,
+	                                GENERIC_READ,
+	                                FILE_SHARE_READ,
+	                                NULL,
+	                                OPEN_EXISTING,
+	                                FILE_ATTRIBUTE_NORMAL,
+	                                NULL);
+	if (!file_handle) {
+		return 0;
+	}
+	DWORD file_size = GetFileSize(file_handle, NULL);
+	if (file_size > max_size) {
+		BOOL close_succeeded = CloseHandle(file_handle);
+		ASSERT(close_succeeded);
+		return 0;
+	}
+	DWORD bytes_read = 0;
+	BOOL read_succeeded = ReadFile(file_handle, dest, file_size, &bytes_read, NULL);
+	ASSERT(read_succeeded);
+	ASSERT(bytes_read == file_size);
+	BOOL close_succeeded = CloseHandle(file_handle);
+	ASSERT(close_succeeded);
+	return bytes_read;
+}
+
 void show_debug_messages(HWND window, ID3D11InfoQueue *info_queue)
 {
 	// u64 num_messages = info_queue->GetNumStoredMessages();
@@ -374,6 +401,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	Platform_Functions platform_functions = {};
 	platform_functions.start_thread = win32_start_thread;
 	platform_functions.sleep = win32_sleep;
+	platform_functions.try_read_file = win32_try_read_file;
 	program_init(program, platform_functions);
 	u8 d3d11_init_success = program_d3d11_init(program, device, screen_size);
 
