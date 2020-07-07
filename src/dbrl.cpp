@@ -302,6 +302,8 @@ enum Card_Event_Type
 {
 	CARD_EVENT_DRAW,
 	CARD_EVENT_HAND_TO_IN_PLAY,
+	CARD_EVENT_HAND_TO_DISCARD,
+	CARD_EVENT_IN_PLAY_TO_DISCARD,
 };
 
 struct Card_Event
@@ -315,6 +317,12 @@ struct Card_Event
 		struct {
 			u32 card_id;
 		} hand_to_in_play;
+		struct {
+			u32 card_id;
+		} hand_to_discard;
+		struct {
+			u32 card_id;
+		} in_play_to_discard;
 	};
 };
 
@@ -576,8 +584,9 @@ u8 game_is_passable(Game* game, Pos pos, u16 move_mask)
 	return result;
 }
 
-void card_state_draw(Card_State* card_state, Game* game, Action_Buffer* action_buffer)
+void game_draw_cards(Game* game, Action_Buffer* action_buffer, u32 num_to_draw)
 {
+	Card_State *card_state = &game->card_state;
 	auto& actions = *action_buffer;
 	actions.reset();
 	if (!card_state->deck) {
@@ -588,24 +597,50 @@ void card_state_draw(Card_State* card_state, Game* game, Action_Buffer* action_b
 			--card_state->discard.len;
 		}
 	}
-	ASSERT(card_state->deck);
-	Card card = card_state->deck.pop();
-	card_state->hand.append(card);
-	Card_Event event = {};
-	event.type = CARD_EVENT_DRAW;
-	event.draw.card_id    = card.id;
-	event.draw.appearance = card.appearance;
-	card_state->events.append(event);
-	switch (card.appearance) {
-	case CARD_APPEARANCE_POISON: {
-		Action action = {};
-		action.type = ACTION_POISON;
-		Controller *c = &game->controllers[0];
-		ASSERT(c->type == CONTROLLER_PLAYER);
-		action.poison.target = c->player.entity_id;
-		actions.append(action);
-		break;
+	// ASSERT(card_state->deck);
+
+	for (u32 i = 0; i < num_to_draw && card_state->deck; ++i) {
+		Card card = card_state->deck.pop();
+		card_state->hand.append(card);
+		Card_Event event = {};
+		event.type = CARD_EVENT_DRAW;
+		event.draw.card_id    = card.id;
+		event.draw.appearance = card.appearance;
+		card_state->events.append(event);
+		switch (card.appearance) {
+		case CARD_APPEARANCE_POISON: {
+			Action action = {};
+			action.type = ACTION_POISON;
+			Controller *c = &game->controllers[0];
+			ASSERT(c->type == CONTROLLER_PLAYER);
+			action.poison.target = c->player.entity_id;
+			actions.append(action);
+			break;
+		}
+		}
 	}
+}
+
+void game_end_play_cards(Game* game)
+{
+	Card_State *card_state = &game->card_state;
+
+	while (card_state->in_play) {
+		Card card = card_state->in_play.pop();
+		card_state->discard.append(card);
+		Card_Event event = {};
+		event.type = CARD_EVENT_IN_PLAY_TO_DISCARD;
+		event.in_play_to_discard.card_id = card.id;
+		card_state->events.append(event);
+	}
+
+	while (card_state->hand) {
+		Card card = card_state->hand.pop();
+		card_state->discard.append(card);
+		Card_Event event = {};
+		event.type = CARD_EVENT_HAND_TO_DISCARD;
+		event.hand_to_discard.card_id = card.id;
+		card_state->events.append(event);
 	}
 }
 
@@ -2811,8 +2846,11 @@ enum Card_Anim_Type
 	CARD_ANIM_DISCARD,
 	CARD_ANIM_DRAW,
 	CARD_ANIM_IN_HAND,
+	CARD_ANIM_IN_PLAY,
 	CARD_ANIM_HAND_TO_HAND,
 	CARD_ANIM_HAND_TO_IN_PLAY,
+	CARD_ANIM_HAND_TO_DISCARD,
+	CARD_ANIM_IN_PLAY_TO_DISCARD,
 };
 
 struct Card_Anim
@@ -2833,13 +2871,23 @@ struct Card_Anim
 			f32 start_time;
 			f32 duration;
 			u32 hand_index;
+			u8 played_sound;
 		} draw;
 		struct {
 			f32 start_time;
 			f32 duration;
-			u32 prev_hand_index;
 			Card_Hand_Pos start;
 		} hand_to_in_play;
+		struct {
+			f32 start_time;
+			f32 duration;
+			Card_Hand_Pos start;
+		} hand_to_discard;
+		struct {
+			f32 start_time;
+			f32 duration;
+			Card_Pos start;
+		} in_play_to_discard;
 	};
 	Card_Pos pos;
 	u32 card_id;
@@ -2997,7 +3045,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			anim->pos.z_offset = (f32)anim->hand_to_hand.index / hand_params.num_cards;
 			break;
 		}
-		case CARD_ANIM_HAND_TO_IN_PLAY:
+		case CARD_ANIM_HAND_TO_IN_PLAY: {
 			anim->pos.type = CARD_POS_ABSOLUTE;
 
 			f32 a = anim->hand_to_in_play.start.angle;
@@ -3022,6 +3070,53 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			anim->pos.absolute.angle = lerp(start_angle, end_angle, dt);
 			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
 			break;
+		}
+		case CARD_ANIM_HAND_TO_DISCARD: {
+			anim->pos.type = CARD_POS_ABSOLUTE;
+
+			f32 a = anim->hand_to_discard.start.angle;
+			f32 r = anim->hand_to_discard.start.radius;
+			f32 z = anim->hand_to_discard.start.zoom;
+			f32 r2 = r + (z - 1.0f) * hand_params.card_size.h;
+
+			v2 start_pos = r2 * V2_f32(cosf(a), sinf(a));
+			start_pos.x += hand_params.center.x;
+			start_pos.y += hand_params.top - r;
+			f32 start_angle = a - PI_F32 / 2.0f;
+			f32 start_zoom = z;
+
+			v2 end_pos = V2_f32(ratio - hand_params.border / 2.0f,
+			                    -1.0f + hand_params.height / 2.0f);
+			f32 end_angle = 0.0f;
+			f32 end_zoom = 1.0f;
+
+			f32 dt = (time - anim->hand_to_in_play.start_time) / anim->hand_to_in_play.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+			anim->pos.absolute.pos   = lerp(start_pos,   end_pos,   dt);
+			anim->pos.absolute.angle = lerp(start_angle, end_angle, dt);
+			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
+			break;
+		}
+		case CARD_ANIM_IN_PLAY_TO_DISCARD: {
+			anim->pos.type = CARD_POS_ABSOLUTE;
+
+			v2  start_pos   = anim->in_play_to_discard.start.absolute.pos;
+			f32 start_angle = anim->in_play_to_discard.start.absolute.angle;
+			f32 start_zoom  = anim->in_play_to_discard.start.absolute.zoom;
+
+			v2 end_pos = V2_f32(ratio - hand_params.border / 2.0f,
+			                    -1.0f + hand_params.height / 2.0f);
+			f32 end_angle = 0.0f;
+			f32 end_zoom = 1.0f;
+
+			f32 dt = (time - anim->in_play_to_discard.start_time) / anim->in_play_to_discard.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+			anim->pos.absolute.pos   = lerp(start_pos,   end_pos,   dt);
+			anim->pos.absolute.angle = lerp(start_angle, end_angle, dt);
+			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
+
+			break;
+		}
 		}
 	}
 }
@@ -3122,6 +3217,7 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 
 	u8 do_hand_to_hand = 0;
 
+	f32 next_draw_time = 0.0f;
 	for (u32 i = 0; i < events.len; ++i) {
 		Card_Event *event = &events[i];
 		switch (event->type) {
@@ -3130,9 +3226,11 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 			u32 hand_index = card_anim_state->hand_size++;
 			Card_Anim anim = {};
 			anim.type = CARD_ANIM_DRAW;
-			anim.draw.start_time = time;
+			anim.draw.start_time = time + next_draw_time;
+			next_draw_time += constants.cards_ui.between_draw_delay;
 			anim.draw.duration = constants.cards_ui.draw_duration;
 			anim.draw.hand_index = hand_index;
+			anim.draw.played_sound = 0;
 			anim.card_id = event->draw.card_id;
 			anim.card_face = card_appearance_get_sprite_coords(event->draw.appearance);
 			card_anim_state->card_anims[card_anim_state->num_card_anims++] = anim;
@@ -3157,7 +3255,6 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 					anim->hand_to_in_play.start_time = time;
 					anim->hand_to_in_play.duration
 					    = constants.cards_ui.hand_to_in_play_time;
-					anim->hand_to_in_play.prev_hand_index = hand_index;
 					Card_Pos cp = anim->pos;
 					ASSERT(cp.type == CARD_POS_HAND);
 					anim->hand_to_in_play.start.angle  = cp.hand.angle;
@@ -3184,6 +3281,68 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 			--card_anim_state->hand_size;
 			break;
 		}
+		case CARD_EVENT_HAND_TO_DISCARD: {
+			do_hand_to_hand = 1;
+			Card_Anim *anim = card_anim_state->card_anims;
+			u32 num_card_anims = card_anim_state->num_card_anims;
+			u32 hand_index = 0;
+			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
+				if (anim->card_id == event->hand_to_discard.card_id) {
+					switch (anim->type) {
+					case CARD_ANIM_IN_HAND:
+						hand_index = anim->hand.index;
+						break;
+					case CARD_ANIM_HAND_TO_HAND:
+						hand_index = anim->hand_to_hand.index;
+						break;
+					}
+					anim->type = CARD_ANIM_HAND_TO_DISCARD;
+					anim->hand_to_discard.start_time = time;
+					anim->hand_to_discard.duration
+					    = constants.cards_ui.hand_to_discard_time;
+					Card_Pos cp = anim->pos;
+					ASSERT(cp.type == CARD_POS_HAND);
+					anim->hand_to_discard.start.angle  = cp.hand.angle;
+					anim->hand_to_discard.start.zoom   = cp.hand.zoom;
+					anim->hand_to_discard.start.radius = cp.hand.radius;
+					break;
+				}
+			}
+			anim = card_anim_state->card_anims;
+			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
+				switch (anim->type) {
+				case CARD_ANIM_IN_HAND:
+					if (anim->hand.index > hand_index) {
+						--anim->hand.index;
+					}
+					break;
+				case CARD_ANIM_HAND_TO_HAND:
+					if (anim->hand_to_hand.index > hand_index) {
+						--anim->hand_to_hand.index;
+					}
+					break;
+				}
+			}
+			--card_anim_state->hand_size;
+			break;
+		}
+		case CARD_EVENT_IN_PLAY_TO_DISCARD: {
+			Card_Anim *anim = card_anim_state->card_anims;
+			u32 num_card_anims = card_anim_state->num_card_anims;
+			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
+				if (anim->card_id == event->in_play_to_discard.card_id) {
+					anim->type = CARD_ANIM_IN_PLAY_TO_DISCARD;
+					anim->in_play_to_discard.start_time = time;
+					anim->in_play_to_discard.duration
+					    = constants.cards_ui.in_play_to_discard_time;
+					Card_Pos cp = anim->pos;
+					ASSERT(cp.type == CARD_POS_ABSOLUTE);
+					anim->in_play_to_discard.start = cp;
+					break;
+				}
+			}
+			break;
+		}
 		}
 	}
 
@@ -3206,6 +3365,7 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
                              Card_State*      card_state,
                              Card_Render*     card_render,
+                             Sound_Player*    sound_player,
                              v2_u32           screen_size,
                              f32              time,
                              Input*           input,
@@ -3288,6 +3448,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		case CARD_ANIM_HAND_TO_IN_PLAY:
 			if (anim->hand_to_in_play.start_time + anim->hand_to_in_play.duration <= time) {
 				// TODO -- convert hand_to_in_play anim to in_play anim
+				// anim->type = CARD_ANIM_IN_PLAY;
 			}
 		}
 	}
@@ -3400,11 +3561,23 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		switch (anim->type) {
 		case CARD_ANIM_DRAW: {
 			f32 dt = (time - anim->draw.start_time) / anim->draw.duration;
+			if (dt < 0.0f) {
+				break;
+			}
+			if (!anim->draw.played_sound) {
+				anim->draw.played_sound = 1;
+				Sound_ID sound = (Sound_ID)(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01
+				               + (rand_u32() % 3));
+				sound_player->play(sound);
+			}
 			instance.horizontal_rotation = (1.0f - dt) * PI_F32;
+			card_render_add_instance(card_render, instance);
 			break;
 		}
+		default:
+			card_render_add_instance(card_render, instance);
+			break;
 		}
-		card_render_add_instance(card_render, instance);
 	}
 
 	// add draw pile card
@@ -3450,6 +3623,7 @@ enum Program_State
 
 #define PROGRAM_INPUT_STATES \
 	PROGRAM_INPUT_STATE(NONE) \
+	PROGRAM_INPUT_STATE(PLAYING_CARDS) \
 	PROGRAM_INPUT_STATE(DRAGGING_MAP) \
 	PROGRAM_INPUT_STATE(CARD_PARAMS) \
 	PROGRAM_INPUT_STATE(ANIMATING)
@@ -3695,6 +3869,15 @@ void build_deck_poison(Program *program)
 	}
 }
 
+void load_assets(void* uncast_program)
+{
+	Program *program = (Program*)uncast_program;
+	u8 loaded_assets = try_load_assets(&program->platform_functions, &program->assets_header);
+	ASSERT(loaded_assets);
+
+	sound_player_load_sounds(&program->sound, &program->assets_header);
+}
+
 void program_init(Program* program, Platform_Functions platform_functions)
 {
 	memset(program, 0, sizeof(*program));
@@ -3727,8 +3910,7 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	program->state = PROGRAM_STATE_NORMAL;
 	program->program_input_state_stack.push(GIS_NONE);
 
-	u8 loaded_assets = try_load_assets(&platform_functions, &program->assets_header);
-	ASSERT(loaded_assets);
+	start_thread(load_assets, program);
 }
 
 u8 program_dsound_init(Program* program, IDirectSound* dsound)
@@ -4023,6 +4205,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	switch (program->program_input_state_stack.peek()) {
 	case GIS_ANIMATING:
 	case GIS_CARD_PARAMS:
+	case GIS_PLAYING_CARDS:
 	case GIS_NONE:
 		if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags & INPUT_BUTTON_FLAG_ENDED_DOWN) {
 			program->program_input_state_stack.push(GIS_DRAGGING_MAP);
@@ -4072,9 +4255,11 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	debug_line_reset(&program->draw.card_debug_line);
 	// card_anim_update_anims
 	u8 allow_highlight_card = program->program_input_state_stack.peek() == GIS_NONE;
+	allow_highlight_card |= program->program_input_state_stack.peek() == GIS_PLAYING_CARDS;
 	Card_UI_Event card_event = card_anim_draw(&program->card_anim_state,
 	                                          &program->game.card_state,
 	                                          &program->draw.card_render,
+	                                          &program->sound,
 	                                          screen_size,
 	                                          time,
 	                                          input,
@@ -4104,40 +4289,17 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	case GIS_ANIMATING:
 		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, 0);
 		break;
-	case GIS_NONE: {
+	case GIS_PLAYING_CARDS: {
 		Action player_action = {};
 		player_action.type = ACTION_NONE;
 
 		Card_State *card_state = &program->game.card_state;
 		card_state->events.reset();
 		switch (card_event.type) {
-		case CARD_UI_EVENT_NONE:
-			break;
-		case CARD_UI_EVENT_DECK_CLICKED: {
-			Action_Buffer actions;
-			card_state_draw(card_state, &program->game, &actions);
-			program->sound.play(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01);
-			player_action.type = ACTION_WAIT;
-			if (actions) {
-				Event_Buffer events;
-				events.reset();
-				game_simulate_actions(&program->game, actions, &events);
-				world_anim_build_events_to_be_animated(&program->world_anim, &events);
-				program->program_input_state_stack.push(GIS_ANIMATING);
-			}
-			break;
-		}
-		case CARD_UI_EVENT_DISCARD_CLICKED: {
-			Action_Buffer actions;
-			card_state_draw(card_state, &program->game, &actions);
-			program->sound.play(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01);
-			player_action.type = ACTION_WAIT;
-			break;
-		}
 		case CARD_UI_EVENT_HAND_CLICKED: {
 			u32 card_id = card_event.hand.card_id;
 			u32 hand_index = card_state->hand.len;
-			Card *card;
+			Card *card = NULL;
 			for (u32 i = 0; i < card_state->hand.len; ++i) {
 				if (card_state->hand[i].id == card_id) {
 					card = &card_state->hand[i];
@@ -4154,10 +4316,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				card_event.hand_to_in_play.card_id = card_id;
 				card_state->events.append(card_event);
 
-				card_state->hand.remove(hand_index);
 				card_state->in_play.append(*card);
-
-				player_action.type = ACTION_WAIT;
+				card_state->hand.remove(hand_index);
 				break;
 			}
 			case CARD_APPEARANCE_FIREBALL: {
@@ -4166,8 +4326,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				card_event.hand_to_in_play.card_id = card_id;
 				card_state->events.append(card_event);
 
-				card_state->hand.remove(hand_index);
 				card_state->in_play.append(*card);
+				card_state->hand.remove(hand_index);
 
 				Controller *c = &program->game.controllers.items[0];
 				ASSERT(c->type == CONTROLLER_PLAYER);
@@ -4190,8 +4350,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				card_event.hand_to_in_play.card_id = card_id;
 				card_state->events.append(card_event);
 
-				card_state->hand.remove(hand_index);
 				card_state->in_play.append(*card);
+				card_state->hand.remove(hand_index);
 
 				Controller *c = &program->game.controllers.items[0];
 				ASSERT(c->type == CONTROLLER_PLAYER);
@@ -4215,8 +4375,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				card_event.hand_to_in_play.card_id = card_id;
 				card_state->events.append(card_event);
 
-				card_state->hand.remove(hand_index);
 				card_state->in_play.append(*card);
+				card_state->hand.remove(hand_index);
 
 				Controller *c = &program->game.controllers.items[0];
 				ASSERT(c->type == CONTROLLER_PLAYER);
@@ -4236,6 +4396,67 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 			}
 
+			break;
+		}
+		}
+
+		if (sprite_id && input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
+			game_end_play_cards(&program->game);
+			Action player_action = {};
+			player_action.type = ACTION_WAIT;
+			Controller *c = &program->game.controllers.items[0];
+			ASSERT(c->type == CONTROLLER_PLAYER);
+			c->player.action = player_action;
+			Event_Buffer event_buffer;
+			game_do_turn(&program->game, &event_buffer);
+			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
+			program->program_input_state_stack.pop();
+			program->program_input_state_stack.push(GIS_ANIMATING);
+		}
+
+		card_anim_update_anims(&program->card_anim_state, card_state->events, time);
+
+		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
+
+		break;
+	}
+	case GIS_NONE: {
+		Action player_action = {};
+		player_action.type = ACTION_NONE;
+
+		Card_State *card_state = &program->game.card_state;
+		card_state->events.reset();
+		switch (card_event.type) {
+		case CARD_UI_EVENT_NONE:
+			break;
+		case CARD_UI_EVENT_DECK_CLICKED: {
+			Action_Buffer actions;
+			game_draw_cards(&program->game, &actions, 5);
+			// program->sound.play(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01);
+			// player_action.type = ACTION_WAIT;
+			if (actions) {
+				Event_Buffer events;
+				events.reset();
+				game_simulate_actions(&program->game, actions, &events);
+				world_anim_build_events_to_be_animated(&program->world_anim, &events);
+				program->program_input_state_stack.push(GIS_ANIMATING);
+			}
+			program->program_input_state_stack.push(GIS_PLAYING_CARDS);
+			break;
+		}
+		case CARD_UI_EVENT_DISCARD_CLICKED: {
+			Action_Buffer actions;
+			game_draw_cards(&program->game, &actions, 5);
+			// program->sound.play(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01);
+			// player_action.type = ACTION_WAIT;
+			if (actions) {
+				Event_Buffer events;
+				events.reset();
+				game_simulate_actions(&program->game, actions, &events);
+				world_anim_build_events_to_be_animated(&program->world_anim, &events);
+				program->program_input_state_stack.push(GIS_ANIMATING);
+			}
+			program->program_input_state_stack.push(GIS_PLAYING_CARDS);
 			break;
 		}
 		}
@@ -4347,9 +4568,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			                      slice_one(&program->action_being_built),
 			                      &event_buffer);
 			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
-			c->player.action.type = ACTION_WAIT;
-			game_do_turn(&program->game, &event_buffer);
-			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
+			// c->player.action.type = ACTION_WAIT;
+			// game_do_turn(&program->game, &event_buffer);
+			// world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
 			program->program_input_state_stack.pop();
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}

@@ -153,6 +153,12 @@ python ..\scripts\make_sprite_sheet.py ^
 	--tile-width 24 ^
 	--tile-height 24
 python ..\scripts\make_sprite_sheet.py ^
+	-i ../assets/effects24.png ^
+	-o ../src/gen/sprite_sheet_effects_24.data.h ^
+	-n Effects_24 ^
+	--tile-width 24 ^
+	--tile-height 24
+python ..\scripts\make_sprite_sheet.py ^
 	-i ../assets/effects32.png ^
 	-o ../src/gen/sprite_sheet_effects_32.data.h ^
 	-n Effects_32 ^

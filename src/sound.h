@@ -13,6 +13,7 @@
 
 struct Sound_Player_DSound
 {
+	IDirectSound       *dsound;
 	IDirectSoundBuffer *sound_buffers[NUM_SOUNDS];
 };
 #endif
@@ -39,6 +40,7 @@ struct Sound_Player
 
 #ifdef JFG_DSOUND_H
 u8 sound_player_dsound_init(Sound_Player* player, Assets_Header* assets_header, IDirectSound* dsound);
+u8 sound_player_load_sounds(Sound_Player* player);
 void sound_player_dsound_free(Sound_Player* player);
 void sound_player_dsound_play(Sound_Player* player);
 #endif
@@ -47,7 +49,17 @@ void sound_player_dsound_play(Sound_Player* player);
 
 u8 sound_player_dsound_init(Sound_Player* player, Assets_Header* assets_header, IDirectSound* dsound)
 {
+	player->dsound.dsound = dsound;
+	for (u32 i = 0; i < NUM_SOUNDS; ++i) {
+		player->dsound.sound_buffers[i] = NULL;
+	}
+	return 1;
+}
+
+u8 sound_player_load_sounds(Sound_Player* player, Assets_Header* assets_header)
+{
 	HRESULT hr;
+	IDirectSound *dsound = player->dsound.dsound;
 
 	u32 num_sounds_inited = 0;
 	for (u32 i = 0; i < NUM_SOUNDS; ++i) {
@@ -113,11 +125,18 @@ void sound_player_dsound_play(Sound_Player* player)
 {
 	u32 num_sounds_to_play = player->sounds_to_play.len;
 	for (u32 i = 0; i < num_sounds_to_play; ++i) {
+		IDirectSoundBuffer *buffer = player->dsound.sound_buffers[player->sounds_to_play[i]];
+		if (buffer) {
+			buffer->Play(0, 0, 0);
+		}
 		player->dsound.sound_buffers[player->sounds_to_play[i]]->Play(0, 0, 0);
 	}
 	if (player->new_ambience_queued) {
-		player->new_ambience_queued = 0;
-		player->dsound.sound_buffers[player->ambience]->Play(0, 0, DSBPLAY_LOOPING);
+		IDirectSoundBuffer *buffer = player->dsound.sound_buffers[player->ambience];
+		if (buffer) {
+			player->new_ambience_queued = 0;
+			buffer->Play(0, 0, DSBPLAY_LOOPING);
+		}
 	}
 }
 
