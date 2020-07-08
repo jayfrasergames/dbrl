@@ -11,11 +11,13 @@ Texture2D<float4>                      tex       : register(t0);
 struct VS_Card_Output
 {
 	float4 pos        : SV_Position;
+	float4 color_mod  : COLOR_MOD;
 	float2 tex_coord  : TEXCOORD;
 };
 
 struct PS_Card_Input
 {
+	float4 color_mod  : COLOR_MOD;
 	float2 tex_coord  : TEXCOORD;
 };
 
@@ -70,6 +72,7 @@ VS_Card_Output vs_card(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 
 	output.pos        = float4(pos, 0.0f, 1.0f);
 	output.tex_coord  = card_pos * constants.card_size / constants.tex_size;
+	output.color_mod  = instance.color_mod;
 
 	return output;
 }
@@ -85,7 +88,7 @@ PS_Card_Output ps_card(VS_Card_Output input)
 		discard;
 	}
 
-	output.color = tex_color;
+	output.color = input.color_mod * tex_color;
 
 	return output;
 }

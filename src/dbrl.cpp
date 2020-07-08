@@ -304,6 +304,8 @@ enum Card_Event_Type
 	CARD_EVENT_HAND_TO_IN_PLAY,
 	CARD_EVENT_HAND_TO_DISCARD,
 	CARD_EVENT_IN_PLAY_TO_DISCARD,
+	CARD_EVENT_SELECT,
+	CARD_EVENT_UNSELECT,
 };
 
 struct Card_Event
@@ -323,6 +325,9 @@ struct Card_Event
 		struct {
 			u32 card_id;
 		} in_play_to_discard;
+		struct {
+			u32 card_id;
+		} select;
 	};
 };
 
@@ -634,14 +639,16 @@ void game_end_play_cards(Game* game)
 		card_state->events.append(event);
 	}
 
-	while (card_state->hand) {
-		Card card = card_state->hand.pop();
+	auto& hand = card_state->hand;
+	for (u32 i = 0; i < hand.len; ++i) {
+		Card card = hand[i];
 		card_state->discard.append(card);
 		Card_Event event = {};
 		event.type = CARD_EVENT_HAND_TO_DISCARD;
 		event.hand_to_discard.card_id = card.id;
 		card_state->events.append(event);
 	}
+	hand.len = 0;
 }
 
 
@@ -2890,18 +2897,43 @@ struct Card_Anim
 		} in_play_to_discard;
 	};
 	Card_Pos pos;
+	v4 color_mod;
 	u32 card_id;
 	v2 card_face;
+};
+
+enum Card_Anim_State_Type
+{
+	CARD_ANIM_STATE_NORMAL,
+	CARD_ANIM_STATE_NORMAL_TO_SELECTED,
+	CARD_ANIM_STATE_SELECTED,
+	CARD_ANIM_STATE_SELECTED_TO_NORMAL,
 };
 
 #define MAX_CARD_ANIMS 1024
 struct Card_Anim_State
 {
+	Card_Anim_State_Type type;
 	Hand_Params          hand_params;
 	u32                  hand_size;
 	u32                  highlighted_card_id;
 	u32                  num_card_anims;
 	Card_Anim            card_anims[MAX_CARD_ANIMS];
+
+	union {
+		struct {
+			f32 start_time;
+			f32 duration;
+			u32 selected_card_id;
+		} normal_to_selected;
+		struct {
+			u32 selected_card_id;
+		} selected;
+		struct {
+			f32 start_time;
+			f32 duration;
+		} selected_to_normal;
+	};
 };
 
 enum Card_UI_Event_Type
@@ -2980,6 +3012,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 
 	anim = card_anim_state->card_anims;
 	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
+		anim->color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
 		switch (anim->type) {
 		case CARD_ANIM_DECK:
 			anim->pos.type = CARD_POS_DECK;
@@ -3060,7 +3093,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			f32 start_zoom = z;
 
 			v2 end_pos = V2_f32(ratio - hand_params.border / 2.0f,
-			                    -1.0f + 3.0f * hand_params.height / 3.0f);
+			                    -1.0f + 3.0f * hand_params.height / 2.0f);
 			f32 end_angle = 0.0f;
 			f32 end_zoom = 1.0f;
 
@@ -3071,6 +3104,13 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
 			break;
 		}
+		case CARD_ANIM_IN_PLAY:
+			anim->pos.type = CARD_POS_ABSOLUTE;
+			anim->pos.absolute.pos = V2_f32(ratio - hand_params.border / 2.0f,
+			                                -1.0f + 3.0f * hand_params.height / 2.0f);
+			anim->pos.absolute.angle = 0.0f;
+			anim->pos.absolute.zoom = 1.0f;
+			break;
 		case CARD_ANIM_HAND_TO_DISCARD: {
 			anim->pos.type = CARD_POS_ABSOLUTE;
 
@@ -3188,31 +3228,14 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 {
 	card_anim_write_poss(card_anim_state, time);
 
-	Hand_To_Hand_Anim_Params before_params = {};
-	before_params.hand_params = card_anim_state->hand_params;
-	before_params.highlighted_card_id = 0;
-	before_params.selected_card_index = 0;
-
 	u32 highlighted_card_id = card_anim_state->highlighted_card_id;
-	if (highlighted_card_id) {
-		u32 highlighted_card_index = 0;
-		u32 num_card_anims = card_anim_state->num_card_anims;
-		Card_Anim *ca = card_anim_state->card_anims;
-		for (u32 i = 0; i < num_card_anims; ++i, ++ca) {
-			if (ca->card_id == highlighted_card_id) {
-				switch (ca->type) {
-				case CARD_ANIM_IN_HAND:
-					before_params.highlighted_card_id = highlighted_card_id;
-					before_params.selected_card_index = ca->hand.index;
-					break;
-				case CARD_ANIM_HAND_TO_HAND:
-					before_params.highlighted_card_id = highlighted_card_id;
-					before_params.selected_card_index = ca->hand_to_hand.index;
-					break;
-				}
-				break;
-			}
-		}
+	switch (card_anim_state->type) {
+	case CARD_ANIM_STATE_SELECTED:
+		highlighted_card_id = card_anim_state->selected.selected_card_id;
+		break;
+	case CARD_ANIM_STATE_NORMAL_TO_SELECTED:
+		highlighted_card_id = card_anim_state->normal_to_selected.selected_card_id;
+		break;
 	}
 
 	u8 do_hand_to_hand = 0;
@@ -3221,6 +3244,21 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 	for (u32 i = 0; i < events.len; ++i) {
 		Card_Event *event = &events[i];
 		switch (event->type) {
+		case CARD_EVENT_SELECT: {
+			card_anim_state->type = CARD_ANIM_STATE_NORMAL_TO_SELECTED;
+			card_anim_state->normal_to_selected.selected_card_id = event->select.card_id;
+			card_anim_state->normal_to_selected.start_time = time;
+			card_anim_state->normal_to_selected.duration
+				= constants.cards_ui.normal_to_selected_duration;
+			break;
+		}
+		case CARD_EVENT_UNSELECT: {
+			card_anim_state->type = CARD_ANIM_STATE_SELECTED_TO_NORMAL;
+			card_anim_state->selected_to_normal.start_time = time;
+			card_anim_state->selected_to_normal.duration
+				= constants.cards_ui.normal_to_selected_duration;
+			break;
+		}
 		case CARD_EVENT_DRAW: {
 			do_hand_to_hand = 1;
 			u32 hand_index = card_anim_state->hand_size++;
@@ -3411,6 +3449,15 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		}
 	}
 
+	switch (card_anim_state->type) {
+	case CARD_ANIM_STATE_SELECTED:
+		highlighted_card_id = card_anim_state->selected.selected_card_id;
+		break;
+	case CARD_ANIM_STATE_NORMAL_TO_SELECTED:
+		highlighted_card_id = card_anim_state->normal_to_selected.selected_card_id;
+		break;
+	}
+
 	card_render_reset(card_render);
 
 	float ratio = (f32)screen_size.x / (f32)screen_size.y;
@@ -3423,8 +3470,29 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	params->highlighted_zoom = 1.2f;
 	hand_params_calc(params);
 
+	// update state if necessary
+	switch (card_anim_state->type) {
+	case CARD_ANIM_STATE_NORMAL:
+	case CARD_ANIM_STATE_SELECTED:
+		break;
+	case CARD_ANIM_STATE_NORMAL_TO_SELECTED:
+		if (card_anim_state->normal_to_selected.start_time
+		  + card_anim_state->normal_to_selected.duration <= time) {
+			u32 card_id = card_anim_state->normal_to_selected.selected_card_id;
+			card_anim_state->selected.selected_card_id = card_id;
+			card_anim_state->type = CARD_ANIM_STATE_SELECTED;
+		}
+		break;
+	case CARD_ANIM_STATE_SELECTED_TO_NORMAL:
+		if (card_anim_state->selected_to_normal.start_time
+		  + card_anim_state->selected_to_normal.duration <= time) {
+			card_anim_state->type = CARD_ANIM_STATE_NORMAL;
+		}
+		break;
+	}
+
 	// convert finished card anims
-	for (u32 i = 0; i < num_card_anims; ++i) {
+	for (u32 i = 0; i < num_card_anims; ) {
 		Card_Anim *anim = &card_anim_state->card_anims[i];
 		switch (anim->type) {
 		case CARD_ANIM_DECK:
@@ -3447,11 +3515,28 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			break;
 		case CARD_ANIM_HAND_TO_IN_PLAY:
 			if (anim->hand_to_in_play.start_time + anim->hand_to_in_play.duration <= time) {
-				// TODO -- convert hand_to_in_play anim to in_play anim
-				// anim->type = CARD_ANIM_IN_PLAY;
+				anim->type = CARD_ANIM_IN_PLAY;
 			}
+			break;
+		case CARD_ANIM_IN_PLAY_TO_DISCARD:
+			if (anim->in_play_to_discard.start_time
+			  + anim->in_play_to_discard.duration <= time) {
+				card_anim_state->card_anims[i]
+					= card_anim_state->card_anims[--num_card_anims];
+				continue;
+			}
+			break;
+		case CARD_ANIM_HAND_TO_DISCARD:
+			if (anim->hand_to_discard.start_time + anim->hand_to_discard.duration <= time) {
+				card_anim_state->card_anims[i]
+					= card_anim_state->card_anims[--num_card_anims];
+				continue;
+			}
+			break;
 		}
+		++i;
 	}
+	card_anim_state->num_card_anims = num_card_anims;
 
 	// process hand to hand anims
 	u32 prev_highlighted_card_id = card_anim_state->highlighted_card_id;
@@ -3523,6 +3608,29 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		memset(deltas, 0, (u32)params->num_cards * sizeof(deltas[0]));
 	}
 
+	v4 hand_color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+	switch (card_anim_state->type) {
+	case CARD_ANIM_STATE_NORMAL:
+		break;
+	case CARD_ANIM_STATE_SELECTED:
+		hand_color_mod *= constants.cards_ui.selection_fade;
+		break;
+	case CARD_ANIM_STATE_NORMAL_TO_SELECTED: {
+		f32 dt = (time - card_anim_state->normal_to_selected.start_time)
+		         / card_anim_state->normal_to_selected.duration;
+		dt = clamp(dt, 0.0f, 1.0f);
+		hand_color_mod *= lerp(1.0f, constants.cards_ui.selection_fade, dt);
+		break;
+	}
+	case CARD_ANIM_STATE_SELECTED_TO_NORMAL: {
+		f32 dt = (time - card_anim_state->selected_to_normal.start_time)
+		         / card_anim_state->selected_to_normal.duration;
+		dt = clamp(dt, 0.0f, 1.0f);
+		hand_color_mod *= lerp(constants.cards_ui.selection_fade, 1.0f, dt);
+		break;
+	}
+	}
+
 	Card_Anim *anim = card_anim_state->card_anims;
 	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 		Card_Render_Instance instance = {};
@@ -3545,6 +3653,10 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			instance.card_id = anim->card_id;
 			instance.z_offset = anim->pos.z_offset;
 			instance.zoom = z;
+			instance.color_mod = anim->color_mod;
+			if (anim->card_id != highlighted_card_id) {
+				instance.color_mod = hand_color_mod;
+			}
 			break;
 		}
 		case CARD_POS_ABSOLUTE:
@@ -3554,6 +3666,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			instance.card_id = anim->card_id;
 			instance.z_offset = anim->pos.z_offset;
 			instance.zoom = anim->pos.absolute.zoom;
+			instance.color_mod = anim->color_mod;
 			break;
 		case CARD_POS_IN_PLAY:
 			break;
@@ -3590,11 +3703,14 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		instance.zoom = 1.0f;
 		instance.card_id = deck_id;
 		instance.z_offset = 0.0f;
+		instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
 		card_render_add_instance(card_render, instance);
 	}
 
 	// add discard pile card
 	if (card_state->discard) {
+		Card card = card_state->discard[card_state->discard.len - 1];
+
 		Card_Render_Instance instance = {};
 		instance.screen_rotation = 0.0f;
 		instance.screen_pos = { ratio - params->border / 2.0f,
@@ -3603,6 +3719,8 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		instance.zoom = 1.0f;
 		instance.card_id = discard_id;
 		instance.z_offset = 0.0f;
+		instance.card_pos = card_appearance_get_sprite_coords(card.appearance);
+		instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
 		card_render_add_instance(card_render, instance);
 	}
 
@@ -3838,7 +3956,7 @@ void build_level_slime_test(Program* program)
 	world_anim_init(&program->world_anim, &program->game);
 }
 
-void build_deck_random_100(Program *program)
+void build_deck_random_n(Program *program, u32 n)
 {
 	// cards
 	Card_State *card_state = &program->game.card_state;
@@ -3846,7 +3964,7 @@ void build_deck_random_100(Program *program)
 	memset(card_state, 0, sizeof(*card_state));
 	memset(card_anim_state, 0, sizeof(*card_anim_state));
 
-	for (u32 i = 0; i < 100; ++i) {
+	for (u32 i = 0; i < n; ++i) {
 		Card card = {};
 		card.id = i + 1;
 		card.appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
@@ -3903,7 +4021,7 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	program->draw.boxy_bold.tex_data = boxy_bold_pixel_data;
 
 	build_level_default(program);
-	build_deck_random_100(program);
+	build_deck_random_n(program, 100);
 
 	program->sound.set_ambience(SOUND_CARD_GAME_AMBIENCE_CAVE);
 
@@ -4317,17 +4435,17 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				card_state->events.append(card_event);
 
 				card_state->in_play.append(*card);
-				card_state->hand.remove(hand_index);
+				card_state->hand.remove_preserve_order(hand_index);
 				break;
 			}
 			case CARD_APPEARANCE_FIREBALL: {
 				Card_Event card_event = {};
-				card_event.type = CARD_EVENT_HAND_TO_IN_PLAY;
-				card_event.hand_to_in_play.card_id = card_id;
+				card_event.type = CARD_EVENT_SELECT;
+				card_event.select.card_id = card_id;
 				card_state->events.append(card_event);
 
-				card_state->in_play.append(*card);
-				card_state->hand.remove(hand_index);
+				// card_state->in_play.append(*card);
+				// card_state->hand.remove_preserve_order(hand_index);
 
 				Controller *c = &program->game.controllers.items[0];
 				ASSERT(c->type == CONTROLLER_PLAYER);
@@ -4346,12 +4464,12 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 			case CARD_APPEARANCE_EXCHANGE: {
 				Card_Event card_event = {};
-				card_event.type = CARD_EVENT_HAND_TO_IN_PLAY;
-				card_event.hand_to_in_play.card_id = card_id;
+				card_event.type = CARD_EVENT_SELECT;
+				card_event.select.card_id = card_id;
 				card_state->events.append(card_event);
 
-				card_state->in_play.append(*card);
-				card_state->hand.remove(hand_index);
+				// card_state->in_play.append(*card);
+				// card_state->hand.remove_preserve_order(hand_index);
 
 				Controller *c = &program->game.controllers.items[0];
 				ASSERT(c->type == CONTROLLER_PLAYER);
@@ -4371,12 +4489,12 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 			case CARD_APPEARANCE_BLINK: {
 				Card_Event card_event = {};
-				card_event.type = CARD_EVENT_HAND_TO_IN_PLAY;
-				card_event.hand_to_in_play.card_id = card_id;
+				card_event.type = CARD_EVENT_SELECT;
+				card_event.select.card_id = card_id;
 				card_state->events.append(card_event);
 
-				card_state->in_play.append(*card);
-				card_state->hand.remove(hand_index);
+				// card_state->in_play.append(*card);
+				// card_state->hand.remove_preserve_order(hand_index);
 
 				Controller *c = &program->game.controllers.items[0];
 				ASSERT(c->type == CONTROLLER_PLAYER);
@@ -4432,8 +4550,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		case CARD_UI_EVENT_DECK_CLICKED: {
 			Action_Buffer actions;
 			game_draw_cards(&program->game, &actions, 5);
-			// program->sound.play(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01);
-			// player_action.type = ACTION_WAIT;
 			if (actions) {
 				Event_Buffer events;
 				events.reset();
@@ -4447,8 +4563,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		case CARD_UI_EVENT_DISCARD_CLICKED: {
 			Action_Buffer actions;
 			game_draw_cards(&program->game, &actions, 5);
-			// program->sound.play(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01);
-			// player_action.type = ACTION_WAIT;
 			if (actions) {
 				Event_Buffer events;
 				events.reset();
@@ -4558,6 +4672,46 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 
 		if (!program->card_params_stack) {
+			Card_Anim_State *card_anim_state = &program->card_anim_state;
+			ASSERT(card_anim_state->type == CARD_ANIM_STATE_SELECTED
+			    || card_anim_state->type == CARD_ANIM_STATE_NORMAL_TO_SELECTED);
+
+			Card_State *card_state = &program->game.card_state;
+			Card_Event event = {};
+			event.type = CARD_EVENT_UNSELECT;
+			card_state->events.append(event);
+
+			// XXX
+			u32 card_id = 0;
+			switch (card_anim_state->type) {
+			case CARD_ANIM_STATE_SELECTED:
+				card_id = card_anim_state->selected.selected_card_id;
+				break;
+			case CARD_ANIM_STATE_NORMAL_TO_SELECTED:
+				card_id = card_anim_state->normal_to_selected.selected_card_id;
+				break;
+			}
+			ASSERT(card_id);
+			event.type = CARD_EVENT_HAND_TO_IN_PLAY;
+			event.hand_to_in_play.card_id = card_id;
+			card_state->events.append(event);
+
+			Card *card = NULL;
+			u32 hand_index;
+			for (u32 i = 0; i < card_state->hand.len; ++i) {
+				if (card_state->hand[i].id == card_id) {
+					card = &card_state->hand[i];
+					hand_index = i;
+					break;
+				}
+			}
+			ASSERT(card);
+			card_state->in_play.append(*card);
+			card_state->hand.remove_preserve_order(hand_index);
+
+			// XXX
+			card_anim_update_anims(card_anim_state, card_state->events, time);
+
 			// TODO -- cast spell
 			Controller *c = &program->game.controllers.items[0];
 			ASSERT(c->type == CONTROLLER_PLAYER);
@@ -4677,7 +4831,13 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 		if (imgui_tree_begin(&program->imgui, "cards")) {
 			if (imgui_button(&program->imgui, "random 100")) {
-				build_deck_random_100(program);
+				build_deck_random_n(program, 100);
+			}
+			if (imgui_button(&program->imgui, "random 20")) {
+				build_deck_random_n(program, 20);
+			}
+			if (imgui_button(&program->imgui, "random 17")) {
+				build_deck_random_n(program, 17);
 			}
 			if (imgui_button(&program->imgui, "poison")) {
 				build_deck_poison(program);
