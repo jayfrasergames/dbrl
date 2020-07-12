@@ -15,6 +15,7 @@
 #include "sprite_sheet.h"
 #include "card_render.h"
 #include "pixel_art_upsampler.h"
+#include "particles.h"
 
 #include <stdio.h>  // XXX - for snprintf
 
@@ -196,6 +197,7 @@ struct Event
 		} exchange;
 		struct {
 			Entity_ID caster_id;
+			Pos       start;
 			Pos       target;
 		} blink;
 		struct {
@@ -1177,18 +1179,19 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			case TRANSACTION_BLINK: {
 				t->type = TRANSACTION_REMOVE;
 
-				Event event = {};
-				event.type = EVENT_BLINK;
-				event.time = time;
-				event.blink.caster_id = t->blink.caster_id;
-				event.blink.target = t->blink.target;
-				events.append(event);
-
 				Entity *e = game_get_entity_by_id(game, t->blink.caster_id);
 
 				// TODO -- should check if pos is free to enter?
 				Pos start = e->pos;
 				Pos end = t->blink.target;
+
+				Event event = {};
+				event.type = EVENT_BLINK;
+				event.time = time;
+				event.blink.caster_id = t->blink.caster_id;
+				event.blink.start = start;
+				event.blink.target = end;
+				events.append(event);
 
 				occupied.unset(start);
 				e->pos = end;
@@ -1815,6 +1818,7 @@ enum Anim_Type
 	ANIM_DEATH,
 	ANIM_EXCHANGE,
 	ANIM_BLINK,
+	ANIM_BLINK_PARTICLES,
 	ANIM_SLIME_SPLIT,
 };
 
@@ -1875,6 +1879,10 @@ struct Anim
 		} blink;
 		struct {
 			f32 time;
+			v2 pos;
+		} blink_particles;
+		struct {
+			f32 time;
 			f32 duration;
 			Entity_ID original_id;
 			Entity_ID new_id;
@@ -1904,6 +1912,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_DEATH:                return 1;
 	case ANIM_EXCHANGE:             return 1;
 	case ANIM_BLINK:                return 1;
+	case ANIM_BLINK_PARTICLES:      return 1;
 	case ANIM_SLIME_SPLIT:          return 1;
 	}
 	ASSERT(0);
@@ -2112,6 +2121,20 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			anim.blink.entity_id = event->blink.caster_id;
 			anim.blink.target = (v2)event->blink.target;
 			world_anim->anims.append(anim);
+
+			f32 particle_start = event->time - constants.anims.blink.particle_start;
+			anim = {};
+			anim.type = ANIM_BLINK_PARTICLES;
+			anim.blink_particles.time = particle_start;
+			anim.blink_particles.pos = (v2)event->blink.start;
+			world_anim->anims.append(anim);
+
+			anim = {};
+			anim.type = ANIM_BLINK_PARTICLES;
+			anim.blink_particles.time = particle_start;
+			anim.blink_particles.pos = (v2)event->blink.target;
+			world_anim->anims.append(anim);
+
 			break;
 		}
 		case EVENT_SLIME_SPLIT: {
@@ -2412,6 +2435,29 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				ASSERT(caster_anim->entity_id == e_id);
 				caster_anim->world_coords = anim->blink.target;
 				anims.remove(i);
+				continue;
+			}
+			break;
+		case ANIM_BLINK_PARTICLES:
+			if (anim->blink_particles.time <= dyn_time) {
+				Particle_Instance instance = {};
+				Particles *particles = &draw->renderer.particles;
+				instance.start_time = time;
+				instance.end_time = instance.start_time + constants.anims.blink.particle_duration;
+				instance.start_pos = anim->blink_particles.pos;
+				instance.start_color = { 0.0f, 1.0f, 1.0f, 1.0f };
+				instance.end_color = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+				for (u32 i = 0; i < 64; ++i) {
+					f32 speed = rand_f32() + 1.0f;
+					f32 angle = 2.0f * PI_F32 * rand_f32();
+					v2 v = { cosf(angle), sinf(angle) };
+					instance.start_velocity = speed * v;
+					particles_add(particles, instance);
+				}
+
+				anims.remove(i);
+				continue;
 			}
 			break;
 		case ANIM_SLIME_SPLIT:
@@ -4346,6 +4392,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 	f32 time = (f32)program->frame_number / 60.0f;
+	program->draw.renderer.time = time;
 	world_anim_draw(&program->world_anim, &program->draw, &program->sound, time);
 	program->draw.camera.offset = program->world_anim.camera_offset;
 
@@ -4937,6 +4984,7 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	sprite_sheet_instances_d3d11_draw(&program->draw.tiles, dc, screen_size_u32);
 	sprite_sheet_instances_d3d11_draw(&program->draw.creatures, dc, screen_size_u32);
 	sprite_sheet_instances_d3d11_draw(&program->draw.water_edges, dc, screen_size_u32);
+	sprite_sheet_renderer_d3d11_do_particles(&program->draw.renderer, dc);
 	sprite_sheet_instances_d3d11_draw(&program->draw.effects_32, dc, screen_size_u32);
 	sprite_sheet_renderer_d3d11_highlight_sprite(&program->draw.renderer, dc);
 	sprite_sheet_renderer_d3d11_begin_font(&program->draw.renderer, dc);

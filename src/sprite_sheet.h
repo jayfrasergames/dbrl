@@ -4,6 +4,8 @@
 #include "jfg/prelude.h"
 #include "jfg/containers.hpp"
 
+#include "particles.h"
+
 // =============================================================================
 // GFX API data defintions
 
@@ -109,6 +111,8 @@ struct Sprite_Sheet_Renderer
 	u32                                num_instance_buffers;
 	Sprite_Sheet_Instances*            instance_buffers;
 	Slice<Sprite_Sheet_Font_Instances> font_instance_buffers;
+	Particles                          particles;
+	f32                                time;
 
 #ifdef SPRITE_SHEET_DEFINE_GFX
 	union {
@@ -142,6 +146,7 @@ void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer,
                                 u32 num_instance_buffers,
                                 v2_u32 size)
 {
+	particles_init(&renderer->particles);
 	renderer->size = size;
 	renderer->num_instance_buffers = num_instance_buffers;
 	renderer->instance_buffers = instance_buffers;
@@ -247,6 +252,8 @@ void sprite_sheet_renderer_d3d11_begin_font(Sprite_Sheet_Renderer* renderer,
 void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Font_Instances* instances,
                                             ID3D11DeviceContext*         dc,
                                             v2_u32                       screen_size);
+void sprite_sheet_renderer_d3d11_do_particles(Sprite_Sheet_Renderer* renderer,
+                                              ID3D11DeviceContext* dc);
 void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
                                      ID3D11DeviceContext*    dc);
 
@@ -520,6 +527,10 @@ u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
 		goto error_init_highlight_constant_buffer;
 	}
 
+	if (!particles_d3d11_init(&renderer->particles, device)) {
+		goto error_init_particles;
+	}
+
 	renderer->d3d11.output               = output;
 	renderer->d3d11.output_rtv           = output_rtv;
 	renderer->d3d11.output_uav           = output_uav;
@@ -542,6 +553,8 @@ u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
 	renderer->d3d11.font_vertex_shader   = font_vertex_shader;
 	return 1;
 
+	particles_d3d11_free(&renderer->particles);
+error_init_particles:
 	highlight_constant_buffer->Release();
 error_init_highlight_constant_buffer:
 	highlight_sprite_compute_shader->Release();
@@ -587,6 +600,7 @@ error_init_font_vertex_shader:
 
 void sprite_sheet_renderer_d3d11_free(Sprite_Sheet_Renderer* renderer)
 {
+	particles_d3d11_free(&renderer->particles);
 	renderer->d3d11.highlight_constant_buffer->Release();
 	renderer->d3d11.highlight_sprite_compute_shader->Release();
 	renderer->d3d11.clear_sprite_id_compute_shader->Release();
@@ -1000,6 +1014,24 @@ void sprite_sheet_renderer_d3d11_highlight_sprite(Sprite_Sheet_Renderer* rendere
 	dc->CSSetShaderResources(0, 1, &null_srv);
 	dc->CSSetUnorderedAccessViews(0, 1, &null_uav, NULL);
 	dc->CSSetShader(NULL, NULL, 0);
+}
+
+void sprite_sheet_renderer_d3d11_do_particles(Sprite_Sheet_Renderer* renderer,
+                                              ID3D11DeviceContext* dc)
+{
+	// XXX - tile width/height assumed
+	ID3D11RenderTargetView *rtvs[2] = {};
+	ID3D11RenderTargetView *null_rtvs[2] = {};
+	dc->OMGetRenderTargets(ARRAY_SIZE(rtvs), rtvs, NULL);
+	dc->OMSetRenderTargets(ARRAY_SIZE(null_rtvs), null_rtvs, NULL);
+
+	particles_d3d11_draw(&renderer->particles,
+	                     dc,
+	                     renderer->d3d11.output_uav,
+	                     { 24, 24 },
+	                     renderer->time);
+
+	dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, NULL);
 }
 
 void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
