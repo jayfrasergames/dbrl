@@ -8,10 +8,8 @@
     * member functions
   * card user interface
     * card discarding
-    * card "param selecting" state
   * hide mouse/use custom mouse cursor
-  * mouse over view entity health
-    * hold tab to view entity health
+  * hold tab to view entity health
   * sound
     * playing the same sound more than once simultaneously
   * transaction processing
@@ -21,7 +19,6 @@
   * invisible wall
   * fireball hits barrels, chain reaction
   * enemies
-    * slime, splitting
     * lich/skeletons
     * spiders (traps)
   * doors

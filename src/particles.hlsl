@@ -16,7 +16,7 @@ void cs_particles(uint tid : SV_DispatchThreadID)
 
 	float t = constants.time - instance.start_time;
 	float dt = t / (instance.end_time - instance.start_time);
-	if (dt < 0.0f) {
+	if (dt < 0.0f || dt > 1.0f) {
 		return;
 	}
 

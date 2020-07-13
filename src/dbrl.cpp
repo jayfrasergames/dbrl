@@ -98,6 +98,7 @@ enum Action_Type
 	ACTION_MOVE,
 	ACTION_WAIT,
 	ACTION_FIREBALL,
+	ACTION_FIRE_BOLT,
 	ACTION_EXCHANGE,
 	ACTION_BLINK,
 	ACTION_POISON,
@@ -127,6 +128,12 @@ struct Action
 		struct {
 			Entity_ID target;
 		} poison;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			// Pos start;
+			// Pos end;
+		} fire_bolt;
 	};
 
 	operator bool() { return type; }
@@ -152,6 +159,7 @@ enum Event_Type
 	EVENT_EXCHANGE,
 	EVENT_BLINK,
 	EVENT_SLIME_SPLIT,
+	EVENT_FIRE_BOLT_SHOT,
 };
 
 struct Event
@@ -206,6 +214,11 @@ struct Event
 			v2 start;
 			v2 end;
 		} slime_split;
+		struct {
+			v2 start;
+			v2 end;
+			f32 duration;
+		} fire_bolt_shot;
 	};
 };
 
@@ -228,6 +241,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_EXCHANGE: return 0;
 	case EVENT_BLINK: return 0;
 	case EVENT_SLIME_SPLIT: return 0;
+	case EVENT_FIRE_BOLT_SHOT: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -672,6 +686,9 @@ enum Transaction_Type
 	TRANSACTION_POISON_CAST,
 	TRANSACTION_POISON,
 	TRANSACTION_SLIME_SPLIT,
+	TRANSACTION_FIRE_BOLT_CAST,
+	TRANSACTION_FIRE_BOLT_SHOT,
+	TRANSACTION_FIRE_BOLT_HIT,
 };
 
 #define TRANSACTION_EPSILON 1e-6f;
@@ -715,6 +732,12 @@ struct Transaction
 			Entity_ID slime_id;
 			u32       hit_points;
 		} slime_split;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			Pos start;
+			Pos end;
+		} fire_bolt;
 	};
 };
 
@@ -876,6 +899,15 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			t.type = TRANSACTION_POISON_CAST;
 			t.start_time = 0.0f;
 			t.poison.entity_id = action.poison.target;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_FIRE_BOLT: {
+			Transaction t = {};
+			t.type = TRANSACTION_FIRE_BOLT_CAST;
+			t.start_time = 0.0f;
+			t.fire_bolt.caster_id = action.fire_bolt.caster_id;
+			t.fire_bolt.target_id = action.fire_bolt.target_id;
 			transactions.append(t);
 			break;
 		}
@@ -1268,6 +1300,57 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 					event.slime_split.end = (v2)end;
 					events.append(event);
 				}
+				break;
+			}
+			case TRANSACTION_FIRE_BOLT_CAST: {
+				Entity *caster = game_get_entity_by_id(game, t->fire_bolt.caster_id);
+				Entity *target = game_get_entity_by_id(game, t->fire_bolt.target_id);
+				if (!caster || !target) {
+					t->type = TRANSACTION_REMOVE;
+					break;
+				}
+				t->type = TRANSACTION_FIRE_BOLT_SHOT;
+				t->start_time += constants.anims.fire_bolt.cast_time;
+				Pos caster_pos = caster->pos;
+				Pos target_pos = target->pos;
+				t->fire_bolt.start = caster_pos;
+				t->fire_bolt.end = target_pos;
+				break;
+			}
+			case TRANSACTION_FIRE_BOLT_SHOT: {
+				t->type = TRANSACTION_FIRE_BOLT_HIT;
+				v2 p = (v2)t->fire_bolt.start - (v2)t->fire_bolt.end;
+				f32 d = sqrtf(p.x*p.x + p.y*p.y);
+				f32 shot_duration = d / constants.anims.fire_bolt.speed;
+				t->start_time += shot_duration;
+
+				Event e = {};
+				e.type = EVENT_FIRE_BOLT_SHOT;
+				e.time = time;
+				e.fire_bolt_shot.start = (v2)t->fire_bolt.start;
+				e.fire_bolt_shot.end   = (v2)t->fire_bolt.end;
+				e.fire_bolt_shot.duration = shot_duration;
+				events.append(e);
+
+				break;
+			}
+			case TRANSACTION_FIRE_BOLT_HIT: {
+				t->type = TRANSACTION_REMOVE;
+				Entity *target = game_get_entity_by_id(game, t->fire_bolt.target_id);
+				if (!target) {
+					break;
+				}
+				Pos target_pos = target->pos;
+				if (target_pos != t->fire_bolt.end) {
+					break;
+				}
+
+				Entity_Damage damage = {};
+				damage.entity_id = target->id;
+				damage.damage = 3;
+				damage.pos = target_pos;
+				entity_damage.append(damage);
+
 				break;
 			}
 			}
@@ -1848,6 +1931,7 @@ struct Anim
 			f32 duration;
 			v2 start;
 			v2 end;
+			v2 sprite_coords;
 		} projectile;
 		struct {
 			f32 start_time;
@@ -2031,6 +2115,13 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			a.projectile.start = (v2)event->fireball_shot.start;
 			a.projectile.end = (v2)event->fireball_shot.end;
 			anims.append(a);
+
+			a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_FIRE_SPELL_02;
+			anims.append(a);
+
 			break;
 		}
 		case EVENT_FIREBALL_HIT: {
@@ -2131,8 +2222,14 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 
 			anim = {};
 			anim.type = ANIM_BLINK_PARTICLES;
-			anim.blink_particles.time = particle_start;
+			anim.blink_particles.time = event->time;
 			anim.blink_particles.pos = (v2)event->blink.target;
+			world_anim->anims.append(anim);
+
+			anim = {};
+			anim.type = ANIM_SOUND;
+			anim.sound.start_time = particle_start;
+			anim.sound.sound_id = SOUND_CARD_GAME_ABILITIES_POOF_02;
 			world_anim->anims.append(anim);
 
 			break;
@@ -2152,6 +2249,39 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			anim.sprite_coords = appearance_get_creature_sprite_coords(
 				APPEARANCE_CREATURE_GREEN_SLIME);
 			world_anim->anims.append(anim);
+			break;
+		}
+		case EVENT_FIRE_BOLT_SHOT: {
+			Anim a = {};
+			a.type = ANIM_PROJECTILE_EFFECT_32;
+			a.projectile.start_time = event->time;
+			a.projectile.duration = event->fire_bolt_shot.duration;
+			v2 start = event->fire_bolt_shot.start;
+			v2 end = event->fire_bolt_shot.end;
+			a.projectile.start = start;
+			a.projectile.end = end;
+			v2 dir = end - start;
+			f32 angle = atan2f(-dir.y, dir.x);
+			angle /= PI_F32;
+			a.projectile.sprite_coords.y = 5;
+			f32 x;
+			if      (angle < -0.875f) { x = 2.0f; }
+			else if (angle < -0.625f) { x = 5.0f; }
+			else if (angle < -0.375f) { x = 3.0f; }
+			else if (angle < -0.125f) { x = 4.0f; }
+			else if (angle <  0.125f) { x = 0.0f; }
+			else if (angle <  0.375f) { x = 7.0f; }
+			else if (angle <  0.625f) { x = 1.0f; }
+			else if (angle <  0.875f) { x = 6.0f; }
+			else                      { x = 2.0f; }
+			a.projectile.sprite_coords.x = x;
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_FIRE_SPELL_04;
+			anims.append(a);
 			break;
 		}
 		}
@@ -2646,6 +2776,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 			instance.sprite_id = 0;
 			instance.depth_offset = 2.0f;
 			instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+			instance.sprite_pos = anim->projectile.sprite_coords;
 
 			sprite_sheet_instances_add(&draw->effects_32, instance);
 			break;
@@ -4475,6 +4606,26 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			ASSERT(card);
 
 			switch (card->appearance) {
+			case CARD_APPEARANCE_FIRE_BOLT: {
+				Card_Event card_event = {};
+				card_event.type = CARD_EVENT_SELECT;
+				card_event.select.card_id = card_id;
+				card_state->events.append(card_event);
+
+				Controller *c = &program->game.controllers[0];
+				ASSERT(c->type == CONTROLLER_PLAYER);
+
+				program->action_being_built.type = ACTION_FIRE_BOLT;
+				program->action_being_built.fire_bolt.caster_id = c->player.entity_id;
+
+				Card_Param param = {};
+				param.type = CARD_PARAM_CREATURE;
+				param.creature.id = &program->action_being_built.fire_bolt.target_id;
+				program->card_params_stack.push(param);
+				program->program_input_state_stack.push(GIS_CARD_PARAMS);
+
+				break;
+			}
 			case CARD_APPEARANCE_FIRE_MANA: {
 				Card_Event card_event = {};
 				card_event.type = CARD_EVENT_HAND_TO_IN_PLAY;
