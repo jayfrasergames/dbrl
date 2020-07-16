@@ -160,6 +160,7 @@ enum Event_Type
 	EVENT_BLINK,
 	EVENT_SLIME_SPLIT,
 	EVENT_FIRE_BOLT_SHOT,
+	EVENT_POLYMORPH,
 };
 
 struct Event
@@ -219,6 +220,11 @@ struct Event
 			v2 end;
 			f32 duration;
 		} fire_bolt_shot;
+		struct {
+			Entity_ID  entity_id;
+			Appearance new_appearance;
+			Pos        pos;
+		} polymorph;
 	};
 };
 
@@ -242,6 +248,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_BLINK: return 0;
 	case EVENT_SLIME_SPLIT: return 0;
 	case EVENT_FIRE_BOLT_SHOT: return 0;
+	case EVENT_POLYMORPH: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -270,14 +277,14 @@ enum Controller_Type
 {
 	CONTROLLER_PLAYER,
 	CONTROLLER_RANDOM_MOVE,
-	CONTROLLER_RANDOM_SNAKE,
 	CONTROLLER_DRAGON,
 	CONTROLLER_SLIME,
+	CONTROLLER_LICH,
 
 	NUM_CONTROLLERS,
 };
 
-#define CONTROLLER_SNAKE_MAX_LENGTH 16
+#define CONTROLLER_LICH_MAX_SKELETONS 16
 
 typedef u32 Controller_ID;
 struct Controller
@@ -293,15 +300,16 @@ struct Controller
 			Entity_ID entity_id;
 		} random_move;
 		struct {
-			Max_Length_Array<Entity_ID, CONTROLLER_SNAKE_MAX_LENGTH> entities;
-		} random_snake;
-		struct {
 			Entity_ID entity_id;
 		} dragon;
 		struct {
 			Entity_ID entity_id;
 			u32       split_cooldown;
 		} slime;
+		struct {
+			Entity_ID lich_id;
+			Max_Length_Array<Entity_ID, CONTROLLER_LICH_MAX_SKELETONS> skeleton_ids;
+		} lich;
 	};
 };
 
@@ -379,6 +387,8 @@ enum Message_Type : u32
 	MESSAGE_MOVE_PRE_ENTER  = 1 << 2,
 	MESSAGE_MOVE_POST_ENTER = 1 << 3,
 	MESSAGE_DAMAGE          = 1 << 4,
+	MESSAGE_PRE_DEATH       = 1 << 5,
+	MESSAGE_POST_DEATH      = 1 << 6,
 };
 
 struct Message
@@ -395,6 +405,9 @@ struct Message
 			i32       amount;
 			u8        entity_died;
 		} damage;
+		struct {
+			Entity_ID entity_id;
+		} death;
 	};
 };
 
@@ -405,6 +418,7 @@ enum Message_Handler_Type
 	MESSAGE_HANDLER_DROP_TILE,
 	MESSAGE_HANDLER_TRAP_FIREBALL,
 	MESSAGE_HANDLER_SLIME_SPLIT,
+	MESSAGE_HANDLER_LICH_DEATH,
 };
 
 struct Message_Handler
@@ -422,6 +436,9 @@ struct Message_Handler
 		struct {
 			Pos pos;
 		} trap;
+		struct {
+			Controller_ID controller_id;
+		} lich_death;
 	};
 };
 
@@ -506,9 +523,6 @@ void game_remove_entity(Game* game, Entity_ID entity_id)
 				goto break_loop;
 			}
 			break;
-		case CONTROLLER_RANDOM_SNAKE:
-			ASSERT(0);
-			break;
 		case CONTROLLER_DRAGON:
 			if (c->dragon.entity_id == entity_id) {
 				controllers.remove(i);
@@ -520,6 +534,23 @@ void game_remove_entity(Game* game, Entity_ID entity_id)
 				controllers.remove(i);
 				goto break_loop;
 			}
+			break;
+		case CONTROLLER_LICH: {
+			// XXX - not sure if this should remove the controller
+			if (c->lich.lich_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
+			auto& skeleton_ids = c->lich.skeleton_ids;
+			u32 num_skeleton_ids = skeleton_ids.len;
+			for (u32 i = 0; i < num_skeleton_ids; ++i) {
+				if (skeleton_ids[i] == entity_id) {
+					skeleton_ids.remove(i);
+					goto break_loop;
+				}
+			}
+			break;
+		}
 		}
 	}
 break_loop: ;
@@ -755,43 +786,43 @@ void game_dispatch_message(Game*               game,
 	auto& events = *event_buffer;
 	u32 num_handlers = handlers.len;
 	for (u32 i = 0; i < num_handlers; ++i) {
-		Message_Handler h = handlers[i];
-		if (!(message.type & h.handle_mask)) {
+		Message_Handler *h = &handlers[i];
+		if (!(message.type & h->handle_mask)) {
 			continue;
 		}
-		switch (h.type) {
+		switch (h->type) {
 		case MESSAGE_HANDLER_PREVENT_EXIT: {
-			if (h.prevent_exit.pos == message.move.start) {
+			if (h->prevent_exit.pos == message.move.start) {
 				u8 *can_exit = (u8*)data;
 				*can_exit = 0;
 			}
 			break;
 		}
 		case MESSAGE_HANDLER_PREVENT_ENTER: {
-			if (h.prevent_enter.pos.x == message.move.end.x
-			 && h.prevent_enter.pos.y == message.move.end.y) {
+			if (h->prevent_enter.pos.x == message.move.end.x
+			 && h->prevent_enter.pos.y == message.move.end.y) {
 				u8 *can_enter = (u8*)data;
 				*can_enter = 0;
 			}
 			break;
 		}
 		case MESSAGE_HANDLER_DROP_TILE:
-			if (h.trap.pos == message.move.start) {
+			if (h->trap.pos == message.move.start) {
 				// game->tiles[h.trap.pos].type = TILE_EMPTY;
 				Transaction t = {};
 				t.type = TRANSACTION_DROP_TILE;
 				t.start_time = time + 0.05f;
-				t.drop_tile.pos = h.trap.pos;
+				t.drop_tile.pos = h->trap.pos;
 				transactions.append(t);
 			}
 			break;
 		case MESSAGE_HANDLER_TRAP_FIREBALL:
-			if (h.trap.pos == message.move.end) {
+			if (h->trap.pos == message.move.end) {
 				Transaction t = {};
 				t.type = TRANSACTION_FIREBALL_OFFSHOOT;
 				t.start_time = time;
 				t.fireball_offshoot.start_time = time;
-				t.fireball_offshoot.start = h.trap.pos;
+				t.fireball_offshoot.start = h->trap.pos;
 				t.fireball_offshoot.cur_step = 0;
 				t.fireball_offshoot.num_steps = 3;
 
@@ -807,13 +838,13 @@ void game_dispatch_message(Game*               game,
 				Event e = {};
 				e.type = EVENT_FIREBALL_HIT;
 				e.time = time;
-				e.fireball_hit.pos = h.trap.pos;
+				e.fireball_hit.pos = h->trap.pos;
 				events.append(e);
 			}
 			break;
 		case MESSAGE_HANDLER_SLIME_SPLIT:
-			if (h.owner_id == message.damage.entity_id && !message.damage.entity_died) {
-				Entity *e = game_get_entity_by_id(game, h.owner_id);
+			if (h->owner_id == message.damage.entity_id && !message.damage.entity_died) {
+				Entity *e = game_get_entity_by_id(game, h->owner_id);
 				Pos p = e->pos;
 				/*
 				debug_draw_world_reset();
@@ -824,9 +855,44 @@ void game_dispatch_message(Game*               game,
 				Transaction t = {};
 				t.type = TRANSACTION_SLIME_SPLIT;
 				t.start_time = time + TRANSACTION_EPSILON;
-				t.slime_split.slime_id = h.owner_id;
+				t.slime_split.slime_id = h->owner_id;
 				t.slime_split.hit_points = e->hit_points;
 				transactions.append(t);
+			}
+			break;
+		case MESSAGE_HANDLER_LICH_DEATH:
+			if (h->owner_id == message.death.entity_id) {
+				Controller_ID c_id = h->lich_death.controller_id;
+				auto& controllers = game->controllers;
+				u32 num_controllers = game->controllers.len;
+				Controller *c = NULL;
+				for (u32 i = 0; i < num_controllers; ++i) {
+					if (controllers[i].id == c_id) {
+						c = &controllers[i];
+						break;
+					}
+				}
+				ASSERT(c);
+				auto& skeleton_ids = c->lich.skeleton_ids;
+				if (!skeleton_ids) {
+					break;
+				}
+				u32 idx = rand_u32() % skeleton_ids.len;
+				Entity_ID new_lich_id = skeleton_ids[idx];
+				skeleton_ids.remove(idx);
+				h->owner_id = new_lich_id;
+				c->lich.lich_id = new_lich_id;
+
+				Entity *entity = game_get_entity_by_id(game, new_lich_id);
+				ASSERT(entity);
+
+				Event e = {};
+				e.type = EVENT_POLYMORPH;
+				e.time = time;
+				e.polymorph.entity_id = new_lich_id;
+				e.polymorph.new_appearance = APPEARANCE_CREATURE_NECROMANCER;
+				e.polymorph.pos = entity->pos;
+				events.append(e);
 			}
 			break;
 		}
@@ -1372,15 +1438,6 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 			e->hit_points -= ed->damage;
 			u8 entity_died = e->hit_points <= 0;
-			if (entity_died) {
-				Event death_event = {};
-				death_event.type = EVENT_DEATH;
-				death_event.time = time;
-				death_event.death.entity_id = entity_id;
-				events.append(death_event);
-				// *e = game->entities[--game->num_entities];
-				game_remove_entity(game, entity_id);
-			}
 
 			Message m = {};
 			m.type = MESSAGE_DAMAGE;
@@ -1396,6 +1453,21 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			event.damaged.amount = ed->damage;
 			event.damaged.pos = ed->pos;
 			events.append(event);
+
+			if (entity_died) {
+				Message m = {};
+				m.type = MESSAGE_PRE_DEATH;
+				m.death.entity_id = entity_id;
+				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
+
+				Event death_event = {};
+				death_event.type = EVENT_DEATH;
+				death_event.time = time;
+				death_event.death.entity_id = entity_id;
+				events.append(death_event);
+				// *e = game->entities[--game->num_entities];
+				game_remove_entity(game, entity_id);
+			}
 		}
 
 		// remove finished transactions
@@ -1521,8 +1593,60 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 			}
 			break;
 		}
-		case CONTROLLER_RANDOM_SNAKE:
+		case CONTROLLER_LICH: {
+			Entity *e = game_get_entity_by_id(game, c->lich.lich_id);
+			u16 move_mask = e->movement_type;
+			Pos start = e->pos;
+			for (i8 dy = -1; dy <= 1; ++dy) {
+				for (i8 dx = -1; dx <= 1; ++dx) {
+					if (!(dx || dy)) {
+						continue;
+					}
+					Pos end = (Pos)((v2_i16)start + V2_i16(dx, dy));
+					Tile t = tiles[end];
+					if (tile_is_passable(t, move_mask)) {
+						Potential_Move pm = {};
+						pm.entity_id = e->id;
+						pm.start = start;
+						pm.end = end;
+						pm.weight = uniform_f32(0.0f, 1.0f);
+						// pm.weight = 1.0f;
+						potential_moves.append(pm);
+					}
+				}
+			}
+			auto& skeleton_ids = c->lich.skeleton_ids;
+			u32 num_skeleton_ids = skeleton_ids.len;
+			for (u32 i = 0; i < num_skeleton_ids; ++i) {
+				Entity *e = game_get_entity_by_id(game, skeleton_ids[i]);
+				// Pos p = e->pos;
+				v2_i16 start = (v2_i16)e->pos;
+				v2_i16 iplayer_pos = (v2_i16)player_pos;
+				v2_i16 d = iplayer_pos - start;
+				u32 distance_squared = (u32)(d.x*d.x + d.y*d.y);
+				for (i16 dy = -1; dy <= 1; ++dy) {
+					for (i16 dx = -1; dx <= 1; ++dx) {
+						if (!dx && !dy) {
+							continue;
+						}
+						v2_i16 end = start + (V2_i16)(dx, dy);
+						d = iplayer_pos - end;
+						Pos pend = (Pos)end;
+						Tile t = tiles[pend];
+						if ((u32)(d.x*d.x + d.y*d.y) <= distance_squared
+						 && tile_is_passable(t, e->movement_type)) {
+							Potential_Move pm = {};
+							pm.entity_id = e->id;
+							pm.start = (Pos)start;
+							pm.end = (Pos)end;
+							pm.weight = uniform_f32(1.9f, 2.1f);
+							potential_moves.append(pm);
+						}
+					}
+				}
+			}
 			break;
+		}
 		}
 	}
 
@@ -1676,6 +1800,10 @@ void game_build_from_string(Game* game, char* str)
 	auto& handlers = game->handlers;
 	memset(&tiles, 0, sizeof(tiles));
 
+	Controller lich_controller_tmp = {};
+	lich_controller_tmp.type = CONTROLLER_LICH;
+	Controller *lich_controller = &lich_controller_tmp;
+
 	for (char *p = str; *p; ++p) {
 		switch (*p) {
 		case '\n':
@@ -1728,6 +1856,51 @@ void game_build_from_string(Game* game, char* str)
 			game_add_slime(game, cur_pos, 5);
 			e_id = game->next_entity_id;
 
+			break;
+		}
+		case 'L': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			Entity e = {};
+			e.hit_points = 10;
+			e.max_hit_points = 10;
+			e.id = e_id++;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_CREATURE_NECROMANCER;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.movement_type = BLOCK_WALK;
+			game->entities.append(e);
+
+			lich_controller->id = c_id++;
+			lich_controller->lich.lich_id = e.id;
+			game->controllers.append(*lich_controller);
+			lich_controller = &game->controllers[game->controllers.len - 1];
+
+			Message_Handler mh = {};
+			mh.type = MESSAGE_HANDLER_LICH_DEATH;
+			mh.handle_mask = MESSAGE_PRE_DEATH;
+			mh.owner_id = e.id;
+			mh.lich_death.controller_id = lich_controller->id;
+			handlers.append(mh);
+
+			break;
+		}
+		case 'S': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			Entity e = {};
+			e.hit_points = 10;
+			e.max_hit_points = 10;
+			e.id = e_id++;
+			e.pos = cur_pos;
+			e.appearance = APPEARANCE_CREATURE_SKELETON;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.movement_type = BLOCK_WALK;
+			game->entities.append(e);
+
+			lich_controller->lich.skeleton_ids.append(e.id);
 			break;
 		}
 		case 'd': {
@@ -1903,6 +2076,8 @@ enum Anim_Type
 	ANIM_BLINK,
 	ANIM_BLINK_PARTICLES,
 	ANIM_SLIME_SPLIT,
+	ANIM_POLYMORPH,
+	ANIM_POLYMORPH_PARTICLES,
 };
 
 struct Anim
@@ -1973,6 +2148,16 @@ struct Anim
 			v2 start;
 			v2 end;
 		} slime_split;
+		struct {
+			f32 start_time;
+			Entity_ID entity_id;
+			v2        pos;
+			v2        new_sprite_coords;
+		} polymorph;
+		struct {
+			f32 start_time;
+			v2  pos;
+		} polymorph_particles;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -1998,6 +2183,8 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_BLINK:                return 1;
 	case ANIM_BLINK_PARTICLES:      return 1;
 	case ANIM_SLIME_SPLIT:          return 1;
+	case ANIM_POLYMORPH:            return 1;
+	case ANIM_POLYMORPH_PARTICLES:  return 1;
 	}
 	ASSERT(0);
 	return 0;
@@ -2283,6 +2470,27 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			a.sound.sound_id = SOUND_FIRE_SPELL_04;
 			anims.append(a);
 			break;
+		}
+		case EVENT_POLYMORPH: {
+			Anim a = {};
+			a.type = ANIM_POLYMORPH;
+			a.polymorph.start_time = event->time;
+			a.polymorph.entity_id = event->polymorph.entity_id;
+			a.polymorph.new_sprite_coords = appearance_get_creature_sprite_coords(
+				event->polymorph.new_appearance);
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_POLYMORPH_PARTICLES;
+			a.polymorph_particles.start_time = event->time;
+			a.polymorph_particles.pos = (v2)event->polymorph.pos;
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_SHADOW_SPELL_01;
+			anims.append(a);
 		}
 		}
 		++event_idx;
@@ -2578,7 +2786,8 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				instance.start_color = { 0.0f, 1.0f, 1.0f, 1.0f };
 				instance.end_color = { 1.0f, 1.0f, 1.0f, 1.0f };
 
-				for (u32 i = 0; i < 64; ++i) {
+				u32 num_particles = constants.anims.blink.num_particles;
+				for (u32 i = 0; i < num_particles; ++i) {
 					f32 speed = rand_f32() + 1.0f;
 					f32 angle = 2.0f * PI_F32 * rand_f32();
 					v2 v = { cosf(angle), sinf(angle) };
@@ -2597,6 +2806,56 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				anim->type = ANIM_CREATURE_IDLE;
 				anim->idle.offset = time;
 				anim->idle.duration = uniform_f32(0.8f, 1.2f);
+			}
+			break;
+		case ANIM_POLYMORPH:
+			if (anim->polymorph.start_time <= dyn_time) {
+				Entity_ID e_id = anim->polymorph.entity_id;
+				for (u32 i = 0; i < anims.len; ++i) {
+					Anim *a = &anims[i];
+					if (a->entity_id == e_id) {
+						a->sprite_coords = anim->polymorph.new_sprite_coords;
+					}
+				}
+				anims.remove(i);
+				continue;
+			}
+			break;
+		case ANIM_POLYMORPH_PARTICLES:
+			if (anim->polymorph_particles.start_time <= dyn_time) {
+				u32 num_particles = constants.anims.polymorph.num_particles;
+
+				Particles *particles = &draw->renderer.particles;
+				Particle_Instance instance = {};
+				instance.start_pos = anim->polymorph_particles.pos;
+				instance.start_time = time;
+				instance.end_time = time + constants.anims.polymorph.duration;
+				f32 sin_inner_coeff = constants.anims.polymorph.rotation_speed;
+				sin_inner_coeff /= (PI_F32 / 2.0f);
+				instance.sin_inner_coeff = V2_f32(sin_inner_coeff, sin_inner_coeff);
+
+				for (u32 i = 0; i < num_particles; ++i) {
+					instance.start_color = {
+						uniform_f32(0.8f, 1.0f),
+						uniform_f32(0.8f, 1.0f),
+						uniform_f32(0.8f, 1.0f),
+						1.0f
+					};
+					instance.end_color = {
+						uniform_f32(0.8f, 1.0f),
+						uniform_f32(0.8f, 1.0f),
+						uniform_f32(0.8f, 1.0f),
+						1.0f
+					};
+					f32 angle = 2.0f * PI_F32 * rand_f32();
+					instance.sin_phase_offset = V2_f32(PI_F32 / 2.0f, 0.0f) + angle;
+					f32 radius = uniform_f32(constants.anims.polymorph.min_radius,
+					                         constants.anims.polymorph.max_radius);
+					instance.sin_outer_coeff = V2_f32(radius, radius);
+					particles_add(particles, instance);
+				}
+				anims.remove(i);
+				continue;
 			}
 			break;
 		}
@@ -4133,6 +4392,40 @@ void build_level_slime_test(Program* program)
 	world_anim_init(&program->world_anim, &program->game);
 }
 
+void build_level_lich(Program *program)
+{
+	game_build_from_string(&program->game,
+		"##############################\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#.............L..............#\n"
+		"#............................#\n"
+		"#........S........S..........#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#......S......@......S.......#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#........S.........S.........#\n"
+		"#.............S..............#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"##############################\n");
+
+	program->draw.camera.zoom = 14.0f;
+	Pos player_pos = game_get_player_pos(&program->game);
+	program->draw.camera.world_center = (v2)player_pos;
+
+	memset(&program->world_anim, 0, sizeof(program->world_anim));
+	world_anim_init(&program->world_anim, &program->game);
+}
+
 void build_deck_random_n(Program *program, u32 n)
 {
 	// cards
@@ -5024,6 +5317,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 			if (imgui_button(&program->imgui, "slime test")) {
 				build_level_slime_test(program);
+			}
+			if (imgui_button(&program->imgui, "lich test")) {
+				build_level_lich(program);
 			}
 			imgui_tree_end(&program->imgui);
 		}

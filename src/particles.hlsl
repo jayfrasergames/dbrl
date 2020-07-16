@@ -23,6 +23,9 @@ void cs_particles(uint tid : SV_DispatchThreadID)
 	float4 color = lerp(instance.start_color, instance.end_color, float4(dt, dt, dt, dt));
 
 	float2 pos = instance.start_pos + t * instance.start_velocity;
+	pos += t*t * instance.acceleration;
+	pos += instance.sin_outer_coeff * sin(instance.sin_phase_offset + instance.sin_inner_coeff * t);
+
 	uint2 output_loc = floor((pos + 0.5f) * constants.tile_size + 0.5f);
 
 	output[output_loc] = color;

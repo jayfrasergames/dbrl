@@ -65,7 +65,7 @@
   * events not sent if mouse leaves window - need to turn off map dragging mode when re-entering the
     window
   * card renderer to do proper anti aliasing/alpha transparency (also mip mapping)
-
+  * ending turn before card dealt animation finished
 
 * decision
   * characters/items/tiles to be rendered pixel perfect (tile shader)

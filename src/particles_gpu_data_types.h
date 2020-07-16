@@ -23,6 +23,12 @@ struct Particle_Instance
 	F4 end_color;
 
 	F2 start_velocity;
+	F2 acceleration;
+
+	F2 sin_inner_coeff;
+	F2 sin_outer_coeff;
+
+	F2 sin_phase_offset;
 };
 
 #endif
