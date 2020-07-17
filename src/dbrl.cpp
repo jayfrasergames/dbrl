@@ -102,6 +102,7 @@ enum Action_Type
 	ACTION_EXCHANGE,
 	ACTION_BLINK,
 	ACTION_POISON,
+	ACTION_HEAL,
 };
 
 struct Action
@@ -134,6 +135,11 @@ struct Action
 			// Pos start;
 			// Pos end;
 		} fire_bolt;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			i32 amount;
+		} heal;
 	};
 
 	operator bool() { return type; }
@@ -161,6 +167,7 @@ enum Event_Type
 	EVENT_SLIME_SPLIT,
 	EVENT_FIRE_BOLT_SHOT,
 	EVENT_POLYMORPH,
+	EVENT_HEAL,
 };
 
 struct Event
@@ -225,6 +232,13 @@ struct Event
 			Appearance new_appearance;
 			Pos        pos;
 		} polymorph;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			i32 amount;
+			v2 start;
+			v2 end;
+		} heal;
 	};
 };
 
@@ -249,6 +263,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_SLIME_SPLIT: return 0;
 	case EVENT_FIRE_BOLT_SHOT: return 0;
 	case EVENT_POLYMORPH: return 0;
+	case EVENT_HEAL: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -309,6 +324,7 @@ struct Controller
 		struct {
 			Entity_ID lich_id;
 			Max_Length_Array<Entity_ID, CONTROLLER_LICH_MAX_SKELETONS> skeleton_ids;
+			u32 heal_cooldown;
 		} lich;
 	};
 };
@@ -596,6 +612,27 @@ Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
 	return NULL;
 }
 
+Entity_ID lich_get_skeleton_to_heal(Game *game, Controller *controller)
+{
+	Entity_ID best_skeleton_id = 0;
+	if (!controller->lich.heal_cooldown) {
+		auto& skeleton_ids = controller->lich.skeleton_ids;
+		u32 num_skeleton_ids = skeleton_ids.len;
+		i32 best_heal = 0;
+		for (u32 i = 0; i < num_skeleton_ids; ++i) {
+			Entity_ID e_id = skeleton_ids[i];
+			Entity *e = game_get_entity_by_id(game, e_id);
+			ASSERT(e);
+			i32 heal = e->max_hit_points - e->hit_points;
+			if (heal > best_heal) {
+				best_skeleton_id = e_id;
+				best_heal = heal;
+			}
+		}
+	}
+	return best_skeleton_id;
+}
+
 u8 tile_is_passable(Tile tile, u16 move_mask)
 {
 	switch (tile.type) {
@@ -720,6 +757,8 @@ enum Transaction_Type
 	TRANSACTION_FIRE_BOLT_CAST,
 	TRANSACTION_FIRE_BOLT_SHOT,
 	TRANSACTION_FIRE_BOLT_HIT,
+	TRANSACTION_HEAL_CAST,
+	TRANSACTION_HEAL,
 };
 
 #define TRANSACTION_EPSILON 1e-6f;
@@ -769,6 +808,12 @@ struct Transaction
 			Pos start;
 			Pos end;
 		} fire_bolt;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			i32 amount;
+			Pos start;
+		} heal;
 	};
 };
 
@@ -974,6 +1019,15 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			t.start_time = 0.0f;
 			t.fire_bolt.caster_id = action.fire_bolt.caster_id;
 			t.fire_bolt.target_id = action.fire_bolt.target_id;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_HEAL: {
+			Transaction t = {};
+			t.type = TRANSACTION_HEAL_CAST;
+			t.heal.caster_id = action.heal.caster_id;
+			t.heal.target_id = action.heal.target_id;
+			t.heal.amount = action.heal.amount;
 			transactions.append(t);
 			break;
 		}
@@ -1419,6 +1473,38 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 				break;
 			}
+			case TRANSACTION_HEAL_CAST: {
+				t->type = TRANSACTION_HEAL;
+				t->start_time += constants.anims.heal.cast_time;
+				Entity *caster = game_get_entity_by_id(game, t->heal.caster_id);
+				if (!caster) {
+					t->type = TRANSACTION_REMOVE;
+					break;
+				}
+				t->heal.start = caster->pos;
+				break;
+			}
+			case TRANSACTION_HEAL: {
+				t->type = TRANSACTION_REMOVE;
+				Entity *target = game_get_entity_by_id(game, t->heal.target_id);
+				if (!target) {
+					break;
+				}
+				target->hit_points += t->heal.amount;
+				target->hit_points = min(target->hit_points, target->max_hit_points);
+
+				Event e = {};
+				e.type = EVENT_HEAL;
+				e.time = time - constants.anims.heal.cast_time;
+				e.heal.caster_id = t->heal.caster_id;
+				e.heal.target_id = t->heal.target_id;
+				e.heal.amount = t->heal.amount;
+				ASSERT(t->heal.amount);
+				e.heal.start = (v2)t->heal.start;
+				e.heal.end = (v2)target->pos;
+				events.append(e);
+				break;
+			}
 			}
 		}
 
@@ -1594,24 +1680,26 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 			break;
 		}
 		case CONTROLLER_LICH: {
-			Entity *e = game_get_entity_by_id(game, c->lich.lich_id);
-			u16 move_mask = e->movement_type;
-			Pos start = e->pos;
-			for (i8 dy = -1; dy <= 1; ++dy) {
-				for (i8 dx = -1; dx <= 1; ++dx) {
-					if (!(dx || dy)) {
-						continue;
-					}
-					Pos end = (Pos)((v2_i16)start + V2_i16(dx, dy));
-					Tile t = tiles[end];
-					if (tile_is_passable(t, move_mask)) {
-						Potential_Move pm = {};
-						pm.entity_id = e->id;
-						pm.start = start;
-						pm.end = end;
-						pm.weight = uniform_f32(0.0f, 1.0f);
-						// pm.weight = 1.0f;
-						potential_moves.append(pm);
+			if (!lich_get_skeleton_to_heal(game, c)) {
+				Entity *e = game_get_entity_by_id(game, c->lich.lich_id);
+				u16 move_mask = e->movement_type;
+				Pos start = e->pos;
+				for (i8 dy = -1; dy <= 1; ++dy) {
+					for (i8 dx = -1; dx <= 1; ++dx) {
+						if (!(dx || dy)) {
+							continue;
+						}
+						Pos end = (Pos)((v2_i16)start + V2_i16(dx, dy));
+						Tile t = tiles[end];
+						if (tile_is_passable(t, move_mask)) {
+							Potential_Move pm = {};
+							pm.entity_id = e->id;
+							pm.start = start;
+							pm.end = end;
+							pm.weight = uniform_f32(0.0f, 1.0f);
+							// pm.weight = 1.0f;
+							potential_moves.append(pm);
+						}
 					}
 				}
 			}
@@ -1762,6 +1850,22 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 			*/
 
 			actions.append(a);
+			break;
+		}
+		case CONTROLLER_LICH: {
+			Entity_ID skeleton_to_heal = lich_get_skeleton_to_heal(game, c);
+			if (skeleton_to_heal) {
+				c->lich.heal_cooldown = 5;
+
+				Action a = {};
+				a.type = ACTION_HEAL;
+				a.heal.caster_id = c->lich.lich_id;
+				a.heal.target_id = skeleton_to_heal;
+				a.heal.amount = 5;
+				actions.append(a);
+			} else if (c->lich.heal_cooldown) {
+				--c->lich.heal_cooldown;
+			}
 			break;
 		}
 		}
@@ -2078,6 +2182,7 @@ enum Anim_Type
 	ANIM_SLIME_SPLIT,
 	ANIM_POLYMORPH,
 	ANIM_POLYMORPH_PARTICLES,
+	ANIM_HEAL_PARTICLES,
 };
 
 struct Anim
@@ -2158,6 +2263,12 @@ struct Anim
 			f32 start_time;
 			v2  pos;
 		} polymorph_particles;
+		struct {
+			f32 start_time;
+			f32 duration;
+			v2 start;
+			v2 end;
+		} heal_particles;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -2185,6 +2296,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_SLIME_SPLIT:          return 1;
 	case ANIM_POLYMORPH:            return 1;
 	case ANIM_POLYMORPH_PARTICLES:  return 1;
+	case ANIM_HEAL_PARTICLES:       return 1;
 	}
 	ASSERT(0);
 	return 0;
@@ -2491,6 +2603,35 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			a.sound.start_time = event->time;
 			a.sound.sound_id = SOUND_SHADOW_SPELL_01;
 			anims.append(a);
+		}
+		case EVENT_HEAL: {
+			Anim a = {};
+			a.type = ANIM_HEAL_PARTICLES;
+			a.heal_particles.start_time = event->time;
+			a.heal_particles.duration = constants.anims.heal.cast_time;
+			// a.heal_particles.amount = event->heal.amount;
+			a.heal_particles.start = (v2)event->heal.start;
+			a.heal_particles.end = (v2)event->heal.end;
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_TEXT;
+			a.text.start_time = event->time + constants.anims.heal.cast_time;
+			a.text.duration = 1.0f;
+			a.text.color = V4_f32(0.0f, 1.0f, 1.0f, 1.0f);
+			snprintf((char*)a.text.caption,
+			         ARRAY_SIZE(a.text.caption),
+			         "%d",
+			         event->heal.amount);
+			a.world_coords = (v2)event->heal.end;
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_HEALING_01;
+			anims.append(a);
+			break;
 		}
 		}
 		++event_idx;
@@ -2854,6 +2995,37 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 					instance.sin_outer_coeff = V2_f32(radius, radius);
 					particles_add(particles, instance);
 				}
+				anims.remove(i);
+				continue;
+			}
+			break;
+		case ANIM_HEAL_PARTICLES:
+			if (anim->heal_particles.start_time <= dyn_time) {
+				u32 num_particles = constants.anims.heal.num_particles;
+
+				Particles *particles = &draw->renderer.particles;
+				Particle_Instance instance = {};
+				v2 start = anim->heal_particles.start;
+				v2 velocity = anim->heal_particles.end - start;
+				f32 dist = sqrtf(velocity.x*velocity.x + velocity.y*velocity.y);
+				velocity = velocity / constants.anims.heal.cast_time;
+				instance.start_color = { 1.0f, 1.0f, 1.0f, 1.0f };
+				instance.end_color = { 1.0f, 0.0f, 0.0f, 1.0f };
+				f32 start_time = time;
+				f32 end_time = time + constants.anims.heal.cast_time;
+
+				for (u32 i = 0; i < num_particles; ++i) {
+					f32 radius = uniform_f32(0.1f, 0.5f);
+					f32 angle = rand_f32() * PI_F32 / 2.0f;
+					v2 offset = radius * V2_f32(cosf(angle), sinf(angle));
+					f32 time_offset = rand_f32() * 0.1f;
+					instance.start_velocity = velocity;
+					instance.start_pos = start + offset;
+					instance.start_time= start_time + time_offset;
+					instance.end_time = end_time + time_offset;
+					particles_add(particles, instance);
+				}
+
 				anims.remove(i);
 				continue;
 			}
@@ -3477,7 +3649,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			f32 smooth = (3.0f - 2.0f * dt) * dt * dt;
 
 			if (dt < 0.5f) {
-				anim->pos.z_offset = 1.0f;
+				anim->pos.z_offset = 2.0f - (f32)anim->draw.hand_index / hand_params.num_cards;
 			} else {
 				anim->pos.z_offset = (f32)anim->draw.hand_index / hand_params.num_cards;
 			}

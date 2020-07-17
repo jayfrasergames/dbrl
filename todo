@@ -19,7 +19,6 @@
   * invisible wall
   * fireball hits barrels, chain reaction
   * enemies
-    * lich/skeletons
     * spiders (traps)
   * doors
   * spells/cards
@@ -33,9 +32,6 @@
     * disease (card can't be discarded)
   * improve anims etc
     * exchange
-      * cast sound
-      * "particle" effects
-    * blink
       * cast sound
       * "particle" effects
     * poison card (take damage, anims etc)
