@@ -14,6 +14,7 @@
     * playing the same sound more than once simultaneously
   * transaction processing
     * only collapse "Entity_Damage" events after processing transactions
+  * "rational" class?
 
 * scenarios:
   * invisible wall
@@ -54,6 +55,13 @@
     * global context
         * thread local global context
     * strings
+  * debug draw transparency
+
+* cleanup
+  * move to "pure" ECS
+  * split into multiple files/move to CMake in the "normal" fashion
+  * "stateless" DX11 usage
+  * use precompiled header?
 
 * bugs
   * "release" mode compile

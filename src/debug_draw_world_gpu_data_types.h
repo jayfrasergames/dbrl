@@ -18,4 +18,12 @@ struct Debug_Draw_World_Triangle
 	F4 color; // Nvidia will be upset :(
 };
 
+struct Debug_Draw_World_Line
+{
+	F2 start;
+	F2 end;
+
+	F4 color;
+};
+
 #endif

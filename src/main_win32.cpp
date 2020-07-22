@@ -661,6 +661,8 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 		return 0;
 	}
 
+	// XXX -- use this to force the old DLL to be deleted
+	was_library_written();
 	if (!load_game_functions()) {
 		return 0;
 	}

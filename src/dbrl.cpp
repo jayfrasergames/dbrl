@@ -56,8 +56,9 @@ Pos u16_to_pos(u16 n)
 typedef u16 Entity_ID;
 
 struct Program;
-thread_local Program* global_program;
-thread_local Log* debug_log;
+thread_local Program *global_program;
+thread_local Log *debug_log;
+thread_local Log *debug_pause_log;
 void debug_pause();
 
 template <typename T>
@@ -286,6 +287,7 @@ struct Entity
 	Appearance    appearance;
 	i32           hit_points;
 	i32           max_hit_points;
+	u8            blocks_vision;
 };
 
 enum Controller_Type
@@ -610,6 +612,414 @@ Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
 		}
 	}
 	return NULL;
+}
+
+void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id)
+{
+	const u8 is_wall            = 1 << 0;
+	const u8 bevel_top_left     = 1 << 1;
+	const u8 bevel_top_right    = 1 << 2;
+	const u8 bevel_bottom_left  = 1 << 3;
+	const u8 bevel_bottom_right = 1 << 4;
+	Map_Cache<u8> map;
+	memset(map.items, 0, sizeof(map.items));
+
+	auto& tiles = game->tiles;
+	for (u16 y = 0; y < 256; ++y) {
+		for (u16 x = 0; x < 256; ++x) {
+			Pos p = V2_u8((u8)x, (u8)y);
+			switch (tiles[p].type) {
+			case TILE_EMPTY:
+			case TILE_FLOOR:
+			case TILE_WATER:
+				break;
+			case TILE_WALL:
+				map[p] |= is_wall;
+				break;
+			default:
+				ASSERT(0);
+			}
+		}
+	}
+
+	for (u16 i = 0; i < 256; ++i) {
+		u8 x = (u8)i;
+		map[V2_u8(  x,   0)] |= is_wall;
+		map[V2_u8(  x, 255)] |= is_wall;
+		map[V2_u8(  0,   x)] |= is_wall;
+		map[V2_u8(255,   x)] |= is_wall;
+	}
+
+	auto& entities = game->entities;
+	for (u32 i = 0; i < entities.len; ++i) {
+		if (entities[i].blocks_vision) {
+			map[entities[i].pos] |= is_wall;
+		}
+	}
+
+	for (u8 y = 1; y < 255; ++y) {
+		for (u8 x = 1; x < 255; ++x) {
+			u8 center = map[V2_u8(x, y)];
+			if (!center) {
+				continue;
+			}
+
+			u8 above  = map[V2_u8(    x, y - 1)];
+			u8 left   = map[V2_u8(x - 1,     y)];
+			u8 right  = map[V2_u8(x + 1,     y)];
+			u8 bottom = map[V2_u8(    x, y + 1)];
+
+			if (!above  && !left)  { center |= bevel_top_left;     }
+			if (!above  && !right) { center |= bevel_top_right;    }
+			if (!bottom && !left)  { center |= bevel_bottom_left;  }
+			if (!bottom && !right) { center |= bevel_bottom_right; }
+
+			map[V2_u8(x, y)] = center;
+		}
+	}
+
+	debug_draw_world_reset();
+
+	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 0.5f));
+	for (u16 y16 = 0; y16 < 256; ++y16) {
+		for (u16 x16 = 0; x16 < 256; ++x16) {
+			u8 x = (u8)x16, y = (u8)y16;
+			u8 cell = map[V2_u8(x, y)];
+			if (cell) {
+				/*
+				   a--b--c
+				   |/   \|
+				   d     e
+				   |\   /|
+				   f--g--h
+				*/
+				v2 a = V2_f32(x - 0.5f, y - 0.5f);
+				v2 b = V2_f32(       x, y - 0.5f);
+				v2 c = V2_f32(x + 0.5f, y - 0.5f);
+				v2 d = V2_f32(x - 0.5f,        y);
+				v2 e = V2_f32(x + 0.5f,        y);
+				v2 f = V2_f32(x - 0.5f, y + 0.5f);
+				v2 g = V2_f32(       x, y + 0.5f);
+				v2 h = V2_f32(x + 0.5f, y + 0.5f);
+				debug_draw_world_triangle(b, d, g);
+				debug_draw_world_triangle(b, e, g);
+				if (!(cell & bevel_top_left))     { debug_draw_world_triangle(a, b, d); }
+				if (!(cell & bevel_top_right))    { debug_draw_world_triangle(b, c, e); }
+				if (!(cell & bevel_bottom_left))  { debug_draw_world_triangle(d, f, g); }
+				if (!(cell & bevel_bottom_right)) { debug_draw_world_triangle(e, g, h); }
+			}
+		}
+	}
+
+	debug_pause();
+
+	Entity *vision_entity = game_get_entity_by_id(game, vision_entity_id);
+	ASSERT(vision_entity);
+
+	struct Sector
+	{
+		Rational start;
+		Rational end;
+	};
+
+	Map_Cache_Bool result;
+	result.reset();
+	Max_Length_Array<Sector, 1024> sectors_1, sectors_2;
+	Max_Length_Array<Sector, 1024> *sectors_front = &sectors_1, *sectors_back = &sectors_2;
+	sectors_front->reset();
+	sectors_back->reset();
+	{
+		Sector s = {};
+		s.start.numerator = 0;
+		s.start.denominator = 1;
+		s.end.numerator = 1;
+		s.end.denominator = 1;
+		sectors_front->append(s);
+	}
+
+	const i32 half_cell_size = 2;
+	const i32 cell_margin = 1;
+	const i32 cell_size = 2 * half_cell_size;
+	const i32 cell_inner_size = cell_size - 2 * cell_margin;
+	const Rational wall_see_low  = Rational::cancel(1, 6);
+	const Rational wall_see_high = Rational::cancel(5, 6);
+
+	Pos vision_pos = vision_entity->pos;
+
+	debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 1.0f, 1.0f));
+	debug_draw_world_circle((v2)vision_pos, 0.25f);
+
+	f32 square_edge_length = (f32)cell_inner_size / (f32)cell_size;
+
+	debug_draw_world_push_state();
+
+	auto draw_slope = [vision_pos](Rational r, v4 color)
+	{
+		v2 origin = (v2)(Pos)vision_pos;
+		f32 y = 100.0f;
+		f32 x = y * (f32)r.numerator / (f32)r.denominator;
+		v4 tmp = debug_draw_world_context->current_color;
+		debug_draw_world_context->current_color = color;
+		debug_draw_world_line(origin, origin + V2_f32(x, -y));
+		debug_draw_world_context->current_color = tmp;
+	};
+
+	Log *l = debug_pause_log;
+	char buffer[4096];
+
+	for (u16 y = vision_pos.y, y_iter = 0; y > 0; --y, ++y_iter) {
+		debug_draw_world_restore_state();
+		auto& old_sectors = *sectors_front;
+		auto& new_sectors = *sectors_back;
+		new_sectors.reset();
+
+		debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 0.5f));
+		for (u32 i = 0; i < old_sectors.len; ++i) {
+			Sector s = old_sectors[i];
+
+			// draw sector
+			{
+				v2 origin = (v2)vision_pos;
+				f32 y = (f32)y_iter + 0.5f;
+				f32 left = y * (f32)s.start.numerator / (f32)s.start.denominator;
+				f32 right = y * (f32)s.end.numerator / (f32)s.end.denominator;
+				v2 l = origin + V2_f32(left, -y);
+				v2 r = origin + V2_f32(right, -y);
+				debug_draw_world_set_color(V4_f32(0.0f, 0.0f, 1.0f, 0.5f));
+				debug_draw_world_triangle(origin, l, r);
+				debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 1.0f, 1.0f));
+				debug_draw_world_line(origin, l);
+				debug_draw_world_line(origin, r);
+			}
+
+			// XXX -- this seems sketchy
+			u16 x_start = ((y_iter * cell_size - cell_size / 2) * s.start.numerator
+			                + (s.start.denominator * cell_size / 2))
+			              / (s.start.denominator * cell_size);
+
+			u16 x_end = ((y_iter * cell_size + cell_size / 2) * s.end.numerator
+			              + (s.end.denominator * cell_size / 2) - 1)
+			            / (cell_size * s.end.denominator);
+
+			snprintf(buffer, ARRAY_SIZE(buffer), "y_iter    = %hu", y_iter);
+			log(l, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "cell_size = %u", cell_size);
+			log(l, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "start     = %u/%u",
+			         s.start.numerator, s.start.denominator);
+			log(l, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "end       = %u/%u",
+			         s.end.numerator, s.end.denominator);
+			log(l, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "x_start   = %hu", x_start);
+			log(l, buffer);
+			snprintf(buffer, ARRAY_SIZE(buffer), "x_end     = %hu", x_end);
+			log(l, buffer);
+			debug_pause();
+			log_reset(l);
+
+			debug_draw_world_push_state();
+			debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 1.0f, 1.0f));
+			debug_draw_world_sqaure(V2_f32(vision_pos.x + x_start, y), square_edge_length);
+			debug_draw_world_sqaure(V2_f32(vision_pos.x + x_end, y), square_edge_length);
+			log(l, "Here.");
+			debug_pause();
+			log_reset(l);
+			debug_draw_world_pop_state();
+
+			debug_draw_world_push_state();
+			u8 prev_was_clear = 0;
+			for (u16 x = vision_pos.x + x_start, x_iter = x_start;
+			     x_iter <= x_end;
+			     ++x, ++x_iter) {
+				Pos p = V2_u8((u8)x, (u8)y);
+				u8 cell = map[p];
+				if (cell & is_wall) {
+					// TODO -- come up with a better criterion for deciding
+					// visibility of walls
+					u8 horiz_visible = 0;
+					Rational horiz_left_intersect = Rational::cancel(
+						s.start.numerator * ((i32)y_iter * cell_size
+						                      - half_cell_size)
+						+ s.start.denominator * (half_cell_size
+						                         - (i32)x_iter * cell_size),
+						s.start.denominator * cell_size
+					);
+					Rational horiz_right_intersect = Rational::cancel(
+						s.end.numerator * ((i32)y_iter * cell_size
+						                      - half_cell_size)
+						+ s.end.denominator * (half_cell_size
+						                       - (i32)x_iter * cell_size),
+						s.end.denominator * cell_size
+					);
+					Rational vert_left_intersect = Rational::cancel(
+						s.start.denominator * (2 * x_iter - 1)
+						+ s.start.numerator * (1 - 2 * y_iter),
+						2 * s.start.numerator
+					);
+					Rational vert_right_intersect = Rational::cancel(
+						s.end.denominator * (2 * x_iter - 1)
+						+ s.end.numerator * (1 - 2 * y_iter),
+						2 * s.end.numerator
+					);
+					log(l, "Intersects:");
+					snprintf(buffer, ARRAY_SIZE(buffer), "horiz_left  = %d/%d",
+					         horiz_left_intersect.numerator,
+					         horiz_left_intersect.denominator);
+					log(l, buffer);
+					snprintf(buffer, ARRAY_SIZE(buffer), "horiz_right = %d/%d",
+					         horiz_right_intersect.numerator,
+					         horiz_right_intersect.denominator);
+					log(l, buffer);
+					snprintf(buffer, ARRAY_SIZE(buffer), "vert_left   = %d/%d",
+					         vert_left_intersect.numerator,
+					         vert_left_intersect.denominator);
+					log(l, buffer);
+					snprintf(buffer, ARRAY_SIZE(buffer), "vert_right  = %d/%d",
+					         vert_right_intersect.numerator,
+					         vert_right_intersect.denominator);
+					log(l, buffer);
+					debug_pause();
+
+					u8 vert_visible = 0;
+
+					if (horiz_left_intersect  <= wall_see_high
+					 && horiz_right_intersect >= wall_see_low) {
+						result.set(p);
+					} else if (prev_was_clear
+					        && vert_left_intersect  >= wall_see_low
+					        && vert_right_intersect <= wall_see_high) {
+						result.set(p);
+					}
+					// result.set(p);
+
+					Rational left_slope, right_slope;
+					if (cell & bevel_top_left) {
+						left_slope = Rational::cancel(
+							(i32)x_iter * cell_size - cell_size / 2,
+							(i32)y_iter * cell_size
+						);
+					} else {
+						left_slope = Rational::cancel(
+							(i32)x_iter * cell_size - cell_size / 2,
+							(i32)y_iter * cell_size + cell_size / 2
+						);
+					}
+					if (cell & bevel_bottom_right) {
+						right_slope = Rational::cancel(
+							(i32)x_iter * cell_size + cell_size / 2,
+							(i32)y_iter * cell_size
+						);
+					} else {
+						right_slope = Rational::cancel(
+							(i32)x_iter * cell_size + cell_size / 2,
+							(i32)y_iter * cell_size - cell_size / 2
+						);
+					}
+
+					debug_draw_world_push_state();
+					debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 1.0f, 0.5f));
+					debug_draw_world_circle((v2)p, 0.25f);
+					draw_slope(left_slope,  V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
+					draw_slope(right_slope, V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+					snprintf(buffer, ARRAY_SIZE(buffer), "x = %d", x_iter);
+					log(l, buffer);
+					snprintf(buffer, ARRAY_SIZE(buffer), "y = %d", y_iter);
+					log(l, buffer);
+					snprintf(buffer, ARRAY_SIZE(buffer), "left_slope = %d/%d",
+					         left_slope.numerator, left_slope.denominator);
+					log(l, buffer);
+					snprintf(buffer, ARRAY_SIZE(buffer), "right_slope = %d/%d",
+					         right_slope.numerator, right_slope.denominator);
+					log(l, buffer);
+					debug_pause();
+					log_reset(l);
+					debug_draw_world_pop_state();
+
+					if (prev_was_clear) {
+						Sector new_sector = s;
+						if (left_slope < new_sector.end) {
+							new_sector.end = left_slope;
+						}
+						if (new_sector.end > new_sector.start) {
+							new_sectors.append(new_sector);
+						}
+						prev_was_clear = 0;
+					}
+					s.start = right_slope;
+				} else {
+					// Sector s = old_sectors[cur_sector];
+					Rational left_slope = Rational::cancel(
+						(i32)x_iter * cell_size + cell_margin - cell_size / 2,
+						(i32)y_iter * cell_size - cell_margin + cell_size / 2
+					);
+					Rational right_slope = Rational::cancel(
+						(i32)x_iter * cell_size - cell_margin + cell_size / 2,
+						(i32)y_iter * cell_size + cell_margin - cell_size / 2
+					);
+					if (right_slope > s.start && left_slope < s.end) {
+						result.set(p);
+						debug_draw_world_sqaure((v2)p, square_edge_length);
+					}
+					prev_was_clear = 1;
+				}
+			}
+			if (prev_was_clear) {
+				if (s.end > s.start) {
+					new_sectors.append(s);
+				}
+			}
+			log(l, "2");
+			debug_pause();
+			debug_draw_world_pop_state();
+			log_reset(l);
+		}
+
+		for (u32 i = 0; i < new_sectors.len; ++i) {
+			Sector s = new_sectors[i];
+			v2 origin = (v2)vision_pos;
+			f32 y = (f32)y_iter + 0.5f;
+			f32 left = y * (f32)s.start.numerator / (f32)s.start.denominator;
+			f32 right = y * (f32)s.end.numerator / (f32)s.end.denominator;
+			v2 l = origin + V2_f32(left, -y);
+			v2 r = origin + V2_f32(right, -y);
+			debug_draw_world_set_color(V4_f32(0.0f, 0.0f, 1.0f, 0.5f));
+			debug_draw_world_triangle(origin, l, r);
+			debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 1.0f, 1.0f));
+			debug_draw_world_line(origin, l);
+			debug_draw_world_line(origin, r);
+		}
+
+		// swap sector buffers
+		{
+			auto tmp = sectors_front;
+			sectors_front = sectors_back;
+			sectors_back = tmp;
+		}
+
+		log(l, "3");
+		debug_pause();
+		log_reset(l);
+	}
+
+	debug_draw_world_pop_state();
+
+
+	// draw result
+	debug_draw_world_reset();
+	debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+
+	for (u16 y = 0; y < 256; ++y) {
+		for (u16 x = 0; x < 256; ++x) {
+			Pos p = V2_u8((u8)x, (u8)y);
+			if (result.get(p)) {
+				debug_draw_world_circle((v2)p, 0.25f);
+			}
+		}
+	}
+
+	log(l, "1");
+	debug_pause();
 }
 
 Entity_ID lich_get_skeleton_to_heal(Game *game, Controller *controller)
@@ -950,6 +1360,8 @@ void game_dispatch_message(Game*               game,
 
 void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* event_buffer)
 {
+	// TODO -- field of vision
+
 	u32 num_entities = game->entities.len;
 	auto& tiles = game->tiles;
 
@@ -1579,6 +1991,14 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		}
 		time = next_time;
 	}
+
+	Entity_ID player_id;
+	{
+		Controller *c = &game->controllers[0];
+		ASSERT(c->type == CONTROLLER_PLAYER);
+		player_id = c->player.entity_id;
+	}
+	calculate_field_of_vision(game, player_id);
 }
 
 void game_do_turn(Game* game, Event_Buffer* event_buffer)
@@ -4402,6 +4822,7 @@ struct Program
 	volatile u32        debug_resume;
 
 	Log                 debug_log;
+	Log                 debug_pause_log;
 
 	Input  *cur_input;
 	v2_u32  cur_screen_size;
@@ -4457,6 +4878,7 @@ void set_global_state(Program* program)
 {
 	global_program = program;
 	debug_log = &program->debug_log;
+	debug_pause_log = &program->debug_pause_log;
 
 	program->random_state.set_current();
 	program->debug_draw_world.set_current();
@@ -4586,6 +5008,40 @@ void build_level_lich(Program *program)
 		"#............................#\n"
 		"#............................#\n"
 		"#............................#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"##############################\n");
+
+	program->draw.camera.zoom = 14.0f;
+	Pos player_pos = game_get_player_pos(&program->game);
+	program->draw.camera.world_center = (v2)player_pos;
+
+	memset(&program->world_anim, 0, sizeof(program->world_anim));
+	world_anim_init(&program->world_anim, &program->game);
+}
+
+void build_field_of_vision_test(Program *program)
+{
+	game_build_from_string(&program->game,
+		"##############################\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#.................#.#.#......#\n"
+		"#............................#\n"
+		"#.............#...#...#...#..#\n"
+		"#............................#\n"
+		"#........#....#...#.#.#.#.#..#\n"
+		"#..................#.........#\n"
+		"#................#..#........#\n"
+		"#......#......@......#.......#\n"
+		"#............................#\n"
+		"#............................#\n"
+		"#........#.........#.........#\n"
+		"#.............#.....#..#.....#\n"
+		"#............................#\n"
+		"#................#...#.#.....#\n"
+		"#............................#\n"
+		"#................#..#........#\n"
 		"#............................#\n"
 		"#............................#\n"
 		"##############################\n");
@@ -5493,6 +5949,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			if (imgui_button(&program->imgui, "lich test")) {
 				build_level_lich(program);
 			}
+			if (imgui_button(&program->imgui, "field of vision test")) {
+				build_field_of_vision_test(program);
+			}
 			imgui_tree_end(&program->imgui);
 		}
 		if (imgui_tree_begin(&program->imgui, "cards")) {
@@ -5587,6 +6046,19 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 			                      { 1.0f, 0.0f, 1.0f, 1.0f },
 			                      { 5.0f, 5.0f });
 			imgui_text(&program->imgui, "DEBUG PAUSE");
+			// draw log
+			{
+				u32 start = 0;
+				u32 end = program->debug_pause_log.cur_line;
+				if (end > LOG_MAX_LINES) {
+					start = end - LOG_MAX_LINES;
+				}
+
+				for (u32 i = start; i < end; ++i) {
+					imgui_text(&program->imgui,
+					           log_get_line(&program->debug_pause_log, i));
+				}
+			}
 		}
 		break;
 	}
@@ -5636,7 +6108,7 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	v2 debug_zoom = (v2)(world_br - world_tl) / 24.0f;
 	debug_draw_world_d3d11_draw(&program->debug_draw_world,
 	                            dc,
-	                            output_rtv,
+	                            program->d3d11.output_rtv,
 	                            program->draw.camera.world_center + program->draw.camera.offset,
 	                            debug_zoom);
 
