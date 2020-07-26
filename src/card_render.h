@@ -18,6 +18,7 @@ struct Card_Render_D3D11
 	ID3D11Buffer             *instances;
 	ID3D11ShaderResourceView *instances_srv;
 	ID3D11Buffer             *cards_cb;
+	ID3D11RasterizerState    *rasterizer_state;
 };
 #endif
 
@@ -295,8 +296,26 @@ u8 card_render_d3d11_init(Card_Render* card_render, ID3D11Device* device)
 		goto error_init_constant_buffer;
 	}
 
+	// create rasterizer state
+	{
+		D3D11_RASTERIZER_DESC desc = {};
+		desc.FillMode = D3D11_FILL_SOLID;
+		desc.CullMode = D3D11_CULL_NONE;
+		desc.DepthClipEnable = FALSE;
+		desc.ScissorEnable = FALSE;
+		desc.MultisampleEnable = FALSE;
+		desc.AntialiasedLineEnable = FALSE;
+
+		hr = device->CreateRasterizerState(&desc, &card_render->d3d11.rasterizer_state);
+	}
+	if (FAILED(hr)) {
+		goto error_init_rasterizer_state;
+	}
+
 	return 1;
 
+	card_render->d3d11.rasterizer_state->Release();
+error_init_rasterizer_state:
 	card_render->d3d11.cards_cb->Release();
 error_init_constant_buffer:
 	card_render->d3d11.instances_srv->Release();
@@ -316,6 +335,7 @@ error_init_cards_vs:
 
 void card_render_d3d11_free(Card_Render* card_render)
 {
+	card_render->d3d11.rasterizer_state->Release();
 	card_render->d3d11.cards_cb->Release();
 	card_render->d3d11.instances_srv->Release();
 	card_render->d3d11.instances->Release();
@@ -330,6 +350,22 @@ void card_render_d3d11_draw(Card_Render*            render,
                             v2_u32                  screen_size,
                             ID3D11RenderTargetView* output_rtv)
 {
+	dc->ClearState();
+
+	// set viewport
+	{
+		D3D11_VIEWPORT viewport = {};
+		viewport.TopLeftX = 0.0f;
+		viewport.TopLeftY = 0.0f;
+		viewport.Width  = (f32)(screen_size.w);
+		viewport.Height = (f32)(screen_size.h);
+		viewport.MinDepth = 0.0f;
+		viewport.MaxDepth = 1.0f;
+		dc->RSSetViewports(1, &viewport);
+	}
+
+	dc->RSSetState(render->d3d11.rasterizer_state);
+
 	Card_Render_Constant_Buffer constant_buffer = {};
 	constant_buffer.card_size = { 48.0f, 80.0f };
 	constant_buffer.screen_size = { (f32)screen_size.w, (f32)screen_size.h };

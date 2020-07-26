@@ -120,6 +120,19 @@ fxc /Fh gen\debug_draw_world_dxbc_line_pixel_shader.data.h ^
 fxc /Fh gen\particles_dxbc_compute_shader.data.h ^
 	/E cs_particles /Vn PARTICLES_DXBC_CS /T cs_5_0 particles.hlsl
 
+fxc /Fh gen\field_of_vision_edge_vs_dxbc.data.h ^
+	/E vs_edge /Vn FOV_EDGE_DXBC_VS /T vs_5_0 field_of_vision_render.hlsl
+fxc /Fh gen\field_of_vision_edge_ps_dxbc.data.h ^
+	/E ps_edge /Vn FOV_EDGE_DXBC_PS /T ps_5_0 field_of_vision_render.hlsl
+fxc /Fh gen\field_of_vision_fill_vs_dxbc.data.h ^
+	/E vs_fill /Vn FOV_FILL_DXBC_VS /T vs_5_0 field_of_vision_render.hlsl
+fxc /Fh gen\field_of_vision_fill_ps_dxbc.data.h ^
+	/E ps_fill /Vn FOV_FILL_DXBC_PS /T ps_5_0 field_of_vision_render.hlsl
+fxc /Fh gen\field_of_vision_blend_cs_dxbc.data.h ^
+	/E cs_shadow_blend /Vn FOV_BLEND_DXBC_CS /T cs_5_0 field_of_vision_render.hlsl
+fxc /Fh gen\field_of_vision_composite_cs_dxbc.data.h ^
+	/E cs_composite /Vn FOV_COMPOSITE_DXBC_CS /T cs_5_0 field_of_vision_render.hlsl
+
 popd
 
 EXIT /B 0

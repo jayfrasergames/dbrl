@@ -129,8 +129,6 @@ void sprite_sheet_renderer_init(Sprite_Sheet_Renderer* renderer,
                                 v2_u32 size);
 u32 sprite_sheet_renderer_id_in_pos(Sprite_Sheet_Renderer* renderer, v2_u32 pos);
 void sprite_sheet_renderer_highlight_sprite(Sprite_Sheet_Renderer* renderer, u32 sprite_id);
-void sprite_sheet_renderer_d3d11_highlight_sprite(Sprite_Sheet_Renderer* renderer,
-                                                  ID3D11DeviceContext*   dc);
 
 void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances);
 void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_Instance instance);
@@ -235,6 +233,8 @@ void sprite_sheet_font_instances_add(Sprite_Sheet_Font_Instances* instances,
 u8 sprite_sheet_renderer_d3d11_init(Sprite_Sheet_Renderer* renderer,
                                     ID3D11Device*          device);
 void sprite_sheet_renderer_d3d11_free(Sprite_Sheet_D3D11_Renderer* renderer);
+void sprite_sheet_renderer_d3d11_highlight_sprite(Sprite_Sheet_Renderer* renderer,
+                                                  ID3D11DeviceContext*   dc);
 
 u8 sprite_sheet_instances_d3d11_init(Sprite_Sheet_Instances* instances, ID3D11Device* device);
 void sprite_sheet_instances_d3d11_free(Sprite_Sheet_Instances* instances);
@@ -244,14 +244,14 @@ void sprite_sheet_font_instances_d3d11_free(Sprite_Sheet_Font_Instances* instanc
 
 void sprite_sheet_renderer_d3d11_begin(Sprite_Sheet_Renderer*  renderer,
                                        ID3D11DeviceContext*    dc);
-void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
-                                       ID3D11DeviceContext*    dc,
-                                       v2_u32                  screen_size);
+void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Renderer* renderer,
+                                       Sprite_Sheet_Instances* instances,
+                                       ID3D11DeviceContext*    dc);
 void sprite_sheet_renderer_d3d11_begin_font(Sprite_Sheet_Renderer* renderer,
                                             ID3D11DeviceContext*   dc);
-void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Font_Instances* instances,
-                                            ID3D11DeviceContext*         dc,
-                                            v2_u32                       screen_size);
+void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Renderer* renderer,
+                                            Sprite_Sheet_Font_Instances* instances,
+                                            ID3D11DeviceContext*         dc);
 void sprite_sheet_renderer_d3d11_do_particles(Sprite_Sheet_Renderer* renderer,
                                               ID3D11DeviceContext* dc);
 void sprite_sheet_renderer_d3d11_end(Sprite_Sheet_Renderer*  renderer,
@@ -865,7 +865,19 @@ void sprite_sheet_font_instances_d3d11_free(Sprite_Sheet_Font_Instances* instanc
 void sprite_sheet_renderer_d3d11_begin(Sprite_Sheet_Renderer*  renderer,
                                        ID3D11DeviceContext*    dc)
 {
-	// TODO -- set the viewport
+	dc->ClearState();
+
+	// set viewport
+	{
+		D3D11_VIEWPORT viewport = {};
+		viewport.TopLeftX = 0.0f;
+		viewport.TopLeftY = 0.0f;
+		viewport.Width  = (f32)renderer->size.w;
+		viewport.Height = (f32)renderer->size.h;
+		viewport.MinDepth = 0.0f;
+		viewport.MaxDepth = 1.0f;
+		dc->RSSetViewports(1, &viewport);
+	}
 
 	f32 clear_value[] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	dc->ClearRenderTargetView(renderer->d3d11.output_rtv, clear_value);
@@ -895,12 +907,12 @@ void sprite_sheet_renderer_d3d11_begin(Sprite_Sheet_Renderer*  renderer,
 	dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, renderer->d3d11.depth_buffer_dsv);
 }
 
-void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Instances* instances,
-                                       ID3D11DeviceContext*    dc,
-                                       v2_u32                  screen_size)
+void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Renderer* renderer,
+                                       Sprite_Sheet_Instances* instances,
+                                       ID3D11DeviceContext*    dc)
 {
 	Sprite_Sheet_Constant_Buffer constant_buffer = {};
-	constant_buffer.screen_size = (v2)screen_size;
+	constant_buffer.screen_size = (v2)renderer->size;
 	constant_buffer.sprite_size = (v2)instances->data.sprite_size;
 	constant_buffer.world_tile_size = V2_f32(24.0f, 24.0f);
 	constant_buffer.tex_size = (v2)instances->data.size;
@@ -943,12 +955,12 @@ void sprite_sheet_renderer_d3d11_begin_font(Sprite_Sheet_Renderer*  renderer,
 	dc->OMSetRenderTargets(1, &renderer->d3d11.output_rtv, NULL);
 }
 
-void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Font_Instances* instances,
-                                            ID3D11DeviceContext*         dc,
-                                            v2_u32                       screen_size)
+void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Renderer*       renderer,
+                                            Sprite_Sheet_Font_Instances* instances,
+                                            ID3D11DeviceContext*         dc)
 {
 	Sprite_Sheet_Constant_Buffer constant_buffer = {};
-	constant_buffer.screen_size = (v2)screen_size;
+	constant_buffer.screen_size = (v2)renderer->size;
 	// constant_buffer.sprite_size = (v2)instances->data.sprite_size;
 	constant_buffer.world_tile_size = V2_f32(24.0f, 24.0f);
 	constant_buffer.tex_size = (v2)instances->tex_size;

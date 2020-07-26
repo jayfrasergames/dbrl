@@ -101,6 +101,8 @@ void pixel_art_upsampler_d3d11_draw(Pixel_Art_Upsampler*       pixel_art_upsampl
                                     v2 output_size,
                                     v2 output_offset)
 {
+	dc->ClearState();
+
 	Pixel_Art_Upsampler_D3D11 *pau_d3d11 = &pixel_art_upsampler->d3d11;
 	Pixel_Art_Upsampler_Constant_Buffer constant_buffer = {};
 	constant_buffer.input_size    = input_size;

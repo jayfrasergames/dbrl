@@ -8,6 +8,9 @@
 #include "jfg/random.h"
 #include "jfg/thread.h"
 
+#include "types.h"
+
+#include "field_of_vision_render.h"
 #include "assets.h"
 #include "constants.h"
 #include "debug_draw_world.h"
@@ -39,21 +42,6 @@ PLATFORM_FUNCTIONS
 // =============================================================================
 // type definitions/constants
 
-typedef v2_u8 Pos;
-
-u16 pos_to_u16(Pos p)
-{
-	return p.y * 256 + p.x;
-}
-
-Pos u16_to_pos(u16 n)
-{
-	return V2_u8(n % 256, n / 256);
-}
-
-#define MAX_ENTITIES 10240
-
-typedef u16 Entity_ID;
 
 struct Program;
 thread_local Program *global_program;
@@ -66,15 +54,6 @@ struct Map_Cache
 {
 	T items[256 * 256];
 	T& operator[](Pos pos) { return items[pos.y * 256 + pos.x]; }
-};
-
-struct Map_Cache_Bool
-{
-	u64  items[256 * 256 / 64];
-	u64  get(Pos p)   { u16 idx = pos_to_u16(p); return items[idx / 64] & ((u64)1 << (idx % 64)); }
-	void set(Pos p)   { u16 idx = pos_to_u16(p); items[idx / 64] |= ((u64)1 << (idx % 64)); }
-	void unset(Pos p) { u16 idx = pos_to_u16(p); items[idx / 64] &= ~((u64)1 << (idx % 64)); }
-	void reset()      { memset(items, 0, sizeof(items)); }
 };
 
 // =============================================================================
@@ -169,6 +148,7 @@ enum Event_Type
 	EVENT_FIRE_BOLT_SHOT,
 	EVENT_POLYMORPH,
 	EVENT_HEAL,
+	EVENT_FIELD_OF_VISION_CHANGED,
 };
 
 struct Event
@@ -240,6 +220,10 @@ struct Event
 			v2 start;
 			v2 end;
 		} heal;
+		struct {
+			f32 duration;
+			Map_Cache_Bool *fov;
+		} field_of_vision;
 	};
 };
 
@@ -265,6 +249,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_FIRE_BOLT_SHOT: return 0;
 	case EVENT_POLYMORPH: return 0;
 	case EVENT_HEAL: return 0;
+	case EVENT_FIELD_OF_VISION_CHANGED: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -465,9 +450,11 @@ struct Message_Handler
 // maybe better called "world state"?
 struct Game
 {
-	u32 current_entity;
 	Entity_ID     next_entity_id;
 	Controller_ID next_controller_id;
+
+	// TODO: keep the player id here in the game struct? - it would make life a lot easier
+	// Entity_ID player_id;
 
 	// probably don't need this
 	u32 cur_block_id;
@@ -482,6 +469,8 @@ struct Game
 	Card_State card_state;
 
 	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
+
+	Map_Cache_Bool field_of_vision;
 };
 
 Entity_ID game_add_slime(Game *game, Pos pos, u32 hit_points)
@@ -614,7 +603,7 @@ Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
 	return NULL;
 }
 
-void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id)
+void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache_Bool *fov)
 {
 	const u8 is_wall            = 1 << 0;
 	const u8 bevel_top_left     = 1 << 1;
@@ -678,41 +667,6 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id)
 		}
 	}
 
-	debug_draw_world_reset();
-
-	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 0.5f));
-	for (u16 y16 = 0; y16 < 256; ++y16) {
-		for (u16 x16 = 0; x16 < 256; ++x16) {
-			u8 x = (u8)x16, y = (u8)y16;
-			u8 cell = map[V2_u8(x, y)];
-			if (cell) {
-				/*
-				   a--b--c
-				   |/   \|
-				   d     e
-				   |\   /|
-				   f--g--h
-				*/
-				v2 a = V2_f32(x - 0.5f, y - 0.5f);
-				v2 b = V2_f32(       x, y - 0.5f);
-				v2 c = V2_f32(x + 0.5f, y - 0.5f);
-				v2 d = V2_f32(x - 0.5f,        y);
-				v2 e = V2_f32(x + 0.5f,        y);
-				v2 f = V2_f32(x - 0.5f, y + 0.5f);
-				v2 g = V2_f32(       x, y + 0.5f);
-				v2 h = V2_f32(x + 0.5f, y + 0.5f);
-				debug_draw_world_triangle(b, d, g);
-				debug_draw_world_triangle(b, e, g);
-				if (!(cell & bevel_top_left))     { debug_draw_world_triangle(a, b, d); }
-				if (!(cell & bevel_top_right))    { debug_draw_world_triangle(b, c, e); }
-				if (!(cell & bevel_bottom_left))  { debug_draw_world_triangle(d, f, g); }
-				if (!(cell & bevel_bottom_right)) { debug_draw_world_triangle(e, g, h); }
-			}
-		}
-	}
-
-	debug_pause();
-
 	Entity *vision_entity = game_get_entity_by_id(game, vision_entity_id);
 	ASSERT(vision_entity);
 
@@ -722,20 +676,9 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id)
 		Rational end;
 	};
 
-	Map_Cache_Bool result;
-	result.reset();
+	fov->reset();
 	Max_Length_Array<Sector, 1024> sectors_1, sectors_2;
 	Max_Length_Array<Sector, 1024> *sectors_front = &sectors_1, *sectors_back = &sectors_2;
-	sectors_front->reset();
-	sectors_back->reset();
-	{
-		Sector s = {};
-		s.start.numerator = 0;
-		s.start.denominator = 1;
-		s.end.numerator = 1;
-		s.end.denominator = 1;
-		sectors_front->append(s);
-	}
 
 	const i32 half_cell_size = 2;
 	const i32 cell_margin = 1;
@@ -745,281 +688,215 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id)
 	const Rational wall_see_high = Rational::cancel(5, 6);
 
 	Pos vision_pos = vision_entity->pos;
+	fov->set(vision_pos);
 
-	debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 1.0f, 1.0f));
-	debug_draw_world_circle((v2)vision_pos, 0.25f);
+	for (u8 octant_id = 0; octant_id < 8; ++octant_id) {
+		/*
+		octants:
 
-	f32 square_edge_length = (f32)cell_inner_size / (f32)cell_size;
+		\ 4  | 0  /
+		5 \  |  / 1
+		    \|/
+		-----+-----
+		    /|\
+		7 /  |  \ 3
+		/ 6  |  2 \
+		*/
 
-	debug_draw_world_push_state();
-
-	auto draw_slope = [vision_pos](Rational r, v4 color)
-	{
-		v2 origin = (v2)(Pos)vision_pos;
-		f32 y = 100.0f;
-		f32 x = y * (f32)r.numerator / (f32)r.denominator;
-		v4 tmp = debug_draw_world_context->current_color;
-		debug_draw_world_context->current_color = color;
-		debug_draw_world_line(origin, origin + V2_f32(x, -y));
-		debug_draw_world_context->current_color = tmp;
-	};
-
-	Log *l = debug_pause_log;
-	char buffer[4096];
-
-	for (u16 y = vision_pos.y, y_iter = 0; y > 0; --y, ++y_iter) {
-		debug_draw_world_restore_state();
-		auto& old_sectors = *sectors_front;
-		auto& new_sectors = *sectors_back;
-		new_sectors.reset();
-
-		debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 0.5f));
-		for (u32 i = 0; i < old_sectors.len; ++i) {
-			Sector s = old_sectors[i];
-
-			// draw sector
-			{
-				v2 origin = (v2)vision_pos;
-				f32 y = (f32)y_iter + 0.5f;
-				f32 left = y * (f32)s.start.numerator / (f32)s.start.denominator;
-				f32 right = y * (f32)s.end.numerator / (f32)s.end.denominator;
-				v2 l = origin + V2_f32(left, -y);
-				v2 r = origin + V2_f32(right, -y);
-				debug_draw_world_set_color(V4_f32(0.0f, 0.0f, 1.0f, 0.5f));
-				debug_draw_world_triangle(origin, l, r);
-				debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 1.0f, 1.0f));
-				debug_draw_world_line(origin, l);
-				debug_draw_world_line(origin, r);
-			}
-
-			// XXX -- this seems sketchy
-			u16 x_start = ((y_iter * cell_size - cell_size / 2) * s.start.numerator
-			                + (s.start.denominator * cell_size / 2))
-			              / (s.start.denominator * cell_size);
-
-			u16 x_end = ((y_iter * cell_size + cell_size / 2) * s.end.numerator
-			              + (s.end.denominator * cell_size / 2) - 1)
-			            / (cell_size * s.end.denominator);
-
-			snprintf(buffer, ARRAY_SIZE(buffer), "y_iter    = %hu", y_iter);
-			log(l, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "cell_size = %u", cell_size);
-			log(l, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "start     = %u/%u",
-			         s.start.numerator, s.start.denominator);
-			log(l, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "end       = %u/%u",
-			         s.end.numerator, s.end.denominator);
-			log(l, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "x_start   = %hu", x_start);
-			log(l, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "x_end     = %hu", x_end);
-			log(l, buffer);
-			debug_pause();
-			log_reset(l);
-
-			debug_draw_world_push_state();
-			debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 1.0f, 1.0f));
-			debug_draw_world_sqaure(V2_f32(vision_pos.x + x_start, y), square_edge_length);
-			debug_draw_world_sqaure(V2_f32(vision_pos.x + x_end, y), square_edge_length);
-			log(l, "Here.");
-			debug_pause();
-			log_reset(l);
-			debug_draw_world_pop_state();
-
-			debug_draw_world_push_state();
-			u8 prev_was_clear = 0;
-			for (u16 x = vision_pos.x + x_start, x_iter = x_start;
-			     x_iter <= x_end;
-			     ++x, ++x_iter) {
-				Pos p = V2_u8((u8)x, (u8)y);
-				u8 cell = map[p];
-				if (cell & is_wall) {
-					// TODO -- come up with a better criterion for deciding
-					// visibility of walls
-					u8 horiz_visible = 0;
-					Rational horiz_left_intersect = Rational::cancel(
-						s.start.numerator * ((i32)y_iter * cell_size
-						                      - half_cell_size)
-						+ s.start.denominator * (half_cell_size
-						                         - (i32)x_iter * cell_size),
-						s.start.denominator * cell_size
-					);
-					Rational horiz_right_intersect = Rational::cancel(
-						s.end.numerator * ((i32)y_iter * cell_size
-						                      - half_cell_size)
-						+ s.end.denominator * (half_cell_size
-						                       - (i32)x_iter * cell_size),
-						s.end.denominator * cell_size
-					);
-					Rational vert_left_intersect = Rational::cancel(
-						s.start.denominator * (2 * x_iter - 1)
-						+ s.start.numerator * (1 - 2 * y_iter),
-						2 * s.start.numerator
-					);
-					Rational vert_right_intersect = Rational::cancel(
-						s.end.denominator * (2 * x_iter - 1)
-						+ s.end.numerator * (1 - 2 * y_iter),
-						2 * s.end.numerator
-					);
-					log(l, "Intersects:");
-					snprintf(buffer, ARRAY_SIZE(buffer), "horiz_left  = %d/%d",
-					         horiz_left_intersect.numerator,
-					         horiz_left_intersect.denominator);
-					log(l, buffer);
-					snprintf(buffer, ARRAY_SIZE(buffer), "horiz_right = %d/%d",
-					         horiz_right_intersect.numerator,
-					         horiz_right_intersect.denominator);
-					log(l, buffer);
-					snprintf(buffer, ARRAY_SIZE(buffer), "vert_left   = %d/%d",
-					         vert_left_intersect.numerator,
-					         vert_left_intersect.denominator);
-					log(l, buffer);
-					snprintf(buffer, ARRAY_SIZE(buffer), "vert_right  = %d/%d",
-					         vert_right_intersect.numerator,
-					         vert_right_intersect.denominator);
-					log(l, buffer);
-					debug_pause();
-
-					u8 vert_visible = 0;
-
-					if (horiz_left_intersect  <= wall_see_high
-					 && horiz_right_intersect >= wall_see_low) {
-						result.set(p);
-					} else if (prev_was_clear
-					        && vert_left_intersect  >= wall_see_low
-					        && vert_right_intersect <= wall_see_high) {
-						result.set(p);
-					}
-					// result.set(p);
-
-					Rational left_slope, right_slope;
-					if (cell & bevel_top_left) {
-						left_slope = Rational::cancel(
-							(i32)x_iter * cell_size - cell_size / 2,
-							(i32)y_iter * cell_size
-						);
-					} else {
-						left_slope = Rational::cancel(
-							(i32)x_iter * cell_size - cell_size / 2,
-							(i32)y_iter * cell_size + cell_size / 2
-						);
-					}
-					if (cell & bevel_bottom_right) {
-						right_slope = Rational::cancel(
-							(i32)x_iter * cell_size + cell_size / 2,
-							(i32)y_iter * cell_size
-						);
-					} else {
-						right_slope = Rational::cancel(
-							(i32)x_iter * cell_size + cell_size / 2,
-							(i32)y_iter * cell_size - cell_size / 2
-						);
-					}
-
-					debug_draw_world_push_state();
-					debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 1.0f, 0.5f));
-					debug_draw_world_circle((v2)p, 0.25f);
-					draw_slope(left_slope,  V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
-					draw_slope(right_slope, V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
-					snprintf(buffer, ARRAY_SIZE(buffer), "x = %d", x_iter);
-					log(l, buffer);
-					snprintf(buffer, ARRAY_SIZE(buffer), "y = %d", y_iter);
-					log(l, buffer);
-					snprintf(buffer, ARRAY_SIZE(buffer), "left_slope = %d/%d",
-					         left_slope.numerator, left_slope.denominator);
-					log(l, buffer);
-					snprintf(buffer, ARRAY_SIZE(buffer), "right_slope = %d/%d",
-					         right_slope.numerator, right_slope.denominator);
-					log(l, buffer);
-					debug_pause();
-					log_reset(l);
-					debug_draw_world_pop_state();
-
-					if (prev_was_clear) {
-						Sector new_sector = s;
-						if (left_slope < new_sector.end) {
-							new_sector.end = left_slope;
-						}
-						if (new_sector.end > new_sector.start) {
-							new_sectors.append(new_sector);
-						}
-						prev_was_clear = 0;
-					}
-					s.start = right_slope;
-				} else {
-					// Sector s = old_sectors[cur_sector];
-					Rational left_slope = Rational::cancel(
-						(i32)x_iter * cell_size + cell_margin - cell_size / 2,
-						(i32)y_iter * cell_size - cell_margin + cell_size / 2
-					);
-					Rational right_slope = Rational::cancel(
-						(i32)x_iter * cell_size - cell_margin + cell_size / 2,
-						(i32)y_iter * cell_size + cell_margin - cell_size / 2
-					);
-					if (right_slope > s.start && left_slope < s.end) {
-						result.set(p);
-						debug_draw_world_sqaure((v2)p, square_edge_length);
-					}
-					prev_was_clear = 1;
-				}
-			}
-			if (prev_was_clear) {
-				if (s.end > s.start) {
-					new_sectors.append(s);
-				}
-			}
-			log(l, "2");
-			debug_pause();
-			debug_draw_world_pop_state();
-			log_reset(l);
-		}
-
-		for (u32 i = 0; i < new_sectors.len; ++i) {
-			Sector s = new_sectors[i];
-			v2 origin = (v2)vision_pos;
-			f32 y = (f32)y_iter + 0.5f;
-			f32 left = y * (f32)s.start.numerator / (f32)s.start.denominator;
-			f32 right = y * (f32)s.end.numerator / (f32)s.end.denominator;
-			v2 l = origin + V2_f32(left, -y);
-			v2 r = origin + V2_f32(right, -y);
-			debug_draw_world_set_color(V4_f32(0.0f, 0.0f, 1.0f, 0.5f));
-			debug_draw_world_triangle(origin, l, r);
-			debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 1.0f, 1.0f));
-			debug_draw_world_line(origin, l);
-			debug_draw_world_line(origin, r);
-		}
-
-		// swap sector buffers
+		sectors_front->reset();
+		sectors_back->reset();
 		{
-			auto tmp = sectors_front;
-			sectors_front = sectors_back;
-			sectors_back = tmp;
+			Sector s = {};
+			s.start.numerator = 0;
+			s.start.denominator = 1;
+			s.end.numerator = 1;
+			s.end.denominator = 1;
+			sectors_front->append(s);
 		}
 
-		log(l, "3");
-		debug_pause();
-		log_reset(l);
-	}
+		for (u16 y_iter = 0; ; ++y_iter) {
+			auto& old_sectors = *sectors_front;
+			auto& new_sectors = *sectors_back;
+			new_sectors.reset();
 
-	debug_draw_world_pop_state();
+			if (!old_sectors) {
+				goto next_octant;
+			}
 
+			for (u32 i = 0; i < old_sectors.len; ++i) {
+				Sector s = old_sectors[i];
 
-	// draw result
-	debug_draw_world_reset();
-	debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+				u16 x_start = ((y_iter * cell_size - cell_size / 2) * s.start.numerator
+						+ (s.start.denominator * cell_size / 2))
+					      / (s.start.denominator * cell_size);
 
-	for (u16 y = 0; y < 256; ++y) {
-		for (u16 x = 0; x < 256; ++x) {
-			Pos p = V2_u8((u8)x, (u8)y);
-			if (result.get(p)) {
-				debug_draw_world_circle((v2)p, 0.25f);
+				u16 x_end = ((y_iter * cell_size + cell_size / 2) * s.end.numerator
+					      + (s.end.denominator * cell_size / 2) - 1)
+					    / (cell_size * s.end.denominator);
+
+				u8 prev_was_clear = 0;
+				for (u16 x_iter = x_start; x_iter <= x_end; ++x_iter) {
+					u8 btl, bbr;
+					i32 x, y;
+					switch (octant_id) {
+					case 0:
+						btl = bevel_top_left;
+						bbr = bevel_bottom_right;
+						x = (i32)vision_pos.x + (i32)x_iter;
+						y = (i32)vision_pos.y - (i32)y_iter;
+						break;
+					case 1:
+						btl = bevel_bottom_right;
+						bbr = bevel_top_left;
+						x = (i32)vision_pos.x + (i32)y_iter;
+						y = (i32)vision_pos.y - (i32)x_iter;
+						break;
+					case 2:
+						btl = bevel_bottom_left;
+						bbr = bevel_top_right;
+						x = (i32)vision_pos.x + (i32)x_iter;
+						y = (i32)vision_pos.y + (i32)y_iter;
+						break;
+					case 3:
+						btl = bevel_top_right;
+						bbr = bevel_bottom_left;
+						x = (i32)vision_pos.x + (i32)y_iter;
+						y = (i32)vision_pos.y + (i32)x_iter;
+						break;
+					case 4:
+						btl = bevel_top_right;
+						bbr = bevel_bottom_left;
+						x = (i32)vision_pos.x - (i32)x_iter;
+						y = (i32)vision_pos.y - (i32)y_iter;
+						break;
+					case 5:
+						btl = bevel_bottom_left;
+						bbr = bevel_top_right;
+						x = (i32)vision_pos.x - (i32)y_iter;
+						y = (i32)vision_pos.y - (i32)x_iter;
+						break;
+					case 6:
+						btl = bevel_bottom_right;
+						bbr = bevel_top_left;
+						x = (i32)vision_pos.x - (i32)x_iter;
+						y = (i32)vision_pos.y + (i32)y_iter;
+						break;
+					case 7:
+						btl = bevel_top_left;
+						bbr = bevel_bottom_right;
+						x = (i32)vision_pos.x - (i32)y_iter;
+						y = (i32)vision_pos.y + (i32)x_iter;
+						break;
+					}
+					if (!(0 < y && y < 255)) { goto next_octant; }
+					if (!(0 < x && x < 255)) { x_end = x_iter; }
+					Pos p = V2_u8((u8)x, (u8)y);
+					u8 cell = map[p];
+					if (cell & is_wall) {
+						u8 horiz_visible = 0;
+						Rational horiz_left_intersect = Rational::cancel(
+							s.start.numerator * ((i32)y_iter * cell_size
+							                      - half_cell_size)
+							+ s.start.denominator * (half_cell_size
+							                     - (i32)x_iter * cell_size),
+							s.start.denominator * cell_size
+						);
+						Rational horiz_right_intersect = Rational::cancel(
+							s.end.numerator * ((i32)y_iter * cell_size
+									      - half_cell_size)
+							+ s.end.denominator * (half_cell_size
+									       - (i32)x_iter * cell_size),
+							s.end.denominator * cell_size
+						);
+						Rational vert_left_intersect = Rational::cancel(
+							s.start.denominator * (2 * x_iter - 1)
+							+ s.start.numerator * (1 - 2 * y_iter),
+							2 * s.start.numerator
+						);
+						Rational vert_right_intersect = Rational::cancel(
+							s.end.denominator * (2 * x_iter - 1)
+							+ s.end.numerator * (1 - 2 * y_iter),
+							2 * s.end.numerator
+						);
+						u8 vert_visible = 0;
+
+						if (horiz_left_intersect  <= wall_see_high
+						 && horiz_right_intersect >= wall_see_low) {
+							fov->set(p);
+						} else if (prev_was_clear
+							&& vert_left_intersect  >= wall_see_low
+							&& vert_right_intersect <= wall_see_high) {
+							fov->set(p);
+						}
+
+						Rational left_slope, right_slope;
+						if (cell & btl) {
+							left_slope = Rational::cancel(
+								(i32)x_iter * cell_size - cell_size / 2,
+								(i32)y_iter * cell_size
+							);
+						} else {
+							left_slope = Rational::cancel(
+								(i32)x_iter * cell_size - cell_size / 2,
+								(i32)y_iter * cell_size + cell_size / 2
+							);
+						}
+						if (cell & bbr) {
+							right_slope = Rational::cancel(
+								(i32)x_iter * cell_size + cell_size / 2,
+								(i32)y_iter * cell_size
+							);
+						} else {
+							right_slope = Rational::cancel(
+								(i32)x_iter * cell_size + cell_size / 2,
+								(i32)y_iter * cell_size - cell_size / 2
+							);
+						}
+
+						if (prev_was_clear) {
+							Sector new_sector = s;
+							if (left_slope < new_sector.end) {
+								new_sector.end = left_slope;
+							}
+							if (new_sector.end > new_sector.start) {
+								new_sectors.append(new_sector);
+							}
+							prev_was_clear = 0;
+						}
+						s.start = right_slope;
+					} else {
+						// Sector s = old_sectors[cur_sector];
+						Rational left_slope = Rational::cancel(
+							(i32)x_iter * cell_size + cell_margin - cell_size / 2,
+							(i32)y_iter * cell_size - cell_margin + cell_size / 2
+						);
+						Rational right_slope = Rational::cancel(
+							(i32)x_iter * cell_size - cell_margin + cell_size / 2,
+							(i32)y_iter * cell_size + cell_margin - cell_size / 2
+						);
+						if (right_slope > s.start && left_slope < s.end) {
+							fov->set(p);
+						}
+						prev_was_clear = 1;
+					}
+				}
+				if (prev_was_clear) {
+					if (s.end > s.start) {
+						new_sectors.append(s);
+					}
+				}
+			}
+
+			// swap sector buffers
+			{
+				auto tmp = sectors_front;
+				sectors_front = sectors_back;
+				sectors_back = tmp;
 			}
 		}
-	}
 
-	log(l, "1");
-	debug_pause();
+	next_octant: ;
+	}
 }
 
 Entity_ID lich_get_skeleton_to_heal(Game *game, Controller *controller)
@@ -1998,7 +1875,18 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		ASSERT(c->type == CONTROLLER_PLAYER);
 		player_id = c->player.entity_id;
 	}
-	calculate_field_of_vision(game, player_id);
+
+	// XXX - tmp - recalculate FOV
+	{
+		game->field_of_vision.reset();
+		calculate_field_of_vision(game, player_id, &game->field_of_vision);
+		Event e = {};
+		e.type = EVENT_FIELD_OF_VISION_CHANGED;
+		e.time = 0.0f; // XXX
+		e.field_of_vision.duration = constants.anims.move.duration;
+		e.field_of_vision.fov = &game->field_of_vision;
+		event_buffer->append(e);
+	}
 }
 
 void game_do_turn(Game* game, Event_Buffer* event_buffer)
@@ -2570,6 +2458,7 @@ struct Camera
 struct Draw
 {
 	Camera camera;
+	Field_Of_Vision_Render fov_render;
 	Sprite_Sheet_Renderer  renderer;
 	Sprite_Sheet_Instances tiles;
 	Sprite_Sheet_Instances creatures;
@@ -2603,6 +2492,7 @@ enum Anim_Type
 	ANIM_POLYMORPH,
 	ANIM_POLYMORPH_PARTICLES,
 	ANIM_HEAL_PARTICLES,
+	ANIM_FIELD_OF_VISION_CHANGED,
 };
 
 struct Anim
@@ -2689,6 +2579,12 @@ struct Anim
 			v2 start;
 			v2 end;
 		} heal_particles;
+		struct {
+			f32 start_time;
+			f32 duration;
+			u32 buffer_id;
+			Map_Cache_Bool *fov;
+		} field_of_vision;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -2699,24 +2595,25 @@ struct Anim
 u8 anim_is_active(Anim* anim)
 {
 	switch (anim->type) {
-	case ANIM_TILE_STATIC:          return 0;
-	case ANIM_WATER_EDGE:           return 0;
-	case ANIM_CREATURE_IDLE:        return 0;
-	case ANIM_MOVE:                 return 1;
-	case ANIM_MOVE_BLOCKED:         return 1;
-	case ANIM_DROP_TILE:            return 1;
-	case ANIM_PROJECTILE_EFFECT_32: return 1;
-	case ANIM_TEXT:                 return 1;
-	case ANIM_CAMERA_SHAKE:         return 1;
-	case ANIM_SOUND:                return 1;
-	case ANIM_DEATH:                return 1;
-	case ANIM_EXCHANGE:             return 1;
-	case ANIM_BLINK:                return 1;
-	case ANIM_BLINK_PARTICLES:      return 1;
-	case ANIM_SLIME_SPLIT:          return 1;
-	case ANIM_POLYMORPH:            return 1;
-	case ANIM_POLYMORPH_PARTICLES:  return 1;
-	case ANIM_HEAL_PARTICLES:       return 1;
+	case ANIM_TILE_STATIC:             return 0;
+	case ANIM_WATER_EDGE:              return 0;
+	case ANIM_CREATURE_IDLE:           return 0;
+	case ANIM_MOVE:                    return 1;
+	case ANIM_MOVE_BLOCKED:            return 1;
+	case ANIM_DROP_TILE:               return 1;
+	case ANIM_PROJECTILE_EFFECT_32:    return 1;
+	case ANIM_TEXT:                    return 1;
+	case ANIM_CAMERA_SHAKE:            return 1;
+	case ANIM_SOUND:                   return 1;
+	case ANIM_DEATH:                   return 1;
+	case ANIM_EXCHANGE:                return 1;
+	case ANIM_BLINK:                   return 1;
+	case ANIM_BLINK_PARTICLES:         return 1;
+	case ANIM_SLIME_SPLIT:             return 1;
+	case ANIM_POLYMORPH:               return 1;
+	case ANIM_POLYMORPH_PARTICLES:     return 1;
+	case ANIM_HEAL_PARTICLES:          return 1;
+	case ANIM_FIELD_OF_VISION_CHANGED: return 1;
 	}
 	ASSERT(0);
 	return 0;
@@ -3050,6 +2947,15 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			a.type = ANIM_SOUND;
 			a.sound.start_time = event->time;
 			a.sound.sound_id = SOUND_HEALING_01;
+			anims.append(a);
+			break;
+		}
+		case EVENT_FIELD_OF_VISION_CHANGED: {
+			Anim a = {};
+			a.type = ANIM_FIELD_OF_VISION_CHANGED;
+			a.field_of_vision.start_time = event->time;
+			a.field_of_vision.duration = event->field_of_vision.duration;
+			a.field_of_vision.fov = event->field_of_vision.fov;
 			anims.append(a);
 			break;
 		}
@@ -3450,6 +3356,22 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				continue;
 			}
 			break;
+		case ANIM_FIELD_OF_VISION_CHANGED:
+			if (anim->field_of_vision.buffer_id
+			 && anim->field_of_vision.start_time
+			  + anim->field_of_vision.duration <= dyn_time) {
+				fov_render_set_alpha(&draw->fov_render,
+				                     anim->field_of_vision.buffer_id,
+				                     1.0f);
+				anims.remove(i);
+				continue;
+			} else if (!anim->field_of_vision.buffer_id
+			        && anim->field_of_vision.start_time <= dyn_time) {
+				u32 buffer_id = fov_render_add_fov(&draw->fov_render,
+				                                   anim->field_of_vision.fov);
+				anim->field_of_vision.buffer_id = buffer_id;
+			}
+			break;
 		}
 		++i;
 		if (anim_is_active(anim)) {
@@ -3475,7 +3397,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 	for (u32 i = 0; i < anims.len; ++i) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
-		case ANIM_TILE_STATIC: {
+			case ANIM_TILE_STATIC: {
 			Sprite_Sheet_Instance ti = {};
 			ti.sprite_pos = anim->sprite_coords;
 			ti.world_pos = anim->world_coords;
@@ -3705,6 +3627,16 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 
 			sprite_sheet_instances_add(&draw->creatures, ci);
 
+			break;
+		}
+		case ANIM_FIELD_OF_VISION_CHANGED: {
+			u32 buffer_id = anim->field_of_vision.buffer_id;
+			f32 start_time = anim->field_of_vision.start_time;
+			f32 duration = anim->field_of_vision.duration;
+			f32 dt = (dyn_time - start_time) / duration;
+			if (buffer_id && 0 < dt && dt <= 1.0f) {
+				fov_render_set_alpha(&draw->fov_render, buffer_id, dt);
+			}
 			break;
 		}
 		}
@@ -5109,6 +5041,7 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	sprite_sheet_renderer_init(&program->draw.renderer,
 	                           &program->draw.tiles, 4,
 	                           { 1600, 900 });
+	fov_render_init(&program->draw.fov_render, { 256, 256 });
 
 
 	program->draw.tiles.data         = SPRITE_SHEET_TILES;
@@ -5125,13 +5058,16 @@ void program_init(Program* program, Platform_Functions platform_functions)
 
 	program->state = PROGRAM_STATE_NORMAL;
 	program->program_input_state_stack.push(GIS_NONE);
-
-	start_thread(load_assets, program);
 }
 
 u8 program_dsound_init(Program* program, IDirectSound* dsound)
 {
-	return sound_player_dsound_init(&program->sound, &program->assets_header, dsound);
+	if (!sound_player_dsound_init(&program->sound, &program->assets_header, dsound)) {
+		return 0;
+	}
+	// load_assets(program);
+	start_thread(load_assets, program);
+	return 1;
 }
 
 void program_dsound_free(Program* program)
@@ -5243,6 +5179,10 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 		goto error_init_debug_draw_world;
 	}
 
+	if (!fov_render_d3d11_init(&program->draw.fov_render, device)) {
+		goto error_init_fov_render;
+	}
+
 	program->max_screen_size      = screen_size;
 	program->d3d11.output_texture = output_texture;
 	program->d3d11.output_uav     = output_uav;
@@ -5253,6 +5193,8 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 
 	return 1;
 
+	fov_render_d3d11_free(&program->draw.fov_render);
+error_init_fov_render:
 	debug_draw_world_d3d11_free(&program->debug_draw_world);
 error_init_debug_draw_world:
 	debug_line_d3d11_free(&program->draw.card_debug_line);
@@ -5292,6 +5234,7 @@ error_init_output_texture:
 
 void program_d3d11_free(Program* program)
 {
+	fov_render_d3d11_free(&program->draw.fov_render);
 	debug_draw_world_d3d11_free(&program->debug_draw_world);
 	debug_line_d3d11_free(&program->draw.card_debug_line);
 	card_render_d3d11_free(&program->draw.card_render);
@@ -6071,16 +6014,21 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	f32 clear_color[] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	dc->ClearRenderTargetView(program->d3d11.output_rtv, clear_color);
 
+	fov_render_d3d11_draw(&program->draw.fov_render, dc);
 	sprite_sheet_renderer_d3d11_begin(&program->draw.renderer, dc);
-	sprite_sheet_instances_d3d11_draw(&program->draw.tiles, dc, screen_size_u32);
-	sprite_sheet_instances_d3d11_draw(&program->draw.creatures, dc, screen_size_u32);
-	sprite_sheet_instances_d3d11_draw(&program->draw.water_edges, dc, screen_size_u32);
+	sprite_sheet_instances_d3d11_draw(&program->draw.renderer, &program->draw.tiles, dc);
+	sprite_sheet_instances_d3d11_draw(&program->draw.renderer, &program->draw.creatures, dc);
+	sprite_sheet_instances_d3d11_draw(&program->draw.renderer, &program->draw.water_edges, dc);
 	sprite_sheet_renderer_d3d11_do_particles(&program->draw.renderer, dc);
-	sprite_sheet_instances_d3d11_draw(&program->draw.effects_32, dc, screen_size_u32);
+	sprite_sheet_instances_d3d11_draw(&program->draw.renderer, &program->draw.effects_32, dc);
 	sprite_sheet_renderer_d3d11_highlight_sprite(&program->draw.renderer, dc);
 	sprite_sheet_renderer_d3d11_begin_font(&program->draw.renderer, dc);
-	sprite_sheet_font_instances_d3d11_draw(&program->draw.boxy_bold, dc, screen_size_u32);
+	sprite_sheet_font_instances_d3d11_draw(&program->draw.renderer, &program->draw.boxy_bold, dc);
 	sprite_sheet_renderer_d3d11_end(&program->draw.renderer, dc);
+	fov_render_d3d11_composite(&program->draw.fov_render,
+	                           dc,
+	                           program->draw.renderer.d3d11.output_uav,
+	                           (v2_u32)program->draw.renderer.size);
 
 	f32 zoom = program->draw.camera.zoom;
 	v2 world_tl = screen_pos_to_world_pos(&program->draw.camera,

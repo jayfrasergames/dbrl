@@ -258,6 +258,11 @@ u8 load_game_functions()
 
 #include "dbrl.cpp"
 
+u8 was_library_written()
+{
+	return 0;
+}
+
 u8 load_game_functions()
 {
 	return 1;
