@@ -603,6 +603,24 @@ Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
 	return NULL;
 }
 
+u8 game_is_pos_opaque(Game* game, Pos pos)
+{
+	auto& tiles = game->tiles;
+	switch (tiles[pos].type) {
+	case TILE_EMPTY:
+	case TILE_FLOOR:
+	case TILE_WATER:
+		return 0;
+		break;
+	case TILE_WALL:
+		return 1;
+		break;
+	default:
+		ASSERT(0);
+	}
+	return 0;
+}
+
 void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache_Bool *fov)
 {
 	const u8 is_wall            = 1 << 0;
@@ -617,16 +635,8 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache
 	for (u16 y = 0; y < 256; ++y) {
 		for (u16 x = 0; x < 256; ++x) {
 			Pos p = V2_u8((u8)x, (u8)y);
-			switch (tiles[p].type) {
-			case TILE_EMPTY:
-			case TILE_FLOOR:
-			case TILE_WATER:
-				break;
-			case TILE_WALL:
+			if (game_is_pos_opaque(game, p)) {
 				map[p] |= is_wall;
-				break;
-			default:
-				ASSERT(0);
 			}
 		}
 	}
@@ -897,6 +907,283 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache
 
 	next_octant: ;
 	}
+}
+
+u8 calculate_line_of_sight(Game *game, Entity_ID vision_entity_id, Pos target)
+{
+	Entity *e = game_get_entity_by_id(game, vision_entity_id);
+	v2_i32 start = (v2_i32)e->pos;
+	v2_i32 end = (v2_i32)target;
+
+	v2_i32 dir = end - start;
+	if (!dir) {
+		return 1;
+	}
+
+	if (!dir.x || !dir.y || (abs(dir.x) == abs(dir.y))) {
+		// vertical, horizontal or diagonal line
+		v2_i32 pos = start;
+		if (dir.x) { dir.x /= abs(dir.x); }
+		if (dir.y) { dir.y /= abs(dir.y); }
+		pos += dir;
+		while (pos != end) {
+			Pos p = (v2_u8)pos;
+			if (game_is_pos_opaque(game, p)) {
+				return 0;
+			}
+			pos += dir;
+		}
+		return 1;
+	}
+
+	struct Sector
+	{
+		Rational start;
+		Rational end;
+	};
+
+	const i32 half_cell_size = 2;
+	const i32 cell_margin = 1;
+	const i32 cell_size = 2 * half_cell_size;
+	const i32 cell_inner_size = cell_size - 2 * cell_margin;
+	const Rational wall_see_low  = Rational::cancel(1, 6);
+	const Rational wall_see_high = Rational::cancel(5, 6);
+
+	Pos vision_pos = e->pos;
+
+	u8 octant_id = 0;
+	v2_i32 transformed_dir = dir;
+	if (dir.y > 0) {
+		octant_id += 2;
+	} else {
+		transformed_dir.y *= -1;
+	}
+	if (dir.x < 0) {
+		octant_id += 4;
+		transformed_dir.x *= -1;
+	}
+	if (abs(dir.x) > abs(dir.y)) {
+		octant_id += 1;
+		i32 tmp = transformed_dir.x;
+		transformed_dir.x = transformed_dir.y;
+		transformed_dir.y = tmp;
+	}
+
+	/*
+	octants:
+
+	\ 4  | 0  /
+	5 \  |  / 1
+	    \|/
+	-----+-----
+	    /|\
+	7 /  |  \ 3
+	/ 6  |  2 \
+	*/
+
+	Max_Length_Array<Sector, 16> sectors_1, sectors_2;
+	Max_Length_Array<Sector, 16> *sectors_front = &sectors_1, *sectors_back = &sectors_2;
+
+	sectors_front->reset();
+	sectors_back->reset();
+	{
+		Sector s = {};
+		s.start = Rational::cancel(transformed_dir.x * cell_size - half_cell_size,
+		                           transformed_dir.y * cell_size + half_cell_size);
+		s.end = Rational::cancel(transformed_dir.x * cell_size + half_cell_size,
+		                         transformed_dir.y * cell_size - half_cell_size);
+		sectors_front->append(s);
+	}
+
+	v2_i32 up, left;
+	switch (octant_id) {
+	case 0: up = V2_i32( 0, -1); left = V2_i32(-1,  0); break;
+	case 1: up = V2_i32( 1,  0); left = V2_i32( 0,  1); break;
+	case 2: up = V2_i32( 0,  1); left = V2_i32(-1,  0); break;
+	case 3: up = V2_i32( 1,  0); left = V2_i32( 0, -1); break;
+	case 4: up = V2_i32( 0, -1); left = V2_i32( 1,  0); break;
+	case 5: up = V2_i32(-1,  0); left = V2_i32( 0,  1); break;
+	case 6: up = V2_i32( 0,  1); left = V2_i32( 1,  0); break;
+	case 7: up = V2_i32(-1,  0); left = V2_i32( 0, -1); break;
+	}
+
+	for (u16 y_iter = 0; y_iter <= transformed_dir.y; ++y_iter) {
+		auto& old_sectors = *sectors_front;
+		auto& new_sectors = *sectors_back;
+		new_sectors.reset();
+
+		if (!old_sectors) {
+			break;
+		}
+
+		for (u32 i = 0; i < old_sectors.len; ++i) {
+			Sector s = old_sectors[i];
+
+			u16 x_start = ((y_iter * cell_size - cell_size / 2) * s.start.numerator
+					+ (s.start.denominator * cell_size / 2))
+				      / (s.start.denominator * cell_size);
+
+			u16 x_end = ((y_iter * cell_size + cell_size / 2) * s.end.numerator
+				      + (s.end.denominator * cell_size / 2) - 1)
+				    / (cell_size * s.end.denominator);
+
+			u8 prev_was_clear = 0;
+			for (u16 x_iter = x_start; x_iter <= x_end; ++x_iter) {
+				v2_i32 logical_pos = V2_i32(x_iter, y_iter);
+				v2_i32 cur_pos;
+				switch (octant_id) {
+				case 0:
+					cur_pos.x = (i32)vision_pos.x + (i32)x_iter;
+					cur_pos.y = (i32)vision_pos.y - (i32)y_iter;
+					break;
+				case 1:
+					cur_pos.x = (i32)vision_pos.x + (i32)y_iter;
+					cur_pos.y = (i32)vision_pos.y - (i32)x_iter;
+					break;
+				case 2:
+					cur_pos.x = (i32)vision_pos.x + (i32)x_iter;
+					cur_pos.y = (i32)vision_pos.y + (i32)y_iter;
+					break;
+				case 3:
+					cur_pos.x = (i32)vision_pos.x + (i32)y_iter;
+					cur_pos.y = (i32)vision_pos.y + (i32)x_iter;
+					break;
+				case 4:
+					cur_pos.x = (i32)vision_pos.x - (i32)x_iter;
+					cur_pos.y = (i32)vision_pos.y - (i32)y_iter;
+					break;
+				case 5:
+					cur_pos.x = (i32)vision_pos.x - (i32)y_iter;
+					cur_pos.y = (i32)vision_pos.y - (i32)x_iter;
+					break;
+				case 6:
+					cur_pos.x = (i32)vision_pos.x - (i32)x_iter;
+					cur_pos.y = (i32)vision_pos.y + (i32)y_iter;
+					break;
+				case 7:
+					cur_pos.x = (i32)vision_pos.x - (i32)y_iter;
+					cur_pos.y = (i32)vision_pos.y + (i32)x_iter;
+					break;
+				}
+
+				if (!(0 < cur_pos.y && cur_pos.y < 255)) { goto break_outer_loop; }
+				if (!(0 < cur_pos.x && cur_pos.x < 255)) { x_end = x_iter; }
+				if (game_is_pos_opaque(game, (v2_u8)cur_pos)) {
+					u8 top    = game_is_pos_opaque(game, (v2_u8)(cur_pos + up));
+					u8 bottom = game_is_pos_opaque(game, (v2_u8)(cur_pos - up));
+					u8 left_  = game_is_pos_opaque(game, (v2_u8)(cur_pos + left));
+					u8 right  = game_is_pos_opaque(game, (v2_u8)(cur_pos - left));
+					u8 btl = !top    && !left_;
+					u8 bbr = !bottom && !right;
+					u8 horiz_visible = 0;
+					Rational horiz_left_intersect = Rational::cancel(
+						s.start.numerator * ((i32)y_iter * cell_size
+								      - half_cell_size)
+						+ s.start.denominator * (half_cell_size
+								     - (i32)x_iter * cell_size),
+						s.start.denominator * cell_size
+					);
+					Rational horiz_right_intersect = Rational::cancel(
+						s.end.numerator * ((i32)y_iter * cell_size
+								      - half_cell_size)
+						+ s.end.denominator * (half_cell_size
+								       - (i32)x_iter * cell_size),
+						s.end.denominator * cell_size
+					);
+					Rational vert_left_intersect = Rational::cancel(
+						s.start.denominator * (2 * x_iter - 1)
+						+ s.start.numerator * (1 - 2 * y_iter),
+						2 * s.start.numerator
+					);
+					Rational vert_right_intersect = Rational::cancel(
+						s.end.denominator * (2 * x_iter - 1)
+						+ s.end.numerator * (1 - 2 * y_iter),
+						2 * s.end.numerator
+					);
+					u8 vert_visible = 0;
+
+					if (logical_pos == transformed_dir) {
+						if (horiz_left_intersect  <= wall_see_high
+						 && horiz_right_intersect >= wall_see_low) {
+							return 1;
+						} else if (prev_was_clear
+							&& vert_left_intersect  >= wall_see_low
+							&& vert_right_intersect <= wall_see_high) {
+							return 1;
+						}
+					}
+
+					Rational left_slope, right_slope;
+					if (btl) {
+						left_slope = Rational::cancel(
+							(i32)x_iter * cell_size - cell_size / 2,
+							(i32)y_iter * cell_size
+						);
+					} else {
+						left_slope = Rational::cancel(
+							(i32)x_iter * cell_size - cell_size / 2,
+							(i32)y_iter * cell_size + cell_size / 2
+						);
+					}
+					if (bbr) {
+						right_slope = Rational::cancel(
+							(i32)x_iter * cell_size + cell_size / 2,
+							(i32)y_iter * cell_size
+						);
+					} else {
+						right_slope = Rational::cancel(
+							(i32)x_iter * cell_size + cell_size / 2,
+							(i32)y_iter * cell_size - cell_size / 2
+						);
+					}
+
+					if (prev_was_clear) {
+						Sector new_sector = s;
+						if (left_slope < new_sector.end) {
+							new_sector.end = left_slope;
+						}
+						if (new_sector.end > new_sector.start) {
+							new_sectors.append(new_sector);
+						}
+						prev_was_clear = 0;
+					}
+					s.start = right_slope;
+				} else {
+					// Sector s = old_sectors[cur_sector];
+					Rational left_slope = Rational::cancel(
+						(i32)x_iter * cell_size + cell_margin - cell_size / 2,
+						(i32)y_iter * cell_size - cell_margin + cell_size / 2
+					);
+					Rational right_slope = Rational::cancel(
+						(i32)x_iter * cell_size - cell_margin + cell_size / 2,
+						(i32)y_iter * cell_size + cell_margin - cell_size / 2
+					);
+					if (right_slope > s.start && left_slope < s.end) {
+						if (logical_pos == transformed_dir) {
+							return 1;
+						}
+					}
+					prev_was_clear = 1;
+				}
+			}
+			if (prev_was_clear) {
+				if (s.end > s.start) {
+					new_sectors.append(s);
+				}
+			}
+		}
+
+		// swap sector buffers
+		{
+			auto tmp = sectors_front;
+			sectors_front = sectors_back;
+			sectors_back = tmp;
+		}
+	}
+
+break_outer_loop:
+
+	return 0;
 }
 
 Entity_ID lich_get_skeleton_to_heal(Game *game, Controller *controller)
@@ -2422,6 +2709,8 @@ void game_build_from_string(Game* game, char* str)
 	}
 	game->next_entity_id = e_id;
 	game->next_controller_id = c_id;
+
+	calculate_field_of_vision(game, player_controller->player.entity_id, &game->field_of_vision);
 }
 
 // =============================================================================
@@ -3122,6 +3411,17 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			}
 
 		}
+	}
+
+	// add field of vision
+	{
+		Anim a = {};
+		a.type = ANIM_FIELD_OF_VISION_CHANGED;
+		a.field_of_vision.start_time = 0.0f;
+		a.field_of_vision.duration = constants.anims.move.duration;
+		a.field_of_vision.buffer_id = 0;
+		a.field_of_vision.fov = &game->field_of_vision;
+		world_anim->anims.append(a);
 	}
 }
 
@@ -5401,6 +5701,17 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	                                                         input->mouse_pos);
 	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw.renderer,
 	                                                (v2_u32)world_mouse_pos);
+
+	// XXX - check player can see sprite
+	{
+		Entity_ID player_id = program->game.controllers[0].player.entity_id;
+		Entity *target = game_get_entity_by_id(&program->game, sprite_id);
+		if (target) {
+			if (!calculate_line_of_sight(&program->game, player_id, target->pos)) {
+				sprite_id = 0;
+			}
+		}
+	}
 
 	Event_Buffer event_buffer = {};
 

@@ -75,6 +75,7 @@ struct Field_Of_Vision_Render
 };
 
 void fov_render_init(Field_Of_Vision_Render* render, v2_u32 grid_size);
+void fov_render_reset(Field_Of_Vision_Render* render);
 u32 fov_render_add_fov(Field_Of_Vision_Render* render, Map_Cache_Bool* fov);
 void fov_render_release_buffer(Field_Of_Vision_Render* render, u32 buffer_id);
 void fov_render_set_alpha(Field_Of_Vision_Render* render, u32 buffer_id, f32 alpha);
@@ -83,6 +84,11 @@ void fov_render_set_alpha(Field_Of_Vision_Render* render, u32 buffer_id, f32 alp
 void fov_render_init(Field_Of_Vision_Render* render, v2_u32 grid_size)
 {
 	render->grid_size = grid_size;
+	fov_render_reset(render);
+}
+
+void fov_render_reset(Field_Of_Vision_Render* render)
+{
 	render->fov_draws.reset();
 	render->free_buffers.reset();
 	for (u32 i = 0; i < FOV_RENDER_MAX_BUFFERS; ++i) {
