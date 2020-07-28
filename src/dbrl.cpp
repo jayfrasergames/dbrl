@@ -49,6 +49,9 @@ thread_local Log *debug_log;
 thread_local Log *debug_pause_log;
 void debug_pause();
 
+#define DLOG(...) log(debug_log, __VA_ARGS__)
+#define DPLOG(...) log(debug_pause_log, __VA_ARGS__)
+
 template <typename T>
 struct Map_Cache
 {
@@ -3079,8 +3082,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			text_anim.text.duration = constants.anims.text_duration;
 			text_anim.text.color = V4_f32(1.0f, 0.0f, 0.0f, 1.0f);
 
-			char buffer[20];
-			snprintf(buffer, ARRAY_SIZE(buffer), "-%u", event->damaged.amount);
+			char *buffer = fmt("-%u", event->damaged.amount);
 			u32 i = 0;
 			for (char *p = buffer; *p; ++p, ++i) {
 				text_anim.text.caption[i] = (u8)*p;
@@ -4226,15 +4228,12 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 {
 	f32 deltas[100];
 
-	char buffer[1024];
-
 	Hand_Params hand_params = card_anim_state->hand_params;
 	u32 highlighted_card_id = card_anim_state->highlighted_card_id;
 	u32 num_card_anims = card_anim_state->num_card_anims;
 	u32 selected_card_index = card_anim_state->hand_size;
 	Card_Anim *anim = card_anim_state->card_anims;
-	snprintf(buffer, ARRAY_SIZE(buffer), "highlighted_card_id = %u", highlighted_card_id);
-	log(debug_log, buffer);
+	log(debug_log, "highlighted_card_id = %u", highlighted_card_id);
 	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 		if (anim->card_id == highlighted_card_id) {
 			switch (anim->type) {
@@ -4252,8 +4251,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			break;
 		}
 	}
-	snprintf(buffer, ARRAY_SIZE(buffer), "num_card_anims: %u", num_card_anims);
-	log(debug_log, buffer);
+	log(debug_log, "num_card_anims: %u", num_card_anims);
 	if (selected_card_index < card_anim_state->hand_size) {
 		log(debug_log, "selected_card_index < card_anim_state->hand_size");
 		hand_calc_deltas(deltas, &hand_params, selected_card_index);
@@ -6112,8 +6110,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	if (sprite_id && sprite_id < MAX_ENTITIES) {
 		Entity *e = game_get_entity_by_id(&program->game, sprite_id);
 		if (e) {
-			char buffer[1024];
-			snprintf(buffer, ARRAY_SIZE(buffer), "%d/%d", e->hit_points, e->max_hit_points);
+			char *buffer = fmt("%d/%d", e->hit_points, e->max_hit_points);
 
 			u32 width = 1, height = 0;
 			for (u8 *p = (u8*)buffer; *p; ++p) {
@@ -6140,20 +6137,15 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 	// imgui
-	imgui_begin(&program->imgui, input, screen_size);
+	IMGUI_Context *ic = &program->imgui;
+	imgui_begin(ic, input, screen_size);
 	if (program->display_debug_ui) {
-		imgui_set_text_cursor(&program->imgui, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
-		if (imgui_tree_begin(&program->imgui, "show mouse info")) {
-			char buffer[1024];
-			snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Pos: (%u, %u)",
-				 input->mouse_pos.x, input->mouse_pos.y);
-			imgui_text(&program->imgui, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "Mouse Delta: (%d, %d)",
-				 input->mouse_delta.x, input->mouse_delta.y);
-			imgui_text(&program->imgui, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "Mouse world pos: (%d, %d)",
-				 world_mouse_pos.x, world_mouse_pos.y);
-			imgui_text(&program->imgui, buffer);
+		imgui_set_text_cursor(ic, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
+		if (imgui_tree_begin(ic, "show mouse info")) {
+			imgui_text(ic, "Mouse Pos: (%u, %u)", input->mouse_pos.x, input->mouse_pos.y);
+			imgui_text(ic, "Mouse Delta: (%d, %d)",
+			           input->mouse_delta.x, input->mouse_delta.y);
+			imgui_text(ic, "Mouse world pos: (%d, %d)", world_mouse_pos.x, world_mouse_pos.y);
 			Pos sprite_pos;
 			{
 				u32 num_entities = program->game.entities.len;
@@ -6166,65 +6158,58 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 					}
 				}
 			}
-			snprintf(buffer, ARRAY_SIZE(buffer), "Sprite ID: %u, position: (%u, %u)",
-			         sprite_id, sprite_pos.x, sprite_pos.y);
-			imgui_text(&program->imgui, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "Card mouse pos: (%f, %f)",
-				 card_mouse_pos.x, card_mouse_pos.y);
-			imgui_text(&program->imgui, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "Selected Card ID: %u", selected_card_id);
-			imgui_text(&program->imgui, buffer);
-			snprintf(buffer, ARRAY_SIZE(buffer), "World Center: (%f, %f)",
-				program->draw.camera.world_center.x,
-				program->draw.camera.world_center.y);
-			imgui_text(&program->imgui, buffer);
+			imgui_text(ic, "Sprite ID: %u, position: (%u, %u)", sprite_id,
+			           sprite_pos.x, sprite_pos.y);
+			imgui_text(ic, "Card mouse pos: (%f, %f)", card_mouse_pos.x, card_mouse_pos.y);
+			imgui_text(ic, "Selected Card ID: %u", selected_card_id);
+			imgui_text(ic, "World Center: (%f, %f)", program->draw.camera.world_center.x,
+			           program->draw.camera.world_center.y);
 			// draw input state stack
 			{
-				imgui_text(&program->imgui, "Program Input State Stack:");
+				imgui_text(ic, "Program Input State Stack:");
 				auto& state_stack = program->program_input_state_stack;
 				for (u32 i = 0; i < state_stack.top; ++i) {
-					snprintf(buffer, ARRAY_SIZE(buffer), "    State: %s",
-					         PROGRAM_INPUT_STATE_NAMES[state_stack.items[i]]);
-					imgui_text(&program->imgui, buffer);
+					imgui_text(ic, "    State: %s",
+					           PROGRAM_INPUT_STATE_NAMES[state_stack.items[i]]);
 				}
 			}
-			imgui_tree_end(&program->imgui);
+			imgui_tree_end(ic);
 		}
-		if (imgui_tree_begin(&program->imgui, "levels")) {
-			if (imgui_button(&program->imgui, "default")) {
+		if (imgui_tree_begin(ic, "levels")) {
+			if (imgui_button(ic, "default")) {
 				build_level_default(program);
 			}
-			if (imgui_button(&program->imgui, "anim test")) {
+			if (imgui_button(ic, "anim test")) {
 				build_level_anim_test(program);
 			}
-			if (imgui_button(&program->imgui, "slime test")) {
+			if (imgui_button(ic, "slime test")) {
 				build_level_slime_test(program);
 			}
-			if (imgui_button(&program->imgui, "lich test")) {
+			if (imgui_button(ic, "lich test")) {
 				build_level_lich(program);
 			}
-			if (imgui_button(&program->imgui, "field of vision test")) {
+			if (imgui_button(ic, "field of vision test")) {
 				build_field_of_vision_test(program);
 			}
-			imgui_tree_end(&program->imgui);
+			imgui_tree_end(ic);
 		}
-		if (imgui_tree_begin(&program->imgui, "cards")) {
-			if (imgui_button(&program->imgui, "random 100")) {
+		if (imgui_tree_begin(ic, "cards")) {
+			if (imgui_button(ic, "random 100")) {
 				build_deck_random_n(program, 100);
 			}
-			if (imgui_button(&program->imgui, "random 20")) {
+			if (imgui_button(ic, "random 20")) {
 				build_deck_random_n(program, 20);
 			}
-			if (imgui_button(&program->imgui, "random 17")) {
+			if (imgui_button(ic, "random 17")) {
 				build_deck_random_n(program, 17);
 			}
-			if (imgui_button(&program->imgui, "poison")) {
+			if (imgui_button(ic, "poison")) {
 				build_deck_poison(program);
 			}
-			imgui_tree_end(&program->imgui);
+			imgui_tree_end(ic);
 		}
-		constants_do_imgui(&program->imgui);
-		if (imgui_tree_begin(&program->imgui, "debug log")) {
+		constants_do_imgui(ic);
+		if (imgui_tree_begin(ic, "debug log")) {
 			u32 start = 0;
 			u32 end = debug_log->cur_line;
 			if (end > LOG_MAX_LINES) {
@@ -6232,11 +6217,11 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 
 			for (u32 i = start; i < end; ++i) {
-				imgui_text(&program->imgui, log_get_line(debug_log, i));
+				imgui_text(ic, log_get_line(debug_log, i));
 			}
-			imgui_tree_end(&program->imgui);
+			imgui_tree_end(ic);
 		}
-		imgui_tree_end(&program->imgui);
+		imgui_tree_end(ic);
 	}
 }
 

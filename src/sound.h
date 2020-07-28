@@ -5,6 +5,8 @@
 #include "jfg/containers.hpp"
 #include "assets.h"
 
+#define SOUND_MAX_SIMULTANEOUS_SOUNDS 32
+
 #ifdef JFG_DSOUND_H
 
 #ifndef INCLUDE_AUDIO_API
@@ -15,6 +17,7 @@ struct Sound_Player_DSound
 {
 	IDirectSound       *dsound;
 	IDirectSoundBuffer *sound_buffers[NUM_SOUNDS];
+	Max_Length_Array<IDirectSoundBuffer*, SOUND_MAX_SIMULTANEOUS_SOUNDS> playing_sounds;
 };
 #endif
 
@@ -116,6 +119,10 @@ error_init_sound:
 
 void sound_player_dsound_free(Sound_Player* player)
 {
+	auto& playing_sounds = player->dsound.playing_sounds;
+	for (u32 i = 0; i < playing_sounds.len; ++i) {
+		playing_sounds[i]->Release();
+	}
 	for (u32 i = 0; i < NUM_SOUNDS; ++i) {
 		player->dsound.sound_buffers[i]->Release();
 	}
@@ -123,11 +130,26 @@ void sound_player_dsound_free(Sound_Player* player)
 
 void sound_player_dsound_play(Sound_Player* player)
 {
+	auto& playing_sounds = player->dsound.playing_sounds;
+	for (u32 i = 0; i < playing_sounds.len; ) {
+		DWORD status;
+		HRESULT hr = playing_sounds[i]->GetStatus(&status);
+		ASSERT(hr == DS_OK);
+		if (!(status & DSBSTATUS_PLAYING)) {
+			playing_sounds.remove(i);
+			continue;
+		}
+		++i;
+	}
+	IDirectSound *dsound = player->dsound.dsound;
 	u32 num_sounds_to_play = player->sounds_to_play.len;
 	for (u32 i = 0; i < num_sounds_to_play; ++i) {
 		IDirectSoundBuffer *buffer = player->dsound.sound_buffers[player->sounds_to_play[i]];
 		if (buffer) {
-			buffer->Play(0, 0, 0);
+			IDirectSoundBuffer *play_buffer = NULL;
+			dsound->DuplicateSoundBuffer(buffer, &play_buffer);
+			play_buffer->Play(0, 0, 0);
+			player->dsound.playing_sounds.append(play_buffer);
 		}
 		player->dsound.sound_buffers[player->sounds_to_play[i]]->Play(0, 0, 0);
 	}

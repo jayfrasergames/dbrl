@@ -2,7 +2,6 @@
   * variable move duration depending on user input frequency
     * animation "speeding up" when moves made rapidly
   * improve imgui
-    * snprintf replacement
     * global context
     * debug imgui global context
     * member functions
@@ -10,8 +9,6 @@
     * card discarding
   * hide mouse/use custom mouse cursor
   * hold tab to view entity health
-  * sound
-    * playing the same sound more than once simultaneously
   * transaction processing
     * only collapse "Entity_Damage" events after processing transactions
   * "rational" class?
@@ -90,11 +87,3 @@
     * read input from windows message loop and translate it to sensibly buffered input
 
 * create xinput loading lib
-
-* create IMgui slider adjustments and "constants" files
-* create header files with game data (e.g. game images, maps of those images etc) - using python scripts
-    * put these in gen/
-    * includes:
-        * <name>.data.h (shaders, textures, etc)
-        * <name>.edit.h (constants for animations etc)
-          in game editor should edit <name>.edit.h files
