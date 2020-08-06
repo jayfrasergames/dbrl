@@ -19,6 +19,7 @@
 #include "card_render.h"
 #include "pixel_art_upsampler.h"
 #include "particles.h"
+#include "physics.h"
 
 #include <stdio.h>  // XXX - for snprintf
 
@@ -1529,14 +1530,289 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 {
 	// TODO -- field of vision
 
-	u32 num_entities = game->entities.len;
-	auto& tiles = game->tiles;
-
 	// =====================================================================
 	// simulate actions
 
-	// 1. create transaction buffer
+	u32 num_entities = game->entities.len;
+	Entity *entities = game->entities.items;
+	auto& tiles = game->tiles;
 
+	// 0. init physics context
+
+	Physics_Context physics;
+	physics_reset(&physics);
+
+	const u32 collision_mask_wall       = 1 << 0;
+	const u32 collision_mask_entity     = 1 << 1;
+	const u32 collision_mask_projectile = 1 << 2;
+
+	const u32 collides_with_wall       = collision_mask_projectile;
+	const u32 collides_with_entity     = collision_mask_projectile;
+	const u32 collides_with_projectile = collision_mask_wall | collision_mask_entity;
+
+	// make static lines
+	{
+		const u8 is_wall            = 1 << 0;
+		const u8 bevel_top_left     = 1 << 1;
+		const u8 bevel_top_right    = 1 << 2;
+		const u8 bevel_bottom_left  = 1 << 3;
+		const u8 bevel_bottom_right = 1 << 4;
+		Map_Cache<u8> map;
+		memset(map.items, 0, sizeof(map.items));
+
+		auto& tiles = game->tiles;
+		for (u16 y = 0; y < 256; ++y) {
+			for (u16 x = 0; x < 256; ++x) {
+				Pos p = V2_u8((u8)x, (u8)y);
+				if (game_is_pos_opaque(game, p)) {
+					map[p] |= is_wall;
+				}
+			}
+		}
+
+		for (u16 i = 0; i < 256; ++i) {
+			u8 x = (u8)i;
+			map[V2_u8(  x,   0)] |= is_wall;
+			map[V2_u8(  x, 255)] |= is_wall;
+			map[V2_u8(  0,   x)] |= is_wall;
+			map[V2_u8(255,   x)] |= is_wall;
+		}
+
+		auto& entities = game->entities;
+		for (u32 i = 0; i < entities.len; ++i) {
+			if (entities[i].blocks_vision) {
+				map[entities[i].pos] |= is_wall;
+			}
+		}
+
+		for (u8 y = 1; y < 255; ++y) {
+			for (u8 x = 1; x < 255; ++x) {
+				u8 center = map[V2_u8(x, y)];
+				if (!center) {
+					continue;
+				}
+
+				u8 above  = map[V2_u8(    x, y - 1)];
+				u8 left   = map[V2_u8(x - 1,     y)];
+				u8 right  = map[V2_u8(x + 1,     y)];
+				u8 bottom = map[V2_u8(    x, y + 1)];
+
+				if (!above  && !left)  { center |= bevel_top_left;     }
+				if (!above  && !right) { center |= bevel_top_right;    }
+				if (!bottom && !left)  { center |= bevel_bottom_left;  }
+				if (!bottom && !right) { center |= bevel_bottom_right; }
+
+				map[V2_u8(x, y)] = center;
+			}
+		}
+
+		Physics_Static_Line line = {};
+		line.collision_mask = collision_mask_wall;
+		line.collides_with_mask = collides_with_wall;
+		for (u16 y = 1; y < 255; ++y) {
+			for (u16 x = 1; x < 255; ++x) {
+				v2 p = V2_f32((f32)x, (f32)y);
+				u8 cell = map[(v2_u8)p];
+				if (cell & bevel_top_left) {
+					line.start = p - V2_f32(0.0f, 0.5f);
+					line.end = p - V2_f32(0.5f, 0.0f);
+					physics.static_lines.append(line);
+				}
+				if (cell & bevel_top_right) {
+					line.start = p - V2_f32(0.0f, 0.5f);
+					line.end = p + V2_f32(0.5f, 0.0f);
+					physics.static_lines.append(line);
+				}
+				if (cell & bevel_bottom_left) {
+					line.start = p + V2_f32(0.0f, 0.5f);
+					line.end = p - V2_f32(0.5f, 0.0f);
+					physics.static_lines.append(line);
+				}
+				if (cell & bevel_bottom_right) {
+					line.start = p + V2_f32(0.0f, 0.5f);
+					line.end = p + V2_f32(0.5f, 0.0f);
+					physics.static_lines.append(line);
+				}
+			}
+		}
+
+		for (u16 y = 0; y < 255; ++y) {
+			// 0 - not drawing line, 1 - line for cell above, 2 - line for cell below
+			u8 drawing_line = 0;
+			f32 line_start_x, line_end_x;
+			for (u16 x = 0; x < 256; ++x) {
+				Pos p_above = V2_u8((u8)x,       (u8)y);
+				Pos p_below = V2_u8((u8)x, (u8)(y + 1));
+				u8 cell_above = map[p_above];
+				u8 cell_below = map[p_below];
+				f32 this_line_start_x = (f32)x - 0.5f, this_line_end_x = (f32)x + 0.5f;
+				if ((cell_above & bevel_bottom_left) || (cell_below & bevel_top_left)) {
+					this_line_start_x = (f32)x;
+				}
+				if ((cell_above & bevel_bottom_right) || (cell_below & bevel_top_right)) {
+					this_line_end_x = (f32)x;
+				}
+				if ((cell_above & is_wall) != (cell_below & is_wall)) {
+					if (cell_above & is_wall) {
+						switch (drawing_line) {
+						case 0:
+							line_start_x = this_line_start_x;
+							line_end_x = this_line_end_x;
+							drawing_line = 1;
+							break;
+						case 1:
+							line_end_x = this_line_end_x;
+							break;
+						case 2:
+							line.start = V2_f32(line_start_x, (f32)y + 0.5f);
+							line.end   = V2_f32(  line_end_x, (f32)y + 0.5f);
+							if (line.start != line.end) {
+								physics.static_lines.append(line);
+							}
+							line_start_x = this_line_start_x;
+							line_end_x = this_line_end_x;
+							drawing_line = 1;
+							break;
+						default:
+							ASSERT(0);
+							break;
+						}
+					} else {
+						switch (drawing_line) {
+						case 0:
+							line_start_x = this_line_start_x;
+							line_end_x = this_line_end_x;
+							drawing_line = 2;
+							break;
+						case 1:
+							line.start = V2_f32(line_start_x, (f32)y + 0.5f);
+							line.end   = V2_f32(  line_end_x, (f32)y + 0.5f);
+							if (line.start != line.end) {
+								physics.static_lines.append(line);
+							}
+							line_start_x = this_line_start_x;
+							line_end_x = this_line_end_x;
+							drawing_line = 2;
+							break;
+						case 2:
+							line_end_x = this_line_end_x;
+							break;
+						default:
+							ASSERT(0);
+							break;
+						}
+					}
+				} else {
+					if (drawing_line) {
+						line.start = V2_f32(line_start_x, (f32)y + 0.5f);
+						line.end   = V2_f32(  line_end_x, (f32)y + 0.5f);
+						if (line.start != line.end) {
+							physics.static_lines.append(line);
+						}
+						drawing_line = 0;
+					}
+				}
+			}
+		}
+
+		for (u16 x = 0; x < 255; ++x) {
+			// 0 - not drawing line, 1 - line for left cell, 2 - line for right cell
+			u8 drawing_line = 0;
+			f32 line_start_y, line_end_y;
+			for (u16 y = 0; y < 256; ++y) {
+				Pos p_left  = V2_u8(      (u8)x, (u8)y);
+				Pos p_right = V2_u8((u8)(x + 1), (u8)y);
+				u8 cell_left  = map[p_left];
+				u8 cell_right = map[p_right];
+				f32 this_line_start_y = (f32)y - 0.5f, this_line_end_y = (f32)y + 0.5f;
+				if ((cell_left & bevel_top_right) || (cell_right & bevel_top_left)) {
+					this_line_start_y = (f32)y;
+				}
+				if ((cell_left & bevel_bottom_right) || (cell_right & bevel_bottom_left)) {
+					this_line_end_y = (f32)y;
+				}
+				if ((cell_left & is_wall) != (cell_right & is_wall)) {
+					if (cell_left & is_wall) {
+						switch (drawing_line) {
+						case 0:
+							line_start_y = this_line_start_y;
+							line_end_y = this_line_end_y;
+							drawing_line = 1;
+							break;
+						case 1:
+							line_end_y = this_line_end_y;
+							break;
+						case 2:
+							line.start = V2_f32((f32)x + 0.5f, line_start_y);
+							line.end   = V2_f32((f32)x + 0.5f,   line_end_y);
+							if (line.start != line.end) {
+								physics.static_lines.append(line);
+							}
+							line_start_y = this_line_start_y;
+							line_end_y = this_line_end_y;
+							drawing_line = 1;
+							break;
+						default:
+							ASSERT(0);
+							break;
+						}
+					} else {
+						switch (drawing_line) {
+						case 0:
+							line_start_y = this_line_start_y;
+							line_end_y = this_line_end_y;
+							drawing_line = 2;
+							break;
+						case 1:
+							line.start = V2_f32((f32)x + 0.5f, line_start_y);
+							line.end   = V2_f32((f32)x + 0.5f,   line_end_y);
+							if (line.start != line.end) {
+								physics.static_lines.append(line);
+							}
+							line_start_y = this_line_start_y;
+							line_end_y = this_line_end_y;
+							drawing_line = 2;
+							break;
+						case 2:
+							line_end_y = this_line_end_y;
+							break;
+						default:
+							ASSERT(0);
+							break;
+						}
+					}
+				} else {
+					if (drawing_line) {
+						line.start = V2_f32((f32)x + 0.5f, line_start_y);
+						line.end   = V2_f32((f32)x + 0.5f,   line_end_y);
+						if (line.start != line.end) {
+							physics.static_lines.append(line);
+						}
+						drawing_line = 0;
+					}
+				}
+			}
+		}
+	}
+
+	for (u32 i = 0; i < num_entities; ++i) {
+		Entity *e = &entities[i];
+		Physics_Static_Circle circle = {};
+		circle.collision_mask = collision_mask_entity;
+		circle.collides_with_mask = collides_with_entity;
+		circle.owner_id = e->id;
+		circle.radius = constants.physics.entity_radius;
+		circle.pos = (v2)e->pos;
+		physics.static_circles.append(circle);
+	}
+
+	physics_start_frame(&physics);
+	physics_compute_collisions(&physics, 0.0f);
+
+	physics_debug_draw(&physics, 0.0f);
+	debug_pause();
+
+	// 1. create transaction buffer
 
 	Transaction_Buffer transactions;
 	transactions.reset();
@@ -1618,7 +1894,6 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 	Map_Cache_Bool occupied;
 	occupied.reset();
 
-	Entity *entities = game->entities.items;
 	for (u32 i = 0; i < num_entities; ++i) {
 		Entity *e = &entities[i];
 		if (e->block_mask) {
@@ -1641,7 +1916,11 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 	f32 time = 0.0f;
 	while (transactions) {
+		u8 recompute_physics_collisions = 0;
 		entity_damage.reset();
+		for (u32 i = 0; i < physics.collisions.len; ++i) {
+		}
+
 		for (u32 i = 0; i < transactions.len; ++i) {
 			Transaction *t = &transactions[i];
 			ASSERT(t->start_time >= time);
@@ -1687,6 +1966,19 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				// post-exit
 				m.type = MESSAGE_MOVE_POST_EXIT;
 				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
+
+				physics_remove_objects_for_entity(&physics, t->move.entity_id);
+				Physics_Linear_Circle circle = {};
+				circle.collision_mask = collision_mask_entity;
+				circle.collides_with_mask = collides_with_entity;
+				circle.owner_id = t->move.entity_id;
+				circle.start = (v2)t->move.start;
+				circle.velocity = ((v2)t->move.end - (v2)t->move.start) / constants.anims.move.duration;
+				circle.start_time = time;
+				circle.duration = constants.anims.move.duration;
+				circle.radius = constants.physics.entity_radius;
+				physics.linear_circles.append(circle);
+				recompute_physics_collisions = 1;
 
 				t->type = TRANSACTION_MOVE_PRE_ENTER;
 				t->start_time += constants.anims.move.duration / 2.0f;
@@ -1743,6 +2035,19 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 					debug_draw_world_circle((v2)start, 0.5f);
 					debug_pause();
 #endif
+					recompute_physics_collisions = 1;
+					physics_remove_objects_for_entity(&physics, t->move.entity_id);
+					Physics_Linear_Circle circle = {};
+					circle.collision_mask = collision_mask_entity;
+					circle.collides_with_mask = collides_with_entity;
+					circle.owner_id = t->move.entity_id;
+					circle.start = (v2)t->move.end;
+					circle.velocity = ((v2)t->move.start - (v2)t->move.end) / constants.anims.move.duration;
+					circle.start_time = time - constants.anims.move.duration / 2.0f;
+					circle.duration = constants.anims.move.duration;
+					circle.radius = constants.physics.entity_radius;
+					physics.linear_circles.append(circle);
+
 					t->move.end = t->move.start;
 					event.type = EVENT_MOVE_BLOCKED;
 				}
@@ -1769,6 +2074,17 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				m.move.end = end;
 				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
 				t->type = TRANSACTION_REMOVE;
+
+				recompute_physics_collisions = 1;
+				physics_remove_objects_for_entity(&physics, t->move.entity_id);
+				Physics_Static_Circle circle = {};
+				circle.collision_mask = collision_mask_entity;
+				circle.collides_with_mask = collides_with_entity;
+				circle.owner_id = t->move.entity_id;
+				circle.pos = (v2)t->move.end;
+				circle.radius = constants.physics.entity_radius;
+				physics.static_circles.append(circle);
+
 				break;
 			}
 			case TRANSACTION_DROP_TILE: {
@@ -1818,6 +2134,28 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 						transactions.append(offshoot);
 					}
+				}
+
+				recompute_physics_collisions = 1;
+				Physics_Linear_Circle circle = {};
+				circle.collision_mask = collision_mask_projectile;
+				circle.collides_with_mask = collides_with_projectile;
+				circle.start = (v2)t->fireball_shot.end;
+				circle.radius = constants.physics.fireball_radius;
+				circle.duration = constants.physics.fireball_duration;
+				circle.start_time = start_time;
+				for (u32 i = 0; i < 5; ++i) {
+					f32 angle = PI_F32 * ((f32)i / 5.0f) / 2.0f;
+					f32 ca = cosf(angle);
+					f32 sa = sinf(angle);
+					circle.velocity = 5.0f * V2_f32( ca,  sa);
+					physics.linear_circles.append(circle);
+					circle.velocity = 5.0f * V2_f32(-sa,  ca);
+					physics.linear_circles.append(circle);
+					circle.velocity = 5.0f * V2_f32(-ca, -sa);
+					physics.linear_circles.append(circle);
+					circle.velocity = 5.0f * V2_f32( sa, -ca);
+					physics.linear_circles.append(circle);
 				}
 
 				break;
@@ -2146,6 +2484,63 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		}
 		transactions.len -= push_back;
 
+		if (recompute_physics_collisions) {
+			recompute_physics_collisions = 0;
+			physics_start_frame(&physics);
+			physics_compute_collisions(&physics, time);
+
+			debug_draw_world_reset();
+			physics_debug_draw(&physics, time);
+			debug_pause();
+
+			for (u32 i = 0; i < physics.collisions.len; ++i) {
+				Physics_Collision collision = physics.collisions[i];
+				debug_draw_world_reset();
+				physics_debug_draw(&physics, collision.time);
+				debug_draw_world_set_color(V4_f32(0.0f, 0.0f, 1.0f, 0.75f));
+				switch (collision.objects_type) {
+				case PHYSICS_COLLISION_STATIC_LINE_LINEAR_CIRCLE: {
+					Physics_Static_Line *line = collision.static_line_linear_circle.static_line;
+					Physics_Linear_Circle *circle = collision.static_line_linear_circle.linear_circle;
+					debug_draw_world_line(line->start, line->end);
+					v2 p = circle->start;
+					v2 v = circle->velocity;
+					f32 r = circle->radius;
+					f32 t = collision.time - circle->start_time;
+					debug_draw_world_circle(p + t * v, r);
+					break;
+				}
+				case PHYSICS_COLLISION_STATIC_CIRCLE_LINEAR_CIRCLE: {
+					Physics_Static_Circle *circle_1 = collision.static_circle_linear_circle.static_circle;
+					Physics_Linear_Circle *circle_2 = collision.static_circle_linear_circle.linear_circle;
+					debug_draw_world_circle(circle_1->pos, circle_1->radius);
+					v2 p = circle_2->start;
+					v2 v = circle_2->velocity;
+					f32 r = circle_2->radius;
+					f32 t = collision.time - circle_2->start_time;
+					debug_draw_world_circle(p + t * v, r);
+					break;
+				}
+				case PHYSICS_COLLISION_LINEAR_CIRCLE_LINEAR_CIRCLE: {
+					Physics_Linear_Circle *circle_1 = collision.linear_circle_linear_circle.linear_circle_1;
+					Physics_Linear_Circle *circle_2 = collision.linear_circle_linear_circle.linear_circle_2;
+					v2 p = circle_1->start;
+					v2 v = circle_1->velocity;
+					f32 r = circle_1->radius;
+					f32 t = collision.time - circle_1->start_time;
+					debug_draw_world_circle(p + t * v, r);
+					p = circle_2->start;
+					v = circle_2->velocity;
+					r = circle_2->radius;
+					t = collision.time - circle_2->start_time;
+					debug_draw_world_circle(p + t * v, r);
+					break;
+				}
+				}
+				debug_pause();
+			}
+		}
+
 		// TODO - need some better representation of "infinity"
 		f32 next_time = 1000000.0f;
 		for (u32 i = 0; i < transactions.len; ++i) {
@@ -2156,6 +2551,16 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				next_time = start_time;
 			}
 		}
+
+		/*
+		for (u32 i = 0; i < physics.collisions.len; ++i) {
+			f32 collision_time = physics.collisions[i].time;
+			if (collision_time < next_time) {
+				next_time = collision_time;
+			}
+		}
+		*/
+
 		time = next_time;
 	}
 

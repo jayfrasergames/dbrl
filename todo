@@ -18,6 +18,7 @@
   * fireball hits barrels, chain reaction
   * enemies
     * spiders (traps)
+    * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
   * doors
   * spells/cards
     * magic missile
