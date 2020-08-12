@@ -27,6 +27,7 @@
 #include "gen/sprite_sheet_creatures.data.h"
 #include "gen/sprite_sheet_tiles.data.h"
 #include "gen/sprite_sheet_water_edges.data.h"
+#include "gen/sprite_sheet_effects_24.data.h"
 #include "gen/sprite_sheet_effects_32.data.h"
 #include "gen/boxy_bold.data.h"
 
@@ -87,6 +88,7 @@ enum Action_Type
 	ACTION_BLINK,
 	ACTION_POISON,
 	ACTION_HEAL,
+	ACTION_LIGHTNING,
 };
 
 struct Action
@@ -124,6 +126,11 @@ struct Action
 			Entity_ID target_id;
 			i32 amount;
 		} heal;
+		struct {
+			Entity_ID caster_id;
+			Pos start;
+			Pos end;
+		} lightning;
 	};
 
 	operator bool() { return type; }
@@ -143,6 +150,7 @@ enum Event_Type
 	EVENT_FIREBALL_HIT,
 	EVENT_FIREBALL_SHOT,
 	EVENT_FIREBALL_OFFSHOOT,
+	EVENT_FIREBALL_OFFSHOOT_2,
 	EVENT_STUCK,
 	EVENT_DAMAGED,
 	EVENT_DEATH,
@@ -153,6 +161,8 @@ enum Event_Type
 	EVENT_POLYMORPH,
 	EVENT_HEAL,
 	EVENT_FIELD_OF_VISION_CHANGED,
+	EVENT_LIGHTNING_BOLT,
+	EVENT_LIGHTNING_BOLT_START,
 };
 
 struct Event
@@ -182,12 +192,12 @@ struct Event
 		} fireball_hit;
 		struct {
 			f32 duration;
-			Pos start;
-			Pos end;
-		} fireball_offshoot;
+			v2 start;
+			v2 end;
+		} fireball_offshoot_2;
 		struct {
 			Entity_ID entity_id;
-			Pos pos;
+			v2 pos;
 			u32 amount;
 		} damaged;
 		struct {
@@ -228,6 +238,20 @@ struct Event
 			f32 duration;
 			Map_Cache_Bool *fov;
 		} field_of_vision;
+		struct {
+			Entity_ID caster_id;
+			f32 duration;
+			v2 start;
+			v2 end;
+		} lightning;
+		struct {
+			f32 duration;
+			v2 start;
+			v2 end;
+		} lightning_bolt;
+		struct {
+			v2 pos;
+		} lightning_bolt_start;
 	};
 };
 
@@ -244,6 +268,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_FIREBALL_HIT: return 0;
 	case EVENT_FIREBALL_SHOT: return 0;
 	case EVENT_FIREBALL_OFFSHOOT: return 0;
+	case EVENT_FIREBALL_OFFSHOOT_2: return 0;
 	case EVENT_STUCK: return 0;
 	case EVENT_DAMAGED: return 0;
 	case EVENT_DEATH: return 0;
@@ -254,6 +279,8 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_POLYMORPH: return 0;
 	case EVENT_HEAL: return 0;
 	case EVENT_FIELD_OF_VISION_CHANGED: return 0;
+	case EVENT_LIGHTNING_BOLT: return 0;
+	case EVENT_LIGHTNING_BOLT_START: return 0;
 	}
 	ASSERT(0);
 	return 1;
@@ -451,6 +478,15 @@ struct Message_Handler
 
 #define GAME_MAX_CONTROLLERS 1024
 #define GAME_MAX_MESSAGE_HANDLERS 1024
+
+enum Static_Entity_ID
+{
+	ENTITY_ID_NONE,
+	ENTITY_ID_PLAYER,
+	ENTITY_ID_WALLS,
+	NUM_STATIC_ENTITY_IDS,
+};
+
 // maybe better called "world state"?
 struct Game
 {
@@ -476,6 +512,11 @@ struct Game
 
 	Map_Cache_Bool field_of_vision;
 };
+
+Entity_ID game_new_entity_id(Game *game)
+{
+	return game->next_entity_id++;
+}
 
 Entity_ID game_add_slime(Game *game, Pos pos, u32 hit_points)
 {
@@ -1324,7 +1365,7 @@ enum Transaction_Type
 	TRANSACTION_MOVE_ENTER,
 	TRANSACTION_DROP_TILE,
 	TRANSACTION_FIREBALL_SHOT,
-	TRANSACTION_FIREBALL_OFFSHOOT,
+	TRANSACTION_FIREBALL_HIT,
 	TRANSACTION_EXCHANGE_CAST,
 	TRANSACTION_EXCHANGE,
 	TRANSACTION_BLINK_CAST,
@@ -1337,6 +1378,8 @@ enum Transaction_Type
 	TRANSACTION_FIRE_BOLT_HIT,
 	TRANSACTION_HEAL_CAST,
 	TRANSACTION_HEAL,
+	TRANSACTION_LIGHTNING_CAST,
+	TRANSACTION_LIGHTNING_SHOT,
 };
 
 #define TRANSACTION_EPSILON 1e-6f;
@@ -1358,13 +1401,6 @@ struct Transaction
 			Pos start;
 			Pos end;
 		} fireball_shot;
-		struct {
-			f32 start_time;
-			Pos start;
-			v2_i16 dir;
-			u32 cur_step;
-			u32 num_steps;
-		} fireball_offshoot;
 		struct {
 			Entity_ID a;
 			Entity_ID b;
@@ -1392,6 +1428,11 @@ struct Transaction
 			i32 amount;
 			Pos start;
 		} heal;
+		struct {
+			Entity_ID caster_id;
+			Pos start;
+			Pos end;
+		} lightning;
 	};
 };
 
@@ -1442,20 +1483,9 @@ void game_dispatch_message(Game*               game,
 		case MESSAGE_HANDLER_TRAP_FIREBALL:
 			if (h->trap.pos == message.move.end) {
 				Transaction t = {};
-				t.type = TRANSACTION_FIREBALL_OFFSHOOT;
+				t.type = TRANSACTION_FIREBALL_HIT;
 				t.start_time = time;
-				t.fireball_offshoot.start_time = time;
-				t.fireball_offshoot.start = h->trap.pos;
-				t.fireball_offshoot.cur_step = 0;
-				t.fireball_offshoot.num_steps = 3;
-
-				t.fireball_offshoot.dir = V2_i16( 0,  1);
-				transactions.append(t);
-				t.fireball_offshoot.dir = V2_i16( 0, -1);
-				transactions.append(t);
-				t.fireball_offshoot.dir = V2_i16( 1,  0);
-				transactions.append(t);
-				t.fireball_offshoot.dir = V2_i16(-1,  0);
+				t.fireball_shot.end = message.move.end;
 				transactions.append(t);
 
 				Event e = {};
@@ -1607,6 +1637,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		}
 
 		Physics_Static_Line line = {};
+		line.owner_id = ENTITY_ID_WALLS;
 		line.collision_mask = collision_mask_wall;
 		line.collides_with_mask = collides_with_wall;
 		for (u16 y = 1; y < 255; ++y) {
@@ -1798,19 +1829,13 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 	for (u32 i = 0; i < num_entities; ++i) {
 		Entity *e = &entities[i];
 		Physics_Static_Circle circle = {};
+		circle.owner_id = e->id;
 		circle.collision_mask = collision_mask_entity;
 		circle.collides_with_mask = collides_with_entity;
-		circle.owner_id = e->id;
 		circle.radius = constants.physics.entity_radius;
 		circle.pos = (v2)e->pos;
 		physics.static_circles.append(circle);
 	}
-
-	physics_start_frame(&physics);
-	physics_compute_collisions(&physics, 0.0f);
-
-	physics_debug_draw(&physics, 0.0f);
-	debug_pause();
 
 	// 1. create transaction buffer
 
@@ -1886,6 +1911,15 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			transactions.append(t);
 			break;
 		}
+		case ACTION_LIGHTNING: {
+			Transaction t = {};
+			t.type = TRANSACTION_LIGHTNING_CAST;
+			t.lightning.caster_id = action.lightning.caster_id;
+			t.lightning.start = action.lightning.start;
+			t.lightning.end = action.lightning.end;
+			transactions.append(t);
+			break;
+		}
 		}
 	}
 
@@ -1910,15 +1944,380 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 	{
 		Entity_ID entity_id;
 		i32       damage;
-		Pos       pos;
+		v2        pos;
 	};
 	Max_Length_Array<Entity_Damage, MAX_ENTITIES> entity_damage;
 
+#define MAX_PROJECTILES 1024
+	enum Projectile_Type
+	{
+		PROJECTILE_FIREBALL_SHOT,
+		PROJECTILE_FIREBALL_OFFSHOOT,
+		PROJECTILE_LIGHTNING_BOLT,
+	};
+	struct Projectile
+	{
+		Projectile_Type type;
+		Entity_ID entity_id;
+		// TODO -- count instances associated with projectile in order to delete projectile
+		// when no instances left
+		u32 count;
+		f32 last_anim_built;
+	};
+	Max_Length_Array<Projectile, MAX_PROJECTILES> projectiles;
+	projectiles.reset();
+
+	struct Entities_Hit_By_Projectile
+	{
+		Entity_ID projectile_id;
+		Entity_ID entity_id;
+	};
+	Max_Length_Array<Entities_Hit_By_Projectile, MAX_PROJECTILES> entities_hit_by_projectile;
+	entities_hit_by_projectile.reset();
+
+#define MAX_PHYSICS_EVENTS 1024
+	Max_Length_Array<Physics_Event, MAX_PHYSICS_EVENTS> physics_events;
+	physics_events.reset();
+
+	physics_start_frame(&physics);
+	physics_compute_collisions(&physics, 0.0f, physics_events);
+
 	f32 time = 0.0f;
-	while (transactions) {
+	u8 physics_processing_left = 1;
+	while (transactions || physics_processing_left) {
 		u8 recompute_physics_collisions = 0;
+		physics_processing_left = 0;
 		entity_damage.reset();
-		for (u32 i = 0; i < physics.collisions.len; ++i) {
+
+		// draw physics state
+		if (0) {
+			debug_draw_world_reset();
+			physics_debug_draw(&physics, time);
+
+			debug_draw_world_set_color(V4_f32(0.0f, 0.0f, 1.0f, 0.75f));
+			for (u32 i = 0; i < physics_events.len; ++i) {
+				Physics_Event pe = physics_events[i];
+				if (pe.time != time) {
+					continue;
+				}
+				switch (pe.type) {
+				case PHYSICS_EVENT_BEGIN_PENETRATE_SL_LC:
+				case PHYSICS_EVENT_END_PENETRATE_SL_LC: {
+					Physics_Static_Line *line = pe.sl_lc.line;
+					Physics_Linear_Circle *circle = pe.sl_lc.circle;
+					debug_draw_world_line(line->start, line->end);
+					v2 p = circle->start;
+					v2 v = circle->velocity;
+					f32 r = circle->radius;
+					f32 t = pe.time - circle->start_time;
+					debug_draw_world_circle(p + t * v, r);
+					break;
+				}
+				case PHYSICS_EVENT_BEGIN_PENETRATE_SC_LC:
+				case PHYSICS_EVENT_END_PENETRATE_SC_LC: {
+					Physics_Static_Circle *circle_1 = pe.sc_lc.static_circle;
+					Physics_Linear_Circle *circle_2 = pe.sc_lc.linear_circle;
+					debug_draw_world_circle(circle_1->pos, circle_1->radius);
+					v2 p = circle_2->start;
+					v2 v = circle_2->velocity;
+					f32 r = circle_2->radius;
+					f32 t = pe.time - circle_2->start_time;
+					debug_draw_world_circle(p + t * v, r);
+					break;
+				}
+				case PHYSICS_EVENT_BEGIN_PENETRATE_LC_LC:
+				case PHYSICS_EVENT_END_PENETRATE_LC_LC: {
+					Physics_Linear_Circle *circle_1 = pe.lc_lc.circle_1;
+					Physics_Linear_Circle *circle_2 = pe.lc_lc.circle_2;
+					v2 p = circle_1->start;
+					v2 v = circle_1->velocity;
+					f32 r = circle_1->radius;
+					f32 t = pe.time - circle_1->start_time;
+					debug_draw_world_circle(p + t * v, r);
+					p = circle_2->start;
+					v = circle_2->velocity;
+					r = circle_2->radius;
+					t = pe.time - circle_2->start_time;
+					debug_draw_world_circle(p + t * v, r);
+					break;
+				}
+				default:
+					continue;
+				}
+			}
+
+			DPLOG("Time: %f, %x", time, *(u32*)&time);
+			debug_pause();
+		}
+
+		for (u32 i = 0; i < physics_events.len; ++i) {
+			Physics_Event pe = physics_events[i];
+			if (pe.time < time) {
+				continue;
+			}
+			if (pe.time > time) {
+				physics_processing_left = 1;
+				break;
+			}
+			switch (pe.type) {
+			case PHYSICS_EVENT_BEGIN_PENETRATE_SL_LC: {
+				if (!pe.sl_lc.circle->owner_id) {
+					break;
+				}
+				u32 projectile_idx = projectiles.len;
+				for (u32 i = 0; i < projectiles.len; ++i) {
+					if (projectiles[i].entity_id == pe.sl_lc.circle->owner_id) {
+						projectile_idx = i;
+						break;
+					}
+				}
+				ASSERT(projectile_idx < projectiles.len);
+				Projectile *p = &projectiles[projectile_idx];
+				switch (p->type) {
+				case PROJECTILE_FIREBALL_OFFSHOOT:
+					if (pe.sl_lc.line->owner_id == ENTITY_ID_WALLS) {
+						recompute_physics_collisions = 1;
+						pe.sl_lc.circle->owner_id = 0;
+						f32 start_time = pe.sl_lc.circle->start_time;
+						f32 duration = time - start_time;
+						v2 p = pe.sl_lc.circle->start;
+						v2 v = pe.sl_lc.circle->velocity;
+						Event e = {};
+						e.type = EVENT_FIREBALL_OFFSHOOT_2;
+						e.time = start_time;
+						e.fireball_offshoot_2.duration = duration;
+						e.fireball_offshoot_2.start = p;
+						e.fireball_offshoot_2.end = p + duration * v;
+						events.append(e);
+					}
+					break;
+				case PROJECTILE_LIGHTNING_BOLT:
+					if (pe.sl_lc.line->owner_id == ENTITY_ID_WALLS) {
+						recompute_physics_collisions = 1;
+
+						Physics_Static_Line *l = pe.sl_lc.line;
+						Physics_Linear_Circle *c = pe.sl_lc.circle;
+						if (p->last_anim_built < time) {
+							f32 start = max(p->last_anim_built,
+							                c->start_time);
+							f32 end = time;
+							p->last_anim_built = time;
+							v2 start_pos = c->start
+							    + (start - c->start_time) * c->velocity;
+							v2 end_pos = c->start
+							    + (end - c->start_time) * c->velocity;
+
+							Event e = {};
+							e.type = EVENT_LIGHTNING_BOLT;
+							e.time = start;
+							e.lightning_bolt.start = start_pos;
+							e.lightning_bolt.end = end_pos;
+							e.lightning_bolt.duration = end - start;
+							events.append(e);
+						}
+						// reflect start/end of the linear circle through line
+						v2 d = l->end - l->start;
+						d = d / sqrtf(d.x*d.x + d.y*d.y);
+						v2 new_start = c->start + (time - c->start_time) * c->velocity;
+						v2 p_0 = c->start - l->start;
+						v2 p_1 = c->start + c->duration * c->velocity - l->start;
+						p_0 = 2.0f * dot(p_0, d) * d - p_0;
+						p_1 = 2.0f * dot(p_1, d) * d - p_1;
+						c->velocity = (p_1 - p_0) / c->duration;
+						c->start = new_start;
+						c->duration -= time - c->start_time;
+						c->start_time = time;
+					}
+					break;
+				default:
+					ASSERT(0);
+					break;
+				}
+				break;
+			}
+			case PHYSICS_EVENT_BEGIN_PENETRATE_SC_LC: {
+				u32 projectile_idx = projectiles.len;
+				if (!pe.sc_lc.linear_circle->owner_id) {
+					break;
+				}
+				for (u32 i = 0; i < projectiles.len; ++i) {
+					if (projectiles[i].entity_id == pe.sc_lc.linear_circle->owner_id) {
+						projectile_idx = i;
+						break;
+					}
+				}
+				ASSERT(projectile_idx < projectiles.len);
+				Projectile *p = &projectiles[projectile_idx];
+				switch (p->type) {
+				case PROJECTILE_FIREBALL_OFFSHOOT: {
+					Entity_ID entity_id = pe.sc_lc.static_circle->owner_id;
+					Entity *e = game_get_entity_by_id(game, entity_id);
+					if (e) {
+						for (u32 i = 0; i < entities_hit_by_projectile.len; ++i) {
+							Entities_Hit_By_Projectile hit = entities_hit_by_projectile[i];
+							if (hit.entity_id == e->id
+							 && hit.projectile_id == p->entity_id) {
+								goto break_do_damage;
+							}
+						}
+
+						Entities_Hit_By_Projectile hit = {};
+						hit.entity_id = e->id;
+						hit.projectile_id = p->entity_id;
+						entities_hit_by_projectile.append(hit);
+
+						Entity_Damage ed = {};
+						ed.entity_id = entity_id;
+						ed.pos = pe.sc_lc.static_circle->pos;
+						ed.damage = 1;
+						entity_damage.append(ed);
+					}
+				break_do_damage: ;
+					break;
+				}
+				case PROJECTILE_LIGHTNING_BOLT: {
+					Entity_ID entity_id = pe.sc_lc.static_circle->owner_id;
+					Entity *e = game_get_entity_by_id(game, entity_id);
+					if (e) {
+						for (u32 i = 0; i < entities_hit_by_projectile.len; ++i) {
+							Entities_Hit_By_Projectile hit = entities_hit_by_projectile[i];
+							if (hit.entity_id == e->id
+							 && hit.projectile_id == p->entity_id) {
+								goto break_do_damage_2;
+							}
+						}
+
+						Entities_Hit_By_Projectile hit = {};
+						hit.entity_id = e->id;
+						hit.projectile_id = p->entity_id;
+						entities_hit_by_projectile.append(hit);
+
+						Entity_Damage ed = {};
+						ed.entity_id = entity_id;
+						ed.pos = pe.sc_lc.static_circle->pos;
+						ed.damage = 1;
+						entity_damage.append(ed);
+					}
+				break_do_damage_2: ;
+					break;
+				}
+				default:
+					ASSERT(0);
+					break;
+				}
+				break;
+			}
+			case PHYSICS_EVENT_END_PENETRATE_SC_LC: {
+				u32 projectile_idx = projectiles.len;
+				if (!pe.sc_lc.linear_circle->owner_id) {
+					break;
+				}
+				for (u32 i = 0; i < projectiles.len; ++i) {
+					if (projectiles[i].entity_id == pe.sc_lc.linear_circle->owner_id) {
+						projectile_idx = i;
+						break;
+					}
+				}
+				ASSERT(projectile_idx < projectiles.len);
+				Projectile *p = &projectiles[projectile_idx];
+				switch (p->type) {
+				case PROJECTILE_LIGHTNING_BOLT:
+					Entity_ID entity_id = pe.sc_lc.static_circle->owner_id;
+					Entity *e = game_get_entity_by_id(game, entity_id);
+					if (e) {
+						for (u32 i = 0; i < entities_hit_by_projectile.len; ++i) {
+							Entities_Hit_By_Projectile hit = entities_hit_by_projectile[i];
+							if (hit.entity_id == e->id
+							 && hit.projectile_id == p->entity_id) {
+							 	entities_hit_by_projectile.remove(i);
+								break;
+							}
+						}
+					}
+					break;
+				}
+				break;
+			}
+			case PHYSICS_EVENT_BEGIN_PENETRATE_LC_LC: {
+				u32 projectile_idx_1 = projectiles.len;
+				u32 projectile_idx_2 = projectiles.len;
+				for (u32 i = 0; i < projectiles.len; ++i) {
+					u32 projectile_entity_id = projectiles[i].entity_id;
+					if (projectile_entity_id == pe.lc_lc.circle_1->owner_id) {
+						projectile_idx_1 = i;
+						if (projectile_idx_2 < projectiles.len) {
+							break;
+						}
+					}
+					if (projectile_entity_id == pe.lc_lc.circle_2->owner_id) {
+						projectile_idx_2 = i;
+						if (projectile_idx_1 < projectiles.len) {
+							break;
+						}
+					}
+					// TODO -- collision between "entity" and projectile
+				}
+				break;
+			}
+			case PHYSICS_EVENT_LC_END: {
+				if (!pe.lc.circle->owner_id) {
+					break;
+				}
+				u32 projectile_idx = projectiles.len;
+				for (u32 i = 0; i < projectiles.len; ++i) {
+					if (projectiles[i].entity_id == pe.lc.circle->owner_id) {
+						projectile_idx = i;
+						break;
+					}
+				}
+				if(projectile_idx < projectiles.len) {
+					switch (projectiles[projectile_idx].type) {
+					case PROJECTILE_FIREBALL_OFFSHOOT: {
+						recompute_physics_collisions = 1;
+						pe.lc.circle->owner_id = 0;
+						f32 start_time = pe.lc.circle->start_time;
+						f32 duration = time - start_time;
+						v2 p = pe.lc.circle->start;
+						v2 v = pe.lc.circle->velocity;
+						Event e = {};
+						e.type = EVENT_FIREBALL_OFFSHOOT_2;
+						e.time = start_time;
+						e.fireball_offshoot_2.duration = duration;
+						e.fireball_offshoot_2.start = p;
+						e.fireball_offshoot_2.end = p + duration * v;
+						events.append(e);
+						break;
+					}
+					case PROJECTILE_LIGHTNING_BOLT: {
+						recompute_physics_collisions = 1;
+
+						Physics_Linear_Circle *c = pe.lc.circle;
+						Projectile *p = &projectiles[projectile_idx];
+
+						f32 start = max(p->last_anim_built, c->start_time);
+						f32 end = time;
+						p->last_anim_built = time;
+						v2 start_pos = c->start
+						    + (start - c->start_time) * c->velocity;
+						v2 end_pos = c->start
+						    + (end - c->start_time) * c->velocity;
+
+						Event e = {};
+						e.type = EVENT_LIGHTNING_BOLT;
+						e.time = start;
+						e.lightning_bolt.start = start_pos;
+						e.lightning_bolt.end = end_pos;
+						e.lightning_bolt.duration = end - start;
+						events.append(e);
+						break;
+					}
+					default:
+						ASSERT(0);
+					}
+				}
+				break;
+			}
+			}
 		}
 
 		for (u32 i = 0; i < transactions.len; ++i) {
@@ -2110,110 +2509,50 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				event.fireball_shot.end = t->fireball_shot.end;
 				events.append(event);
 
+				t->type = TRANSACTION_FIREBALL_HIT;
+				t->start_time = time + constants.anims.fireball.shot_duration;
+				break;
+			}
+			case TRANSACTION_FIREBALL_HIT: {
+				Event event = {};
 				event.type = EVENT_FIREBALL_HIT;
-				event.time = time + constants.anims.fireball.shot_duration;
+				event.time = time;
 				event.fireball_hit.pos = t->fireball_shot.end;
 				events.append(event);
 
 				t->type = TRANSACTION_REMOVE;
 
-				f32 start_time = time + constants.anims.fireball.shot_duration;
-				Transaction offshoot = {};
-				offshoot.type = TRANSACTION_FIREBALL_OFFSHOOT;
-				offshoot.start_time = start_time;
-				offshoot.fireball_offshoot.start_time = start_time;
-				offshoot.fireball_offshoot.start = t->fireball_shot.end;
-				for (i16 dy = -1; dy <= 1; ++dy) {
-					for (i16 dx = -1; dx <= 1; ++dx) {
-						if (dx == 0 && dy == 0) {
-							continue;
-						}
-						offshoot.fireball_offshoot.dir = V2_i16(dx, dy);
-						offshoot.fireball_offshoot.cur_step = 0;
-						offshoot.fireball_offshoot.num_steps = 3;
-
-						transactions.append(offshoot);
-					}
-				}
+				Projectile projectile = {};
+				projectile.type = PROJECTILE_FIREBALL_OFFSHOOT;
+				projectile.entity_id = game_new_entity_id(game);
+				projectiles.append(projectile);
 
 				recompute_physics_collisions = 1;
 				Physics_Linear_Circle circle = {};
+				circle.owner_id = projectile.entity_id;
 				circle.collision_mask = collision_mask_projectile;
 				circle.collides_with_mask = collides_with_projectile;
 				circle.start = (v2)t->fireball_shot.end;
 				circle.radius = constants.physics.fireball_radius;
 				circle.duration = constants.physics.fireball_duration;
-				circle.start_time = start_time;
+				circle.start_time = time + TRANSACTION_EPSILON;
 				for (u32 i = 0; i < 5; ++i) {
 					f32 angle = PI_F32 * ((f32)i / 5.0f) / 2.0f;
 					f32 ca = cosf(angle);
 					f32 sa = sinf(angle);
+
 					circle.velocity = 5.0f * V2_f32( ca,  sa);
 					physics.linear_circles.append(circle);
+
 					circle.velocity = 5.0f * V2_f32(-sa,  ca);
 					physics.linear_circles.append(circle);
+
 					circle.velocity = 5.0f * V2_f32(-ca, -sa);
 					physics.linear_circles.append(circle);
+
 					circle.velocity = 5.0f * V2_f32( sa, -ca);
 					physics.linear_circles.append(circle);
 				}
-
-				break;
-			}
-			case TRANSACTION_FIREBALL_OFFSHOOT: {
-				u32 cur_step = t->fireball_offshoot.cur_step;
-				u32 num_steps = t->fireball_offshoot.num_steps;
-				v2_i16 dir = t->fireball_offshoot.dir;
-				v2_i16 start = (v2_i16)t->fireball_offshoot.start;
-				v2_i16 pos = start + (i16)cur_step * dir;
-
-				u8 is_over = pos.x < 1 || pos.x > 254 || pos.y < 1 || pos.y > 254;
-				is_over |= cur_step == num_steps;
-
-				if (is_over) {
-					Event e = {};
-					e.type = EVENT_FIREBALL_OFFSHOOT;
-					e.time = t->fireball_offshoot.start_time;
-					e.fireball_offshoot.duration = (f32)cur_step
-						/ constants.anims.fireball.min_speed;
-					e.fireball_offshoot.start = t->fireball_offshoot.start;
-					v2_i16 end = start + (i16)cur_step * dir;
-					e.fireball_offshoot.end = (Pos)end;
-					events.append(e);
-
-					t->type = TRANSACTION_REMOVE;
-
-					break;
-				}
-
-				u32 num_entities = game->entities.len;
-				for (u32 i = 0; i < num_entities; ++i) {
-					Entity *e = &game->entities[i];
-					if (e->pos != (Pos)pos) {
-						continue;
-					}
-
-					Entity_ID entity_id = e->id;
-					u8 written = 0;
-					for (u32 i = 0; i < entity_damage.len; ++i) {
-						Entity_Damage *ed = &entity_damage[i];
-						if (ed->entity_id == entity_id) {
-							ed->damage += 1;
-							written = 1;
-							break;
-						}
-					}
-					if (!written) {
-						Entity_Damage ed = {};
-						ed.entity_id = entity_id;
-						ed.damage = 1;
-						ed.pos = e->pos;
-						entity_damage.append(ed);
-					}
-				}
-
-				++t->fireball_offshoot.cur_step;
-				t->start_time += 1.0f / constants.anims.fireball.min_speed;
 
 				break;
 			}
@@ -2289,13 +2628,10 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				Entity *e = game_get_entity_by_id(game, e_id);
 				ASSERT(e);
 
-				// XXX -- this currently is a bug
-				// should combine Entity_Damage events _here_ in current version
-				// but will change to collapsing after this loop in future
 				Entity_Damage damage = {};
 				damage.entity_id = e_id;
 				damage.damage = 3;
-				damage.pos = e->pos;
+				damage.pos = (v2)e->pos;
 				entity_damage.append(damage);
 
 				break;
@@ -2385,7 +2721,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				Entity_Damage damage = {};
 				damage.entity_id = target->id;
 				damage.damage = 3;
-				damage.pos = target_pos;
+				damage.pos = (v2)target_pos;
 				entity_damage.append(damage);
 
 				break;
@@ -2422,6 +2758,68 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				events.append(e);
 				break;
 			}
+			case TRANSACTION_LIGHTNING_CAST: {
+				t->type = TRANSACTION_LIGHTNING_SHOT;
+				t->start_time += constants.anims.lightning.cast_time;
+				Entity *caster = game_get_entity_by_id(game, t->lightning.caster_id);
+				if (!caster) {
+					t->type = TRANSACTION_REMOVE;
+					break;
+				}
+				t->lightning.start = caster->pos;
+				break;
+			}
+			case TRANSACTION_LIGHTNING_SHOT: {
+				t->type = TRANSACTION_REMOVE;
+
+				Projectile projectile = {};
+				projectile.type = PROJECTILE_LIGHTNING_BOLT;
+				projectile.entity_id = game_new_entity_id(game);
+				projectiles.append(projectile);
+
+				Entities_Hit_By_Projectile hit = {};
+				hit.projectile_id = projectile.entity_id;
+				hit.entity_id = t->lightning.caster_id;
+				entities_hit_by_projectile.append(hit);
+
+				recompute_physics_collisions = 1;
+				Physics_Linear_Circle circle = {};
+				circle.owner_id = projectile.entity_id;
+				circle.collision_mask = collision_mask_projectile;
+				circle.collides_with_mask = collides_with_projectile;
+				circle.start = (v2)t->lightning.start;
+				circle.radius = constants.physics.lightning_radius;
+				circle.duration = constants.physics.lightning_duration;
+				circle.start_time = time + TRANSACTION_EPSILON;
+
+				v2 dir = (v2)t->lightning.end - (v2)t->lightning.start;
+				dir = dir / sqrtf(dir.x*dir.x + dir.y*dir.y);
+				circle.velocity = constants.physics.lightning_distance * dir;
+
+				physics.linear_circles.append(circle);
+
+				Event e = {};
+				e.type = EVENT_LIGHTNING_BOLT_START;
+				e.time = time;
+				e.lightning_bolt_start.pos = (v2)t->lightning.start;
+				events.append(e);
+				break;
+			}
+			}
+		}
+
+
+		// merge damage events
+		for (u32 i = 0; i < entity_damage.len; ++i) {
+			Entity_Damage *ed = &entity_damage[i];
+			for (u32 j = i + 1; j < entity_damage.len; ) {
+				Entity_Damage *this_ed = &entity_damage[j];
+				if (this_ed->entity_id == ed->entity_id) {
+					ed->damage += this_ed->damage;
+					entity_damage.remove(j);
+					continue;
+				}
+				++j;
 			}
 		}
 
@@ -2487,62 +2885,21 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		if (recompute_physics_collisions) {
 			recompute_physics_collisions = 0;
 			physics_start_frame(&physics);
-			physics_compute_collisions(&physics, time);
-
-			debug_draw_world_reset();
-			physics_debug_draw(&physics, time);
-			debug_pause();
-
-			for (u32 i = 0; i < physics.collisions.len; ++i) {
-				Physics_Collision collision = physics.collisions[i];
-				debug_draw_world_reset();
-				physics_debug_draw(&physics, collision.time);
-				debug_draw_world_set_color(V4_f32(0.0f, 0.0f, 1.0f, 0.75f));
-				switch (collision.objects_type) {
-				case PHYSICS_COLLISION_STATIC_LINE_LINEAR_CIRCLE: {
-					Physics_Static_Line *line = collision.static_line_linear_circle.static_line;
-					Physics_Linear_Circle *circle = collision.static_line_linear_circle.linear_circle;
-					debug_draw_world_line(line->start, line->end);
-					v2 p = circle->start;
-					v2 v = circle->velocity;
-					f32 r = circle->radius;
-					f32 t = collision.time - circle->start_time;
-					debug_draw_world_circle(p + t * v, r);
-					break;
-				}
-				case PHYSICS_COLLISION_STATIC_CIRCLE_LINEAR_CIRCLE: {
-					Physics_Static_Circle *circle_1 = collision.static_circle_linear_circle.static_circle;
-					Physics_Linear_Circle *circle_2 = collision.static_circle_linear_circle.linear_circle;
-					debug_draw_world_circle(circle_1->pos, circle_1->radius);
-					v2 p = circle_2->start;
-					v2 v = circle_2->velocity;
-					f32 r = circle_2->radius;
-					f32 t = collision.time - circle_2->start_time;
-					debug_draw_world_circle(p + t * v, r);
-					break;
-				}
-				case PHYSICS_COLLISION_LINEAR_CIRCLE_LINEAR_CIRCLE: {
-					Physics_Linear_Circle *circle_1 = collision.linear_circle_linear_circle.linear_circle_1;
-					Physics_Linear_Circle *circle_2 = collision.linear_circle_linear_circle.linear_circle_2;
-					v2 p = circle_1->start;
-					v2 v = circle_1->velocity;
-					f32 r = circle_1->radius;
-					f32 t = collision.time - circle_1->start_time;
-					debug_draw_world_circle(p + t * v, r);
-					p = circle_2->start;
-					v = circle_2->velocity;
-					r = circle_2->radius;
-					t = collision.time - circle_2->start_time;
-					debug_draw_world_circle(p + t * v, r);
-					break;
-				}
-				}
-				debug_pause();
-			}
+			physics_compute_collisions(&physics, time, physics_events);
 		}
 
 		// TODO - need some better representation of "infinity"
 		f32 next_time = 1000000.0f;
+		for (u32 i = 0; i < physics_events.len; ++i) {
+			Physics_Event pe = physics_events[i];
+			if (pe.time <= time) {
+				continue;
+			}
+			next_time = pe.time;
+			physics_processing_left = 1;
+			break;
+		}
+
 		for (u32 i = 0; i < transactions.len; ++i) {
 			Transaction *t = &transactions[i];
 			f32 start_time = t->start_time;
@@ -2551,15 +2908,6 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				next_time = start_time;
 			}
 		}
-
-		/*
-		for (u32 i = 0; i < physics.collisions.len; ++i) {
-			f32 collision_time = physics.collisions[i].time;
-			if (collision_time < next_time) {
-				next_time = collision_time;
-			}
-		}
-		*/
 
 		time = next_time;
 	}
@@ -2895,8 +3243,9 @@ void game_build_from_string(Game* game, char* str)
 {
 	memset(game, 0, sizeof(*game));
 
+	Entity_ID e_id = NUM_STATIC_ENTITY_IDS;
+
 	Pos cur_pos = { 1, 1 };
-	Entity_ID     e_id = 1;
 	Controller_ID c_id = 1;
 
 	Controller *player_controller = game->controllers.items;
@@ -3073,7 +3422,7 @@ void game_build_from_string(Game* game, char* str)
 			Entity e = {};
 			e.hit_points = 100;
 			e.max_hit_points = 100;
-			e.id = e_id++;
+			e.id = ENTITY_ID_PLAYER;
 			e.pos = cur_pos;
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e.appearance = APPEARANCE_CREATURE_MALE_BERSERKER;
@@ -3160,6 +3509,7 @@ struct Draw
 	Sprite_Sheet_Instances tiles;
 	Sprite_Sheet_Instances creatures;
 	Sprite_Sheet_Instances water_edges;
+	Sprite_Sheet_Instances effects_24;
 	Sprite_Sheet_Instances effects_32;
 	Sprite_Sheet_Font_Instances boxy_bold;
 	Card_Render card_render;
@@ -3177,6 +3527,7 @@ enum Anim_Type
 	ANIM_MOVE,
 	ANIM_MOVE_BLOCKED,
 	ANIM_DROP_TILE,
+	ANIM_PROJECTILE_EFFECT_24,
 	ANIM_PROJECTILE_EFFECT_32,
 	ANIM_TEXT,
 	ANIM_CAMERA_SHAKE,
@@ -3298,6 +3649,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_MOVE:                    return 1;
 	case ANIM_MOVE_BLOCKED:            return 1;
 	case ANIM_DROP_TILE:               return 1;
+	case ANIM_PROJECTILE_EFFECT_24:    return 1;
 	case ANIM_PROJECTILE_EFFECT_32:    return 1;
 	case ANIM_TEXT:                    return 1;
 	case ANIM_CAMERA_SHAKE:            return 1;
@@ -3359,6 +3711,22 @@ void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Event_
 		dest->append(*cur_event);
 	}
 	world_anim->anim_block_number = cur_block_number;
+}
+
+f32 angle_to_sprite_x_coord(f32 angle)
+{
+	angle /= PI_F32;
+	f32 x;
+	if      (angle < -0.875f) { x = 2.0f; }
+	else if (angle < -0.625f) { x = 5.0f; }
+	else if (angle < -0.375f) { x = 3.0f; }
+	else if (angle < -0.125f) { x = 4.0f; }
+	else if (angle <  0.125f) { x = 0.0f; }
+	else if (angle <  0.375f) { x = 7.0f; }
+	else if (angle <  0.625f) { x = 1.0f; }
+	else if (angle <  0.875f) { x = 6.0f; }
+	else                      { x = 2.0f; }
+	return x;
 }
 
 void world_anim_animate_next_event_block(World_Anim_State* world_anim)
@@ -3452,13 +3820,35 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			anims.append(sound);
 			break;
 		}
-		case EVENT_FIREBALL_OFFSHOOT: {
+		case EVENT_FIREBALL_OFFSHOOT_2: {
 			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_32;
+			a.type = ANIM_PROJECTILE_EFFECT_24;
 			a.projectile.start_time = event->time;
-			a.projectile.duration = event->fireball_offshoot.duration;
-			a.projectile.start = (v2)event->fireball_offshoot.start;
-			a.projectile.end = (v2)event->fireball_offshoot.end;
+			a.projectile.duration = event->fireball_offshoot_2.duration;
+			a.projectile.start = event->fireball_offshoot_2.start;
+			a.projectile.end = event->fireball_offshoot_2.end;
+			v2 dir = a.projectile.end - a.projectile.start;
+			f32 angle = atan2f(-dir.y, dir.x);
+			a.projectile.sprite_coords = { angle_to_sprite_x_coord(angle), 11.0f };
+			anims.append(a);
+			break;
+		}
+		case EVENT_LIGHTNING_BOLT: {
+			Anim a = {};
+			a.type = ANIM_PROJECTILE_EFFECT_24;
+			a.projectile.start_time = event->time;
+			a.projectile.duration = event->lightning_bolt.duration;
+			a.projectile.start = event->lightning_bolt.start;
+			a.projectile.end = event->lightning_bolt.end;
+			a.projectile.sprite_coords = { 0.0f, 9.0f };
+			anims.append(a);
+			break;
+		}
+		case EVENT_LIGHTNING_BOLT_START: {
+			Anim a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_LIGHTNING_SPELL_03;
 			anims.append(a);
 			break;
 		}
@@ -3494,7 +3884,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			}
 			ASSERT(i < ARRAY_SIZE(text_anim.text.caption));
 			text_anim.text.caption[i] = 0;
-			text_anim.world_coords = (v2)event->damaged.pos;
+			text_anim.world_coords = event->damaged.pos;
 			world_anim->anims.append(text_anim);
 			break;
 		}
@@ -3574,19 +3964,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			a.projectile.end = end;
 			v2 dir = end - start;
 			f32 angle = atan2f(-dir.y, dir.x);
-			angle /= PI_F32;
-			a.projectile.sprite_coords.y = 5;
-			f32 x;
-			if      (angle < -0.875f) { x = 2.0f; }
-			else if (angle < -0.625f) { x = 5.0f; }
-			else if (angle < -0.375f) { x = 3.0f; }
-			else if (angle < -0.125f) { x = 4.0f; }
-			else if (angle <  0.125f) { x = 0.0f; }
-			else if (angle <  0.375f) { x = 7.0f; }
-			else if (angle <  0.625f) { x = 1.0f; }
-			else if (angle <  0.875f) { x = 6.0f; }
-			else                      { x = 2.0f; }
-			a.projectile.sprite_coords.x = x;
+			a.projectile.sprite_coords = { angle_to_sprite_x_coord(angle), 5.0f };
 			anims.append(a);
 
 			a = {};
@@ -3838,6 +4216,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 	sprite_sheet_instances_reset(&draw->tiles);
 	sprite_sheet_instances_reset(&draw->creatures);
 	sprite_sheet_instances_reset(&draw->water_edges);
+	sprite_sheet_instances_reset(&draw->effects_24);
 	sprite_sheet_instances_reset(&draw->effects_32);
 	sprite_sheet_font_instances_reset(&draw->boxy_bold);
 
@@ -3872,6 +4251,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				continue;
 			}
 			break;
+		case ANIM_PROJECTILE_EFFECT_24:
 		case ANIM_PROJECTILE_EFFECT_32:
 			if (anim->projectile.start_time + anim->projectile.duration <= dyn_time) {
 				anims.remove(i);
@@ -4241,6 +4621,24 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 			ti.color_mod = { c, c, c, 1.0f };
 			sprite_sheet_instances_add(&draw->tiles, ti);
 
+			break;
+		}
+		case ANIM_PROJECTILE_EFFECT_24: {
+			f32 dt = (dyn_time - anim->projectile.start_time) / anim->projectile.duration;
+			if (dt < 0.0f) {
+				break;
+			}
+			// dt = dt * dt;
+
+			Sprite_Sheet_Instance instance = {};
+			instance.sprite_pos = anim->sprite_coords;
+			instance.world_pos = lerp(anim->projectile.start, anim->projectile.end, dt);
+			instance.sprite_id = 0;
+			instance.depth_offset = 2.0f;
+			instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+			instance.sprite_pos = anim->projectile.sprite_coords;
+
+			sprite_sheet_instances_add(&draw->effects_24, instance);
 			break;
 		}
 		case ANIM_PROJECTILE_EFFECT_32: {
@@ -5705,6 +6103,21 @@ void build_deck_random_n(Program *program, u32 n)
 	}
 }
 
+void build_lightning_deck(Program *program)
+{
+	Card_State *card_state = &program->game.card_state;
+	Card_Anim_State *card_anim_state = &program->card_anim_state;
+	memset(card_state, 0, sizeof(*card_state));
+	memset(card_anim_state, 0, sizeof(*card_anim_state));
+
+	for (u32 i = 0; i < 50; ++i) {
+		Card card = {};
+		card.id = i + 1;
+		card.appearance = CARD_APPEARANCE_LIGHTNING;
+		card_state->discard.append(card);
+	}
+}
+
 void build_deck_poison(Program *program)
 {
 	Card_State *card_state = &program->game.card_state;
@@ -5750,6 +6163,7 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	program->draw.tiles.data         = SPRITE_SHEET_TILES;
 	program->draw.creatures.data     = SPRITE_SHEET_CREATURES;
 	program->draw.water_edges.data   = SPRITE_SHEET_WATER_EDGES;
+	program->draw.effects_24.data    = SPRITE_SHEET_EFFECTS_24;
 	program->draw.effects_32.data    = SPRITE_SHEET_EFFECTS_32;
 	program->draw.boxy_bold.tex_size = boxy_bold_texture_size;
 	program->draw.boxy_bold.tex_data = boxy_bold_pixel_data;
@@ -5854,6 +6268,10 @@ u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size
 		goto error_init_sprite_sheet_water_edges;
 	}
 
+	if (!sprite_sheet_instances_d3d11_init(&program->draw.effects_24, device)) {
+		goto error_init_sprite_sheet_effects_24;
+	}
+
 	if (!sprite_sheet_instances_d3d11_init(&program->draw.effects_32, device)) {
 		goto error_init_sprite_sheet_effects_32;
 	}
@@ -5912,6 +6330,8 @@ error_init_pixel_art_upsampler:
 error_init_sprite_sheet_font_boxy_bold:
 	sprite_sheet_instances_d3d11_free(&program->draw.effects_32);
 error_init_sprite_sheet_effects_32:
+	sprite_sheet_instances_d3d11_free(&program->draw.effects_24);
+error_init_sprite_sheet_effects_24:
 	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
 error_init_sprite_sheet_water_edges:
 	sprite_sheet_instances_d3d11_free(&program->draw.creatures);
@@ -5944,6 +6364,7 @@ void program_d3d11_free(Program* program)
 	imgui_d3d11_free(&program->imgui);
 	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
 	sprite_sheet_font_instances_d3d11_free(&program->draw.boxy_bold);
+	sprite_sheet_instances_d3d11_free(&program->draw.effects_24);
 	sprite_sheet_instances_d3d11_free(&program->draw.effects_32);
 	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
 	sprite_sheet_instances_d3d11_free(&program->draw.creatures);
@@ -6233,6 +6654,27 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Card_Param param = {};
 				param.type = CARD_PARAM_TARGET;
 				param.target.dest = &program->action_being_built.fireball.end;
+				program->card_params_stack.push(param);
+				program->program_input_state_stack.push(GIS_CARD_PARAMS);
+
+				break;
+			}
+			case CARD_APPEARANCE_LIGHTNING: {
+				Card_Event card_event = {};
+				card_event.type = CARD_EVENT_SELECT;
+				card_event.select.card_id = card_id;
+				card_state->events.append(card_event);
+
+				Entity *player = game_get_entity_by_id(&program->game, ENTITY_ID_PLAYER);
+				ASSERT(player);
+
+				program->action_being_built.type = ACTION_LIGHTNING;
+				program->action_being_built.lightning.caster_id = ENTITY_ID_PLAYER;
+				program->action_being_built.lightning.start = player->pos;
+
+				Card_Param param = {};
+				param.type = CARD_PARAM_TARGET;
+				param.target.dest = &program->action_being_built.lightning.end;
 				program->card_params_stack.push(param);
 				program->program_input_state_stack.push(GIS_CARD_PARAMS);
 
@@ -6611,6 +7053,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			if (imgui_button(ic, "poison")) {
 				build_deck_poison(program);
 			}
+			if (imgui_button(ic, "lightning")) {
+				build_lightning_deck(program);
+			}
 			imgui_tree_end(ic);
 		}
 		constants_do_imgui(ic);
@@ -6721,6 +7166,7 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	sprite_sheet_instances_d3d11_draw(&program->draw.renderer, &program->draw.creatures, dc);
 	sprite_sheet_instances_d3d11_draw(&program->draw.renderer, &program->draw.water_edges, dc);
 	sprite_sheet_renderer_d3d11_do_particles(&program->draw.renderer, dc);
+	sprite_sheet_instances_d3d11_draw(&program->draw.renderer, &program->draw.effects_24, dc);
 	sprite_sheet_instances_d3d11_draw(&program->draw.renderer, &program->draw.effects_32, dc);
 	sprite_sheet_renderer_d3d11_highlight_sprite(&program->draw.renderer, dc);
 	sprite_sheet_renderer_d3d11_begin_font(&program->draw.renderer, dc);

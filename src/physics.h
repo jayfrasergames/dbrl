@@ -83,6 +83,42 @@ struct Physics_Collision
 	};
 };
 
+enum Physics_Event_Type
+{
+	PHYSICS_EVENT_NONE,
+	PHYSICS_EVENT_BEGIN_PENETRATE_SL_LC,
+	PHYSICS_EVENT_BEGIN_PENETRATE_SC_LC,
+	PHYSICS_EVENT_BEGIN_PENETRATE_LC_LC,
+	PHYSICS_EVENT_END_PENETRATE_SL_LC,
+	PHYSICS_EVENT_END_PENETRATE_SC_LC,
+	PHYSICS_EVENT_END_PENETRATE_LC_LC,
+	PHYSICS_EVENT_LC_START,
+	PHYSICS_EVENT_LC_END,
+};
+
+struct Physics_Event
+{
+	Physics_Event_Type type;
+	f32 time;
+	union {
+		struct {
+			Physics_Static_Line   *line;
+			Physics_Linear_Circle *circle;
+		} sl_lc;
+		struct {
+			Physics_Static_Circle *static_circle;
+			Physics_Linear_Circle *linear_circle;
+		} sc_lc;
+		struct {
+			Physics_Linear_Circle *circle_1;
+			Physics_Linear_Circle *circle_2;
+		} lc_lc;
+		struct {
+			Physics_Linear_Circle *circle;
+		} lc;
+	};
+};
+
 struct Physics_Context
 {
 	Max_Length_Array<Physics_Static_Line, PHYSICS_MAX_STATIC_LINES> static_lines;
@@ -96,8 +132,6 @@ struct Physics_Context
 	Max_Length_Array<Physics_Linear_Circle, PHYSICS_MAX_LINEAR_CIRCLES> linear_circles;
 	Max_Length_Array<Physics_Interval,      PHYSICS_MAX_LINEAR_CIRCLES> linear_circle_x_intervals;
 	Max_Length_Array<Physics_Interval,      PHYSICS_MAX_LINEAR_CIRCLES> linear_circle_y_intervals;
-
-	Max_Length_Array<Physics_Collision, PHYSICS_MAX_COLLISIONS> collisions;
 };
 
 #define USE_PHYSICS_CONTEXT(name) \
@@ -109,8 +143,7 @@ struct Physics_Context
 	auto& static_circle_y_intervals = name->static_circle_y_intervals; \
 	auto& linear_circles = name->linear_circles; \
 	auto& linear_circle_x_intervals = name->linear_circle_x_intervals; \
-	auto& linear_circle_y_intervals = name->linear_circle_y_intervals; \
-	auto& collisions = name->collisions;
+	auto& linear_circle_y_intervals = name->linear_circle_y_intervals;
 
 void physics_reset(Physics_Context* context)
 {
@@ -123,7 +156,6 @@ void physics_reset(Physics_Context* context)
 	context->linear_circles.reset();
 	context->linear_circle_x_intervals.reset();
 	context->linear_circle_y_intervals.reset();
-	context->collisions.reset();
 }
 
 static inline u8 physics_do_objects_collide(Physics_Object_Meta_Data *object_1,
@@ -155,8 +187,12 @@ void physics_start_frame(Physics_Context* context)
 
 	static_line_x_intervals.reset();
 	static_line_y_intervals.reset();
-	for (u32 i = 0; i < static_lines.len; ++i) {
+	for (u32 i = 0; i < static_lines.len; ) {
 		Physics_Static_Line line = static_lines[i];
+		if (!line.owner_id) {
+			static_lines.remove(i);
+			continue;
+		}
 
 		Physics_Interval interval_x;
 		interval_x.object_index = i;
@@ -169,12 +205,17 @@ void physics_start_frame(Physics_Context* context)
 		interval_y.start = min(line.start.y, line.end.y);
 		interval_y.end = max(line.start.y, line.end.y);
 		static_line_y_intervals.append(interval_y);
+		++i;
 	}
 
 	static_circle_x_intervals.reset();
 	static_circle_y_intervals.reset();
-	for (u32 i = 0; i < static_circles.len; ++i) {
+	for (u32 i = 0; i < static_circles.len; ) {
 		Physics_Static_Circle circle = static_circles[i];
+		if (!circle.owner_id) {
+			static_circles.remove(i);
+			continue;
+		}
 
 		Physics_Interval interval_x;
 		interval_x.object_index = i;
@@ -187,12 +228,17 @@ void physics_start_frame(Physics_Context* context)
 		interval_y.start = circle.pos.y - circle.radius;
 		interval_y.end = circle.pos.y + circle.radius;
 		static_circle_y_intervals.append(interval_y);
+		++i;
 	}
 
 	linear_circle_x_intervals.reset();
 	linear_circle_y_intervals.reset();
-	for (u32 i = 0; i < linear_circles.len; ++i) {
+	for (u32 i = 0; i < linear_circles.len; ) {
 		Physics_Linear_Circle circle = linear_circles[i];
+		if (!circle.owner_id) {
+			linear_circles.remove(i);
+			continue;
+		}
 
 		v2 start = circle.start;
 		v2 end = circle.start + circle.duration * circle.velocity;
@@ -208,6 +254,7 @@ void physics_start_frame(Physics_Context* context)
 		interval_y.start = min(start.y, end.y) - circle.radius;
 		interval_y.end = max(start.y, end.y) + circle.radius;
 		linear_circle_y_intervals.append(interval_y);
+		++i;
 	}
 
 	physics_sort_intervals(static_line_x_intervals);
@@ -374,17 +421,35 @@ void physics_debug_draw(Physics_Context* context, f32 time)
 	}
 }
 
-void physics_compute_collisions(Physics_Context* context, f32 start_time)
+void physics_compute_collisions(Physics_Context* context,
+                                f32 start_time,
+                                Output_Buffer<Physics_Event> output)
 {
 	USE_PHYSICS_CONTEXT(context)
 
 	Max_Length_Array<Physics_Interval_Overlap, 4096> overlaps;
 
-	collisions.reset();
-	Physics_Collision collision = {};
+	output.reset();
+	Physics_Event event = {};
+
+	// add linear circle start/end events
+	for (u32 i = 0; i < linear_circles.len; ++i) {
+		Physics_Linear_Circle *circle = &linear_circles[i];
+		if (circle->start_time > start_time) {
+			event.type = PHYSICS_EVENT_LC_START;
+			event.time = circle->start_time;
+			event.lc.circle = circle;
+			output.append(event);
+		}
+		if (circle->start_time + circle->duration > start_time) {
+			event.type = PHYSICS_EVENT_LC_END;
+			event.time = circle->start_time + circle->duration;
+			event.lc.circle = circle;
+			output.append(event);
+		}
+	}
 
 	// static line linear circle collisions
-	collision.objects_type = PHYSICS_COLLISION_STATIC_LINE_LINEAR_CIRCLE;
 	physics_get_overlapping_intervals_2d(static_line_x_intervals,
 	                                     static_line_y_intervals,
 	                                     linear_circle_x_intervals,
@@ -426,19 +491,19 @@ void physics_compute_collisions(Physics_Context* context, f32 start_time)
 			f32 t_right = (-p.x + len + offset) / v.x;
 			f32 t_begin_penetrate = min(t_left, t_right);
 			f32 t_end_penetrate = max(t_left, t_right);
-			if (min_time < t_begin_penetrate && t_begin_penetrate < max_time) {
-				collision.type =  PHYSICS_COLLISION_BEGIN_PENETRATION;
-				collision.time = t_begin_penetrate;
-				collision.static_line_linear_circle.static_line   = line;
-				collision.static_line_linear_circle.linear_circle = circle;
-				collisions.append(collision);
+			if (min_time <= t_begin_penetrate && t_begin_penetrate < max_time) {
+				event.type =  PHYSICS_EVENT_BEGIN_PENETRATE_SL_LC;
+				event.time = t_begin_penetrate;
+				event.sl_lc.line   = line;
+				event.sl_lc.circle = circle;
+				output.append(event);
 			}
-			if (min_time < t_end_penetrate && t_end_penetrate < max_time) {
-				collision.type = PHYSICS_COLLISION_END_PENETRATION;
-				collision.time = t_end_penetrate;
-				collision.static_line_linear_circle.static_line   = line;
-				collision.static_line_linear_circle.linear_circle = circle;
-				collisions.append(collision);
+			if (min_time <= t_end_penetrate && t_end_penetrate < max_time) {
+				event.type = PHYSICS_EVENT_END_PENETRATE_SL_LC;
+				event.time = t_end_penetrate;
+				event.sl_lc.line   = line;
+				event.sl_lc.circle = circle;
+				output.append(event);
 			}
 			continue;
 		}
@@ -496,24 +561,23 @@ void physics_compute_collisions(Physics_Context* context, f32 start_time)
 		t_begin_penetrate += circle->start_time;
 		t_end_penetrate += circle->start_time;
 
-		if (min_time < t_begin_penetrate && t_begin_penetrate < max_time) {
-			collision.type =  PHYSICS_COLLISION_BEGIN_PENETRATION;
-			collision.time = t_begin_penetrate;
-			collision.static_line_linear_circle.static_line   = line;
-			collision.static_line_linear_circle.linear_circle = circle;
-			collisions.append(collision);
+		if (min_time <= t_begin_penetrate && t_begin_penetrate < max_time) {
+			event.type =  PHYSICS_EVENT_BEGIN_PENETRATE_SL_LC;
+			event.time = t_begin_penetrate;
+			event.sl_lc.line   = line;
+			event.sl_lc.circle = circle;
+			output.append(event);
 		}
-		if (min_time < t_end_penetrate && t_end_penetrate < max_time) {
-			collision.type = PHYSICS_COLLISION_END_PENETRATION;
-			collision.time = t_end_penetrate;
-			collision.static_line_linear_circle.static_line   = line;
-			collision.static_line_linear_circle.linear_circle = circle;
-			collisions.append(collision);
+		if (min_time <= t_end_penetrate && t_end_penetrate < max_time) {
+			event.type = PHYSICS_EVENT_END_PENETRATE_SL_LC;
+			event.time = t_end_penetrate;
+			event.sl_lc.line   = line;
+			event.sl_lc.circle = circle;
+			output.append(event);
 		}
 	}
 
 	// static circle linear circle collisions
-	collision.objects_type = PHYSICS_COLLISION_STATIC_CIRCLE_LINEAR_CIRCLE;
 	physics_get_overlapping_intervals_2d(static_circle_x_intervals,
 	                                     static_circle_y_intervals,
 	                                     linear_circle_x_intervals,
@@ -546,26 +610,28 @@ void physics_compute_collisions(Physics_Context* context, f32 start_time)
 		}
 
 		t_begin_penetrate += linear_circle->start_time;
+		t_begin_penetrate = max(t_begin_penetrate, min_time);
 		t_end_penetrate += linear_circle->start_time;
 
-		if (min_time < t_begin_penetrate && t_begin_penetrate < max_time) {
-			collision.type =  PHYSICS_COLLISION_BEGIN_PENETRATION;
-			collision.time = t_begin_penetrate;
-			collision.static_circle_linear_circle.static_circle = static_circle;
-			collision.static_circle_linear_circle.linear_circle = linear_circle;
-			collisions.append(collision);
+		if (t_begin_penetrate <= t_end_penetrate) {
+			if (min_time <= t_begin_penetrate && t_begin_penetrate < max_time) {
+				event.type =  PHYSICS_EVENT_BEGIN_PENETRATE_SC_LC;
+				event.time = t_begin_penetrate;
+				event.sc_lc.static_circle = static_circle;
+				event.sc_lc.linear_circle = linear_circle;
+				output.append(event);
+			}
 		}
-		if (min_time < t_end_penetrate && t_end_penetrate < max_time) {
-			collision.type = PHYSICS_COLLISION_END_PENETRATION;
-			collision.time = t_end_penetrate;
-			collision.static_circle_linear_circle.static_circle = static_circle;
-			collision.static_circle_linear_circle.linear_circle = linear_circle;
-			collisions.append(collision);
+		if (min_time <= t_end_penetrate && t_end_penetrate < max_time) {
+			event.type = PHYSICS_EVENT_END_PENETRATE_SC_LC;
+			event.time = t_end_penetrate;
+			event.sc_lc.static_circle = static_circle;
+			event.sc_lc.linear_circle = linear_circle;
+			output.append(event);
 		}
 	}
 
 	// linear circle linear circle collisions
-	collision.objects_type = PHYSICS_COLLISION_LINEAR_CIRCLE_LINEAR_CIRCLE;
 	physics_get_overlapping_intervals_2d(linear_circle_x_intervals,
 	                                     linear_circle_y_intervals,
 	                                     linear_circle_x_intervals,
@@ -607,33 +673,34 @@ void physics_compute_collisions(Physics_Context* context, f32 start_time)
 		t_begin_penetrate += circle_1->start_time;
 		t_end_penetrate += circle_1->start_time;
 
-		if (min_time < t_begin_penetrate && t_begin_penetrate < max_time) {
-			collision.type =  PHYSICS_COLLISION_BEGIN_PENETRATION;
-			collision.time = t_begin_penetrate;
-			collision.linear_circle_linear_circle.linear_circle_1 = circle_1;
-			collision.linear_circle_linear_circle.linear_circle_2 = circle_2;
-			collisions.append(collision);
+		if (min_time <= t_begin_penetrate && t_begin_penetrate < max_time) {
+			event.type =  PHYSICS_EVENT_BEGIN_PENETRATE_LC_LC;
+			event.time = t_begin_penetrate;
+			event.lc_lc.circle_1 = circle_1;
+			event.lc_lc.circle_1 = circle_2;
+			output.append(event);
 		}
-		if (min_time < t_end_penetrate && t_end_penetrate < max_time) {
-			collision.type = PHYSICS_COLLISION_END_PENETRATION;
-			collision.time = t_end_penetrate;
-			collision.linear_circle_linear_circle.linear_circle_1 = circle_1;
-			collision.linear_circle_linear_circle.linear_circle_2 = circle_2;
-			collisions.append(collision);
+		if (min_time <= t_end_penetrate && t_end_penetrate < max_time) {
+			event.type = PHYSICS_EVENT_END_PENETRATE_LC_LC;
+			event.time = t_end_penetrate;
+			event.lc_lc.circle_1 = circle_1;
+			event.lc_lc.circle_1 = circle_2;
+			output.append(event);
 		}
 	}
 
-	// sort collisions
-	for (u32 i = 1; i < collisions.len; ++i) {
-		Physics_Collision collision = collisions[i];
+	// sort events
+	u32 output_len = *output.len;
+	for (u32 i = 1; i < output_len; ++i) {
+		Physics_Event event = output[i];
 		u32 j = i;
 		for ( ; j; --j) {
-			if (collisions[j - 1].time <= collision.time) {
+			if (output[j - 1].time <= event.time) {
 				break;
 			}
-			collisions[j] = collisions[j - 1];
+			output[j] = output[j - 1];
 		}
-		collisions[j] = collision;
+		output[j] = event;
 	}
 }
 
