@@ -1,7 +1,7 @@
 #ifndef PIXEL_ART_UPSAMPLER_GPU_DATA_TYPES_H
 #define PIXEL_ART_UPSAMPLER_GPU_DATA_TYPES_H
 
-#include "jfg/cpu_gpu_data_types.h"
+#include "cpu_gpu_data_types.h"
 
 #define PIXEL_ART_UPSAMPLER_WIDTH  8
 #define PIXEL_ART_UPSAMPLER_HEIGHT 8

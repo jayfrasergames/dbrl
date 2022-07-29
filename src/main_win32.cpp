@@ -1,13 +1,13 @@
-#include "jfg/prelude.h"
-#include "jfg/codepage_437.h"
+#include "prelude.h"
+#include "codepage_437.h"
 
 #include <windows.h>
 
-#include "jfg/jfg_dsound.h"
+#include "jfg_dsound.h"
 
-#include "jfg/jfg_d3d11.h"
-#include "jfg/log.h"
-#include "jfg/imgui.h"
+#include "jfg_d3d11.h"
+#include "log.h"
+#include "imgui.h"
 
 #include <dxgi1_2.h>
 

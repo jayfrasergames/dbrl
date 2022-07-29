@@ -1,9 +1,9 @@
 #ifndef PHYSICS_H
 #define PHYSICS_H
 
-#include "jfg/prelude.h"
-#include "jfg/containers.hpp"
-#include "jfg/jfg_math.h"
+#include "prelude.h"
+#include "containers.hpp"
+#include "jfg_math.h"
 
 #include "types.h"
 #include "debug_draw_world.h"

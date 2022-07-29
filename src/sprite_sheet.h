@@ -1,8 +1,8 @@
 #ifndef SPRITE_SHEET_H
 #define SPRITE_SHEET_H
 
-#include "jfg/prelude.h"
-#include "jfg/containers.hpp"
+#include "prelude.h"
+#include "containers.hpp"
 
 #include "particles.h"
 

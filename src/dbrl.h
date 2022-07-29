@@ -1,12 +1,12 @@
 #ifndef DBRL_H
 #define DBRL_H
 
-#include "jfg/prelude.h"
-#include "jfg/mem.h"
-#include "jfg/input.h"
+#include "prelude.h"
+#include "mem.h"
+#include "input.h"
 
-#include "jfg/jfg_d3d11.h"
-#include "jfg/jfg_dsound.h"
+#include "jfg_d3d11.h"
+#include "jfg_dsound.h"
 
 #include "platform_functions.h"
 

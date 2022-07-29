@@ -1,7 +1,7 @@
 #ifndef FIELD_OF_VISION_RENDER_GPU_DATA_TYPES_H
 #define FIELD_OF_VISION_RENDER_GPU_DATA_TYPES_H
 
-#include "jfg/cpu_gpu_data_types.h"
+#include "cpu_gpu_data_types.h"
 
 #define FOV_SHADOW_BLEND_CS_WIDTH  8
 #define FOV_SHADOW_BLEND_CS_HEIGHT 8

@@ -1,7 +1,7 @@
 #ifndef PARTICLES_GPU_DATA_TYPES_H
 #define PARTICLES_GPU_DATA_TYPES_H
 
-#include "jfg/cpu_gpu_data_types.h"
+#include "cpu_gpu_data_types.h"
 
 #define PARTICLES_WIDTH 64
 

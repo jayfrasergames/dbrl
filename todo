@@ -1,4 +1,26 @@
 * tasks:
+
+  * technical
+    * get stack traces from assertion failures!!!
+    * clean up build system
+      * precompiled headers
+      * cmake
+      * get rid of "jfg" submodule (integrate everything into one c++ project)
+    * load shaders from text files at run time
+    * load sounds from wave files at run time
+    * asynchronous sound loading
+    * deprecate runner/DLL
+    * deprecate use of Python scripts in build system
+    * libraries
+      * lua
+      * dxc
+      * something for threading!
+
+    * load image assets from PNGs (does this matter?)
+
+  * physics system
+    * debug/create unit tests
+
   * variable move duration depending on user input frequency
     * animation "speeding up" when moves made rapidly
   * improve imgui

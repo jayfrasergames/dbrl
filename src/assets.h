@@ -1,7 +1,8 @@
 #ifndef ASSETS_H
 #define ASSETS_H
 
-#include "jfg/prelude.h"
+#include "stdafx.h"
+
 #include "platform_functions.h"
 
 #define ASSETS_FILE_NAME "assets.bin"

@@ -1,8 +1,8 @@
 #ifndef FIELD_OF_VISION_RENDER_H
 #define FIELD_OF_VISION_RENDER_H
 
-#include "jfg/prelude.h"
-#include "jfg/containers.hpp"
+#include "prelude.h"
+#include "containers.hpp"
 
 #include "field_of_vision_render_gpu_data_types.h"
 

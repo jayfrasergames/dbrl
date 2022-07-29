@@ -1,7 +1,7 @@
 #ifndef DEBUG_DRAW_WORLD_GPU_DATA_TYPES_H
 #define DEBUG_DRAW_WORLD_GPU_DATA_TYPES_H
 
-#include "jfg/cpu_gpu_data_types.h"
+#include "cpu_gpu_data_types.h"
 
 struct Debug_Draw_World_Constant_Buffer
 {

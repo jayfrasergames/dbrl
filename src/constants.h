@@ -1,7 +1,7 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#include "jfg/imgui.h"
+#include "imgui.h"
 
 struct Constants
 {

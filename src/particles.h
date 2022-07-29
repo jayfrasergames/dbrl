@@ -1,9 +1,9 @@
 #ifndef PARTICLES_H
 #define PARTICLES_H
 
-#include "jfg/prelude.h"
-#include "jfg/containers.hpp"
-#include "jfg/random.h"
+#include "prelude.h"
+#include "containers.hpp"
+#include "random.h"
 
 #include "particles_gpu_data_types.h"
 

@@ -1,7 +1,7 @@
 #ifndef PIXEL_ART_UPSAMPLER_H
 #define PIXEL_ART_UPSAMPLER_H
 
-#include "jfg/prelude.h"
+#include "prelude.h"
 
 #include "pixel_art_upsampler_gpu_data_types.h"
 

@@ -1,8 +1,8 @@
 #ifndef SOUND_H
 #define SOUND_H
 
-#include "jfg/prelude.h"
-#include "jfg/containers.hpp"
+#include "prelude.h"
+#include "containers.hpp"
 #include "assets.h"
 
 #define SOUND_MAX_SIMULTANEOUS_SOUNDS 32

@@ -1,7 +1,7 @@
 #ifndef CARD_RENDER_H
 #define CARD_RENDER_H
 
-#include "jfg/prelude.h"
+#include "stdafx.h"
 
 #ifdef JFG_D3D11_H
 

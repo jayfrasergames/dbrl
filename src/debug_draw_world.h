@@ -1,8 +1,8 @@
 #ifndef DEBUG_DRAW_WORLD_H
 #define DEBUG_DRAW_WORLD_H
 
-#include "jfg/prelude.h"
-#include "jfg/containers.hpp"
+#include "prelude.h"
+#include "containers.hpp"
 
 #include "debug_draw_world_gpu_data_types.h"
 
@@ -83,7 +83,7 @@ void debug_draw_world_sqaure(v2 center, f32 edge_length);
 void debug_draw_world_line(v2 start, v2 end);
 
 #ifndef JFG_HEADER_ONLY
-#include "jfg/jfg_math.h"
+#include "jfg_math.h"
 #include "gen/debug_draw_world_dxbc_triangle_vertex_shader.data.h"
 #include "gen/debug_draw_world_dxbc_triangle_pixel_shader.data.h"
 #include "gen/debug_draw_world_dxbc_line_vertex_shader.data.h"

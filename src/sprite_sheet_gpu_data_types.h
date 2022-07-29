@@ -1,7 +1,7 @@
 #ifndef SPRITE_SHEET_GPU_DATA_TYPES_H
 #define SPRITE_SHEET_GPU_DATA_TYPES_H
 
-#include "jfg/cpu_gpu_data_types.h"
+#include "cpu_gpu_data_types.h"
 
 #define CLEAR_SPRITE_ID_WIDTH  8
 #define CLEAR_SPRITE_ID_HEIGHT 8

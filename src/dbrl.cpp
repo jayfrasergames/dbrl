@@ -1,12 +1,12 @@
 #include "dbrl.h"
 
-#include "jfg/imgui.h"
-#include "jfg/jfg_math.h"
-#include "jfg/log.h"
-#include "jfg/debug_line_draw.h"
-#include "jfg/containers.hpp"
-#include "jfg/random.h"
-#include "jfg/thread.h"
+#include "imgui.h"
+#include "jfg_math.h"
+#include "log.h"
+#include "debug_line_draw.h"
+#include "containers.hpp"
+#include "random.h"
+#include "thread.h"
 
 #include "types.h"
 

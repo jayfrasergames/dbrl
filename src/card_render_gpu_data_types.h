@@ -1,7 +1,7 @@
 #ifndef CARD_RENDER_GPU_DATA_TYPES_H
 #define CARD_RENDER_GPU_DATA_TYPES_H
 
-#include "jfg/cpu_gpu_data_types.h"
+#include "cpu_gpu_data_types.h"
 
 struct Card_Render_Constant_Buffer
 {
