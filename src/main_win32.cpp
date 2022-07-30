@@ -1,3 +1,5 @@
+#define JFG_HEADER_ONLY
+
 #include "prelude.h"
 #include "codepage_437.h"
 
@@ -206,63 +208,6 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 	return DefWindowProc(window, msg, wparam, lparam);
 }
 
-#ifdef DEBUG
-
-#define LIBRARY_NAME "dbrl_d.dll"
-#define LIBRARY_TMP_NAME "dbrl_d_tmp.dll"
-#define SHARED_OBJECT_WRITTEN_NAME "written_library"
-HMODULE game_library;
-
-#define GAME_FUNCTION(return_type, name, ...) static return_type (*name)(__VA_ARGS__) = NULL;
-GAME_FUNCTIONS
-#undef GAME_FUNCTION
-
-u8 was_library_written()
-{
-	u8 result;
-	WIN32_FIND_DATA file_data;
-	HANDLE handle = FindFirstFile(SHARED_OBJECT_WRITTEN_NAME, &file_data);
-	result = handle != INVALID_HANDLE_VALUE;
-	if (result) {
-		DeleteFile(SHARED_OBJECT_WRITTEN_NAME);
-	}
-	return result;
-}
-
-u8 load_game_functions()
-{
-	WIN32_FIND_DATA file_data;
-	HANDLE handle = FindFirstFile(LIBRARY_TMP_NAME, &file_data);
-	if (handle != INVALID_HANDLE_VALUE) {
-		if (!DeleteFile(LIBRARY_TMP_NAME)) {
-			return 0;
-		}
-	}
-
-	if (!CopyFile(LIBRARY_NAME, LIBRARY_TMP_NAME, FALSE)) {
-		return 0;
-	}
-
-	game_library = LoadLibrary(LIBRARY_TMP_NAME);
-	if (game_library == NULL) {
-		return 0;
-	}
-
-#define GAME_FUNCTION(return_type, name, ...) \
-	name = (return_type (*)(__VA_ARGS__))GetProcAddress(game_library, #name); \
-	if (name == NULL) { \
-		return 0; \
-	}
-	GAME_FUNCTIONS
-#undef GAME_FUNCTION
-
-	return 1;
-}
-
-#else
-
-#include "dbrl.cpp"
-
 u8 was_library_written()
 {
 	return 0;
@@ -272,8 +217,6 @@ u8 load_game_functions()
 {
 	return 1;
 }
-
-#endif
 
 struct Game_Loop_Args
 {

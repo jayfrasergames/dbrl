@@ -75,9 +75,7 @@ if(MSVC)
 	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 endif()
 
-# XXX
-# add_executable(dbrl main_win32.cpp dbrl.cpp ${precompiled_headers} ${headers} ${shaders})
-add_executable(dbrl WIN32 main_win32.cpp ${precompiled_headers} ${headers} ${shaders})
+add_executable(dbrl WIN32 main_win32.cpp dbrl.cpp ${precompiled_headers} ${headers} ${shaders})
 target_precompile_headers(dbrl PUBLIC ${precompiled_headers})
 set_target_properties(dbrl PROPERTIES DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX})
 
