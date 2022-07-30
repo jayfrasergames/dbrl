@@ -23,6 +23,7 @@
 
 #include <stdio.h>  // XXX - for snprintf
 
+#include "gen/cards.data.h"
 #include "gen/appearance.data.h"
 #include "gen/sprite_sheet_creatures.data.h"
 #include "gen/sprite_sheet_tiles.data.h"
@@ -33,6 +34,8 @@
 
 #include "gen/pass_through_dxbc_vertex_shader.data.h"
 #include "gen/pass_through_dxbc_pixel_shader.data.h"
+
+#include "draw.h"
 
 // =============================================================================
 // Global Platform Functions
@@ -3494,6 +3497,7 @@ void peek_move_resolve(Slice<Action> moves)
 // =============================================================================
 // draw
 
+/*
 struct Camera
 {
 	v2  world_center;
@@ -3515,6 +3519,7 @@ struct Draw
 	Card_Render card_render;
 	Debug_Line card_debug_line;
 };
+*/
 
 // =============================================================================
 // anim

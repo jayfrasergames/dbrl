@@ -1,7 +1,19 @@
 * tasks:
 
   * technical
-    * don't precomile HLSL files - compile/recompile them at runtime
+    * move to using abstracted renderer
+      * split up
+        * fov_render
+        * pixel_art_upsampler (?)
+        * debug_world_draw
+        * imgui
+      * abstracted render methods
+        * draw_world
+        * draw_cards
+        * draw_imgui
+      * remove d3d11 from dbrl.cpp
+
+    * load PNG assets at runtime
 
     * cleanup prelude.h/stdafx.h
 

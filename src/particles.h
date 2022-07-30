@@ -37,6 +37,9 @@ struct Particles
 #endif
 };
 
+void particles_init(Particles* particles);
+void particles_add(Particles* particles, Particle_Instance instance);
+
 #ifndef JFG_HEADER_ONLY
 void particles_init(Particles* particles)
 {
@@ -50,6 +53,14 @@ void particles_add(Particles* particles, Particle_Instance instance)
 #endif
 
 #ifdef JFG_D3D11_H
+
+u8 particles_d3d11_init(Particles* context, ID3D11Device* device);
+void particles_d3d11_free(Particles* context);
+void particles_d3d11_draw(Particles* context,
+                          ID3D11DeviceContext* dc,
+                          ID3D11UnorderedAccessView* output_uav,
+                          v2_u32 output_tile_size,
+                          f32 time);
 
 #ifndef JFG_HEADER_ONLY
 #include "gen/particles_dxbc_compute_shader.data.h"

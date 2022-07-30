@@ -33,7 +33,7 @@ VS_Triangle_Output vs_triangle(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 
 	Debug_Draw_World_Triangle t = triangles[iid];
 
-	float2 pos;
+	float2 pos = float2(0.0f, 0.0f);
 
 	switch (vid) {
 	case 0: pos = t.a; break;
@@ -89,7 +89,7 @@ VS_Line_Output vs_line(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 
 	Debug_Draw_World_Line l = lines[iid];
 
-	float2 pos;
+	float2 pos = float2(0.0f, 0.0f);
 
 	switch (vid) {
 	case 0: pos = l.start; break;

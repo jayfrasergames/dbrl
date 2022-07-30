@@ -37,6 +37,8 @@ set(headers
 
 set(object_sources
 	assets.cpp
+	card_render.cpp
+	sprite_sheet.cpp
 	dbrl.cpp
 	format.cpp
 	draw_dx11.cpp
