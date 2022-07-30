@@ -525,8 +525,8 @@ void fov_render_d3d11_draw(Field_Of_Vision_Render* render, ID3D11DeviceContext* 
 	hr = dc->Map(render->d3d11.constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_buffer);
 	ASSERT(SUCCEEDED(hr));
 	Field_Of_Vision_Render_Constant_Buffer constant_buffer = {};
-	constant_buffer.grid_size = V2_f32(256.0f, 256.0f);
-	constant_buffer.sprite_size = V2_f32(24.0f, 24.0f);
+	constant_buffer.grid_size = v2(256.0f, 256.0f);
+	constant_buffer.sprite_size = v2(24.0f, 24.0f);
 	constant_buffer.edge_tex_size = (v2)SPRITE_SHEET_WATER_EDGES.size;
 	memcpy(mapped_buffer.pData, &constant_buffer, sizeof(constant_buffer));
 	dc->Unmap(render->d3d11.constant_buffer, 0);
@@ -549,15 +549,15 @@ void fov_render_d3d11_draw(Field_Of_Vision_Render* render, ID3D11DeviceContext* 
 		Map_Cache_Bool *fov = draw.fov;
 		for (u32 y = 1; y < 255; ++y) {
 			for (u32 x = 1; x < 255; ++x) {
-				bool tl = fov->get(V2_u8(x - 1, y - 1));
-				bool t  = fov->get(V2_u8(    x, y - 1));
-				bool tr = fov->get(V2_u8(x + 1, y - 1));
-				bool l  = fov->get(V2_u8(x - 1,     y));
-				bool c  = fov->get(V2_u8(    x,     y));
-				bool r  = fov->get(V2_u8(x + 1,     y));
-				bool bl = fov->get(V2_u8(x - 1, y + 1));
-				bool b  = fov->get(V2_u8(    x, y + 1));
-				bool br = fov->get(V2_u8(x + 1, y + 1));
+				bool tl = fov->get(v2_u8(x - 1, y - 1));
+				bool t  = fov->get(v2_u8(    x, y - 1));
+				bool tr = fov->get(v2_u8(x + 1, y - 1));
+				bool l  = fov->get(v2_u8(x - 1,     y));
+				bool c  = fov->get(v2_u8(    x,     y));
+				bool r  = fov->get(v2_u8(x + 1,     y));
+				bool bl = fov->get(v2_u8(x - 1, y + 1));
+				bool b  = fov->get(v2_u8(    x, y + 1));
+				bool br = fov->get(v2_u8(x + 1, y + 1));
 				u8 mask = 0;
 				if (t)  { mask |= 0x01; }
 				if (tr) { mask |= 0x02; }
@@ -569,12 +569,12 @@ void fov_render_d3d11_draw(Field_Of_Vision_Render* render, ID3D11DeviceContext* 
 				if (tl) { mask |= 0x80; }
 				if (c && mask == 0xFF) {
 					Field_Of_Vision_Fill_Instance instance = {};
-					instance.world_coords = V2_f32((f32)x, (f32)y);
+					instance.world_coords = v2((f32)x, (f32)y);
 					fill_instances.append(instance);
 				} else if (c) {
 					Field_Of_Vision_Edge_Instance instance = {};
-					instance.world_coords = V2_f32((f32)x, (f32)y);
-					instance.sprite_coords = V2_f32((f32)(mask % 16),
+					instance.world_coords = v2((f32)x, (f32)y);
+					instance.sprite_coords = v2((f32)(mask % 16),
 					                                (f32)(15 - mask / 16));
 					edge_instances.append(instance);
 				}
@@ -651,7 +651,7 @@ void fov_render_d3d11_draw(Field_Of_Vision_Render* render, ID3D11DeviceContext* 
 
 		dc->CSSetShaderResources(0, 1, &render->d3d11.buffers[buffer_idx].buffer_srv);
 		v2_u32 pix_size = render->grid_size * SPRITE_SHEET_WATER_EDGES.sprite_size;
-		v2_u32 cs_size = V2_u32(FOV_SHADOW_BLEND_CS_WIDTH, FOV_SHADOW_BLEND_CS_HEIGHT);
+		v2_u32 cs_size = v2_u32(FOV_SHADOW_BLEND_CS_WIDTH, FOV_SHADOW_BLEND_CS_HEIGHT);
 		v2_u32 dispatch_size = (pix_size + cs_size - (u32)1) / cs_size;
 		dc->Dispatch(dispatch_size.w, dispatch_size.h, 1);
 	}

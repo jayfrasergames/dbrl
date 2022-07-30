@@ -1,11 +1,15 @@
 * tasks:
 
   * technical
-    * get stack traces from assertion failures!!!
     * clean up build system
-      * precompiled headers
       * cmake
+      * precompiled headers
       * get rid of "jfg" submodule (integrate everything into one c++ project)
+
+    * don't precomile HLSL files - compile/recompile them at runtime
+    * deprecate use of assets.bin for non-release candidates
+
+    * get stack traces from assertion failures!!!
     * load shaders from text files at run time
     * load sounds from wave files at run time
     * asynchronous sound loading

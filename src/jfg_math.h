@@ -63,9 +63,9 @@ struct m2
 	}
 };
 
-v2 operator*(m2 m, v2 v)
+static inline v2 operator*(m2 m, v2 v)
 {
-	return V2_f32(m._00 * v.x + m._10 * v.y, m._01 * v.x + m._11 * v.y);
+	return v2(m._00 * v.x + m._10 * v.y, m._01 * v.x + m._11 * v.y);
 }
 
 struct Rational
@@ -94,7 +94,7 @@ struct Rational
 	}
 };
 
-bool operator>(Rational a, Rational b)
+static inline bool operator>(Rational a, Rational b)
 {
 	i32 denominator = a.denominator * b.denominator;
 	bool result = a.numerator * b.denominator > b.numerator * a.denominator;
@@ -104,7 +104,7 @@ bool operator>(Rational a, Rational b)
 	return result;
 }
 
-bool operator>=(Rational a, Rational b)
+static inline bool operator>=(Rational a, Rational b)
 {
 	i32 denominator = a.denominator * b.denominator;
 	bool result = a.numerator * b.denominator >= b.numerator * a.denominator;
@@ -114,7 +114,7 @@ bool operator>=(Rational a, Rational b)
 	return result;
 }
 
-bool operator<(Rational a, Rational b)
+static inline bool operator<(Rational a, Rational b)
 {
 	i32 denominator = a.denominator * b.denominator;
 	bool result = a.numerator * b.denominator < b.numerator * a.denominator;
@@ -124,7 +124,7 @@ bool operator<(Rational a, Rational b)
 	return result;
 }
 
-bool operator<=(Rational a, Rational b)
+static inline bool operator<=(Rational a, Rational b)
 {
 	i32 denominator = a.denominator * b.denominator;
 	bool result = a.numerator * b.denominator <= b.numerator * a.denominator;

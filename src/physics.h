@@ -395,7 +395,7 @@ void physics_debug_draw(Physics_Context* context, f32 time)
 {
 	USE_PHYSICS_CONTEXT(context)
 
-	debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 0.75f));
+	debug_draw_world_set_color(v4(1.0f, 1.0f, 0.0f, 0.75f));
 
 	for (u32 i = 0; i < static_lines.len; ++i) {
 		Physics_Static_Line line = static_lines[i];
@@ -407,7 +407,7 @@ void physics_debug_draw(Physics_Context* context, f32 time)
 		debug_draw_world_circle(circle.pos, circle.radius);
 	}
 
-	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 0.75f));
+	debug_draw_world_set_color(v4(1.0f, 0.0f, 0.0f, 0.75f));
 
 	for (u32 i = 0; i < linear_circles.len; ++i) {
 		Physics_Linear_Circle circle = linear_circles[i];

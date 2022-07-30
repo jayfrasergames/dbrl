@@ -3,14 +3,14 @@
 
 typedef v2_u8 Pos;
 
-u16 pos_to_u16(Pos p)
+static inline u16 pos_to_u16(Pos p)
 {
 	return p.y * 256 + p.x;
 }
 
-Pos u16_to_pos(u16 n)
+static inline Pos u16_to_pos(u16 n)
 {
-	return V2_u8(n % 256, n / 256);
+	return Pos(n % 256, n / 256);
 }
 
 struct Map_Cache_Bool

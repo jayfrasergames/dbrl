@@ -109,28 +109,32 @@ void swap_input_buffers()
 	input_back_buffer = tmp;
 	memcpy(input_back_buffer, input_front_buffer, sizeof(*input_front_buffer));
 	input_reset(input_back_buffer);
-	ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+	auto input_buffer_pointer_lock_orig_value = InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1);
+	ASSERT(input_buffer_pointer_lock_orig_value);
 }
 
 void input_push_event_to_back_buffer(Input_Event input_event)
 {
 	while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
 	input_push(input_back_buffer, input_event);
-	ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+	auto input_buffer_pointer_lock_orig_value = InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1);
+	ASSERT(input_buffer_pointer_lock_orig_value);
 }
 
 void input_back_buffer_button_down(Input_Button button)
 {
 	while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
 	input_button_down(input_back_buffer, button);
-	ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+	auto input_buffer_pointer_lock_orig_value = InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1);
+	ASSERT(input_buffer_pointer_lock_orig_value);
 }
 
 void input_back_buffer_button_up(Input_Button button)
 {
 	while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
 	input_button_up(input_back_buffer, button);
-	ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+	auto input_buffer_pointer_lock_orig_value = InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1);
+	ASSERT(input_buffer_pointer_lock_orig_value);
 }
 
 void get_screen_size(HWND window, v2_u32* screen_size)
@@ -164,7 +168,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 		} else {
 			--input_back_buffer->mouse_wheel_delta;
 		}
-		ASSERT(InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1));
+		auto input_buffer_pointer_lock_orig_value = InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1);
+		ASSERT(input_buffer_pointer_lock_orig_value);
 		return 0;
 	}
 	case WM_LBUTTONDOWN:

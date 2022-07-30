@@ -914,7 +914,7 @@ void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Renderer* renderer,
 	Sprite_Sheet_Constant_Buffer constant_buffer = {};
 	constant_buffer.screen_size = (v2)renderer->size;
 	constant_buffer.sprite_size = (v2)instances->data.sprite_size;
-	constant_buffer.world_tile_size = V2_f32(24.0f, 24.0f);
+	constant_buffer.world_tile_size = v2(24.0f, 24.0f);
 	constant_buffer.tex_size = (v2)instances->data.size;
 
 	D3D11_MAPPED_SUBRESOURCE mapped_buffer = {};
@@ -962,7 +962,7 @@ void sprite_sheet_font_instances_d3d11_draw(Sprite_Sheet_Renderer*       rendere
 	Sprite_Sheet_Constant_Buffer constant_buffer = {};
 	constant_buffer.screen_size = (v2)renderer->size;
 	// constant_buffer.sprite_size = (v2)instances->data.sprite_size;
-	constant_buffer.world_tile_size = V2_f32(24.0f, 24.0f);
+	constant_buffer.world_tile_size = v2(24.0f, 24.0f);
 	constant_buffer.tex_size = (v2)instances->tex_size;
 
 	D3D11_MAPPED_SUBRESOURCE mapped_buffer = {};

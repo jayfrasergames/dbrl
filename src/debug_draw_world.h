@@ -66,7 +66,7 @@ struct Debug_Draw_World
 		Debug_Draw_World_State state = {};
 		state.triangle_len = 0;
 		state.lines_len = 0;
-		state.color = V4_f32(1.0f, 0.0f, 0.0f, 1.0f);
+		state.color = v4(1.0f, 0.0f, 0.0f, 1.0f);
 		states.push(state);
 	}
 };
@@ -140,15 +140,15 @@ void debug_draw_world_arrow(v2 start, v2 end)
 	v2 end_offset = end + 0.5f;
 	v2 start_offset = start + 0.5f;
 
-	v2 a = rot * V2_f32(-0.125f,  0.125f) + start_offset;
-	v2 b = rot * V2_f32(-0.125f, -0.125f) + start_offset;
+	v2 a = rot * v2(-0.125f,  0.125f) + start_offset;
+	v2 b = rot * v2(-0.125f, -0.125f) + start_offset;
 
-	v2 c = rot * V2_f32(-0.25f,  0.125f) + end_offset;
-	v2 d = rot * V2_f32(-0.25f, -0.125f) + end_offset;
+	v2 c = rot * v2(-0.25f,  0.125f) + end_offset;
+	v2 d = rot * v2(-0.25f, -0.125f) + end_offset;
 
-	v2 e = rot * V2_f32(-0.25f,  0.25f) + end_offset;
-	v2 f = rot * V2_f32(-0.25f, -0.25f) + end_offset;
-	v2 g = rot * V2_f32(0.125f,   0.0f) + end_offset;
+	v2 e = rot * v2(-0.25f,  0.25f) + end_offset;
+	v2 f = rot * v2(-0.25f, -0.25f) + end_offset;
+	v2 g = rot * v2(0.125f,   0.0f) + end_offset;
 
 	Debug_Draw_World_Triangle t = {};
 	t.color = debug_draw_world_context->current_color;
@@ -167,7 +167,7 @@ void debug_draw_world_circle(v2 center, f32 radius)
 	u32 num_points = 4;
 
 	center = center + 0.5f;
-	v2 v = V2_f32(radius, 0.0f);
+	v2 v = v2(radius, 0.0f);
 
 	m2 m = m2::rotation(2.0f * PI_F32 / (f32)(4 * num_points));
 
@@ -201,15 +201,15 @@ void debug_draw_world_sqaure(v2 center, f32 edge_length)
 
 	f32 k = edge_length / 2.0f;
 	Debug_Draw_World_Triangle t = {};
-	t.a = center + 0.5f + V2_f32(-k, -k);
-	t.b = center + 0.5f + V2_f32( k, -k);
-	t.c = center + 0.5f + V2_f32(-k,  k);
+	t.a = center + 0.5f + v2(-k, -k);
+	t.b = center + 0.5f + v2( k, -k);
+	t.c = center + 0.5f + v2(-k,  k);
 	t.color = debug_draw_world_context->current_color;
 	debug_draw_world_context->triangles.append(t);
 
-	t.a = center + 0.5f + V2_f32(-k,  k);
-	t.b = center + 0.5f + V2_f32( k, -k);
-	t.c = center + 0.5f + V2_f32( k,  k);
+	t.a = center + 0.5f + v2(-k,  k);
+	t.b = center + 0.5f + v2( k, -k);
+	t.c = center + 0.5f + v2( k,  k);
 	debug_draw_world_context->triangles.append(t);
 }
 

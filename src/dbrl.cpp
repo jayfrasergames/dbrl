@@ -679,7 +679,7 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache
 	auto& tiles = game->tiles;
 	for (u16 y = 0; y < 256; ++y) {
 		for (u16 x = 0; x < 256; ++x) {
-			Pos p = V2_u8((u8)x, (u8)y);
+			Pos p = Pos((u8)x, (u8)y);
 			if (game_is_pos_opaque(game, p)) {
 				map[p] |= is_wall;
 			}
@@ -688,10 +688,10 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache
 
 	for (u16 i = 0; i < 256; ++i) {
 		u8 x = (u8)i;
-		map[V2_u8(  x,   0)] |= is_wall;
-		map[V2_u8(  x, 255)] |= is_wall;
-		map[V2_u8(  0,   x)] |= is_wall;
-		map[V2_u8(255,   x)] |= is_wall;
+		map[Pos(  x,   0)] |= is_wall;
+		map[Pos(  x, 255)] |= is_wall;
+		map[Pos(  0,   x)] |= is_wall;
+		map[Pos(255,   x)] |= is_wall;
 	}
 
 	auto& entities = game->entities;
@@ -703,22 +703,22 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache
 
 	for (u8 y = 1; y < 255; ++y) {
 		for (u8 x = 1; x < 255; ++x) {
-			u8 center = map[V2_u8(x, y)];
+			u8 center = map[Pos(x, y)];
 			if (!center) {
 				continue;
 			}
 
-			u8 above  = map[V2_u8(    x, y - 1)];
-			u8 left   = map[V2_u8(x - 1,     y)];
-			u8 right  = map[V2_u8(x + 1,     y)];
-			u8 bottom = map[V2_u8(    x, y + 1)];
+			u8 above  = map[Pos(    x, y - 1)];
+			u8 left   = map[Pos(x - 1,     y)];
+			u8 right  = map[Pos(x + 1,     y)];
+			u8 bottom = map[Pos(    x, y + 1)];
 
 			if (!above  && !left)  { center |= bevel_top_left;     }
 			if (!above  && !right) { center |= bevel_top_right;    }
 			if (!bottom && !left)  { center |= bevel_bottom_left;  }
 			if (!bottom && !right) { center |= bevel_bottom_right; }
 
-			map[V2_u8(x, y)] = center;
+			map[Pos(x, y)] = center;
 		}
 	}
 
@@ -845,7 +845,7 @@ void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache
 					}
 					if (!(0 < y && y < 255)) { goto next_octant; }
 					if (!(0 < x && x < 255)) { x_end = x_iter; }
-					Pos p = V2_u8((u8)x, (u8)y);
+					Pos p = Pos((u8)x, (u8)y);
 					u8 cell = map[p];
 					if (cell & is_wall) {
 						u8 horiz_visible = 0;
@@ -1042,14 +1042,14 @@ u8 calculate_line_of_sight(Game *game, Entity_ID vision_entity_id, Pos target)
 
 	v2_i32 up, left;
 	switch (octant_id) {
-	case 0: up = V2_i32( 0, -1); left = V2_i32(-1,  0); break;
-	case 1: up = V2_i32( 1,  0); left = V2_i32( 0,  1); break;
-	case 2: up = V2_i32( 0,  1); left = V2_i32(-1,  0); break;
-	case 3: up = V2_i32( 1,  0); left = V2_i32( 0, -1); break;
-	case 4: up = V2_i32( 0, -1); left = V2_i32( 1,  0); break;
-	case 5: up = V2_i32(-1,  0); left = V2_i32( 0,  1); break;
-	case 6: up = V2_i32( 0,  1); left = V2_i32( 1,  0); break;
-	case 7: up = V2_i32(-1,  0); left = V2_i32( 0, -1); break;
+	case 0: up = v2_i32( 0, -1); left = v2_i32(-1,  0); break;
+	case 1: up = v2_i32( 1,  0); left = v2_i32( 0,  1); break;
+	case 2: up = v2_i32( 0,  1); left = v2_i32(-1,  0); break;
+	case 3: up = v2_i32( 1,  0); left = v2_i32( 0, -1); break;
+	case 4: up = v2_i32( 0, -1); left = v2_i32( 1,  0); break;
+	case 5: up = v2_i32(-1,  0); left = v2_i32( 0,  1); break;
+	case 6: up = v2_i32( 0,  1); left = v2_i32( 1,  0); break;
+	case 7: up = v2_i32(-1,  0); left = v2_i32( 0, -1); break;
 	}
 
 	for (u16 y_iter = 0; y_iter <= transformed_dir.y; ++y_iter) {
@@ -1074,7 +1074,7 @@ u8 calculate_line_of_sight(Game *game, Entity_ID vision_entity_id, Pos target)
 
 			u8 prev_was_clear = 0;
 			for (u16 x_iter = x_start; x_iter <= x_end; ++x_iter) {
-				v2_i32 logical_pos = V2_i32(x_iter, y_iter);
+				v2_i32 logical_pos = v2_i32(x_iter, y_iter);
 				v2_i32 cur_pos;
 				switch (octant_id) {
 				case 0:
@@ -1501,7 +1501,7 @@ void game_dispatch_message(Game*               game,
 				Pos p = e->pos;
 				/*
 				debug_draw_world_reset();
-				debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+				debug_draw_world_set_color(v4(0.0f, 1.0f, 0.0f, 1.0f));
 				debug_draw_world_circle((v2)p, 0.25f);
 				debug_pause();
 				*/
@@ -1593,7 +1593,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		auto& tiles = game->tiles;
 		for (u16 y = 0; y < 256; ++y) {
 			for (u16 x = 0; x < 256; ++x) {
-				Pos p = V2_u8((u8)x, (u8)y);
+				Pos p = Pos((u8)x, (u8)y);
 				if (game_is_pos_opaque(game, p)) {
 					map[p] |= is_wall;
 				}
@@ -1602,10 +1602,10 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 		for (u16 i = 0; i < 256; ++i) {
 			u8 x = (u8)i;
-			map[V2_u8(  x,   0)] |= is_wall;
-			map[V2_u8(  x, 255)] |= is_wall;
-			map[V2_u8(  0,   x)] |= is_wall;
-			map[V2_u8(255,   x)] |= is_wall;
+			map[Pos(  x,   0)] |= is_wall;
+			map[Pos(  x, 255)] |= is_wall;
+			map[Pos(  0,   x)] |= is_wall;
+			map[Pos(255,   x)] |= is_wall;
 		}
 
 		auto& entities = game->entities;
@@ -1617,22 +1617,22 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 		for (u8 y = 1; y < 255; ++y) {
 			for (u8 x = 1; x < 255; ++x) {
-				u8 center = map[V2_u8(x, y)];
+				u8 center = map[Pos(x, y)];
 				if (!center) {
 					continue;
 				}
 
-				u8 above  = map[V2_u8(    x, y - 1)];
-				u8 left   = map[V2_u8(x - 1,     y)];
-				u8 right  = map[V2_u8(x + 1,     y)];
-				u8 bottom = map[V2_u8(    x, y + 1)];
+				u8 above  = map[Pos(    x, y - 1)];
+				u8 left   = map[Pos(x - 1,     y)];
+				u8 right  = map[Pos(x + 1,     y)];
+				u8 bottom = map[Pos(    x, y + 1)];
 
 				if (!above  && !left)  { center |= bevel_top_left;     }
 				if (!above  && !right) { center |= bevel_top_right;    }
 				if (!bottom && !left)  { center |= bevel_bottom_left;  }
 				if (!bottom && !right) { center |= bevel_bottom_right; }
 
-				map[V2_u8(x, y)] = center;
+				map[Pos(x, y)] = center;
 			}
 		}
 
@@ -1642,26 +1642,26 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		line.collides_with_mask = collides_with_wall;
 		for (u16 y = 1; y < 255; ++y) {
 			for (u16 x = 1; x < 255; ++x) {
-				v2 p = V2_f32((f32)x, (f32)y);
+				v2 p = v2((f32)x, (f32)y);
 				u8 cell = map[(v2_u8)p];
 				if (cell & bevel_top_left) {
-					line.start = p - V2_f32(0.0f, 0.5f);
-					line.end = p - V2_f32(0.5f, 0.0f);
+					line.start = p - v2(0.0f, 0.5f);
+					line.end = p - v2(0.5f, 0.0f);
 					physics.static_lines.append(line);
 				}
 				if (cell & bevel_top_right) {
-					line.start = p - V2_f32(0.0f, 0.5f);
-					line.end = p + V2_f32(0.5f, 0.0f);
+					line.start = p - v2(0.0f, 0.5f);
+					line.end = p + v2(0.5f, 0.0f);
 					physics.static_lines.append(line);
 				}
 				if (cell & bevel_bottom_left) {
-					line.start = p + V2_f32(0.0f, 0.5f);
-					line.end = p - V2_f32(0.5f, 0.0f);
+					line.start = p + v2(0.0f, 0.5f);
+					line.end = p - v2(0.5f, 0.0f);
 					physics.static_lines.append(line);
 				}
 				if (cell & bevel_bottom_right) {
-					line.start = p + V2_f32(0.0f, 0.5f);
-					line.end = p + V2_f32(0.5f, 0.0f);
+					line.start = p + v2(0.0f, 0.5f);
+					line.end = p + v2(0.5f, 0.0f);
 					physics.static_lines.append(line);
 				}
 			}
@@ -1672,8 +1672,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			u8 drawing_line = 0;
 			f32 line_start_x, line_end_x;
 			for (u16 x = 0; x < 256; ++x) {
-				Pos p_above = V2_u8((u8)x,       (u8)y);
-				Pos p_below = V2_u8((u8)x, (u8)(y + 1));
+				Pos p_above = Pos((u8)x,       (u8)y);
+				Pos p_below = Pos((u8)x, (u8)(y + 1));
 				u8 cell_above = map[p_above];
 				u8 cell_below = map[p_below];
 				f32 this_line_start_x = (f32)x - 0.5f, this_line_end_x = (f32)x + 0.5f;
@@ -1695,8 +1695,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 							line_end_x = this_line_end_x;
 							break;
 						case 2:
-							line.start = V2_f32(line_start_x, (f32)y + 0.5f);
-							line.end   = V2_f32(  line_end_x, (f32)y + 0.5f);
+							line.start = v2(line_start_x, (f32)y + 0.5f);
+							line.end   = v2(  line_end_x, (f32)y + 0.5f);
 							if (line.start != line.end) {
 								physics.static_lines.append(line);
 							}
@@ -1716,8 +1716,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 							drawing_line = 2;
 							break;
 						case 1:
-							line.start = V2_f32(line_start_x, (f32)y + 0.5f);
-							line.end   = V2_f32(  line_end_x, (f32)y + 0.5f);
+							line.start = v2(line_start_x, (f32)y + 0.5f);
+							line.end   = v2(  line_end_x, (f32)y + 0.5f);
 							if (line.start != line.end) {
 								physics.static_lines.append(line);
 							}
@@ -1735,8 +1735,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 					}
 				} else {
 					if (drawing_line) {
-						line.start = V2_f32(line_start_x, (f32)y + 0.5f);
-						line.end   = V2_f32(  line_end_x, (f32)y + 0.5f);
+						line.start = v2(line_start_x, (f32)y + 0.5f);
+						line.end   = v2(  line_end_x, (f32)y + 0.5f);
 						if (line.start != line.end) {
 							physics.static_lines.append(line);
 						}
@@ -1751,8 +1751,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			u8 drawing_line = 0;
 			f32 line_start_y, line_end_y;
 			for (u16 y = 0; y < 256; ++y) {
-				Pos p_left  = V2_u8(      (u8)x, (u8)y);
-				Pos p_right = V2_u8((u8)(x + 1), (u8)y);
+				Pos p_left  = Pos(      (u8)x, (u8)y);
+				Pos p_right = Pos((u8)(x + 1), (u8)y);
 				u8 cell_left  = map[p_left];
 				u8 cell_right = map[p_right];
 				f32 this_line_start_y = (f32)y - 0.5f, this_line_end_y = (f32)y + 0.5f;
@@ -1774,8 +1774,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 							line_end_y = this_line_end_y;
 							break;
 						case 2:
-							line.start = V2_f32((f32)x + 0.5f, line_start_y);
-							line.end   = V2_f32((f32)x + 0.5f,   line_end_y);
+							line.start = v2((f32)x + 0.5f, line_start_y);
+							line.end   = v2((f32)x + 0.5f,   line_end_y);
 							if (line.start != line.end) {
 								physics.static_lines.append(line);
 							}
@@ -1795,8 +1795,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 							drawing_line = 2;
 							break;
 						case 1:
-							line.start = V2_f32((f32)x + 0.5f, line_start_y);
-							line.end   = V2_f32((f32)x + 0.5f,   line_end_y);
+							line.start = v2((f32)x + 0.5f, line_start_y);
+							line.end   = v2((f32)x + 0.5f,   line_end_y);
 							if (line.start != line.end) {
 								physics.static_lines.append(line);
 							}
@@ -1814,8 +1814,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 					}
 				} else {
 					if (drawing_line) {
-						line.start = V2_f32((f32)x + 0.5f, line_start_y);
-						line.end   = V2_f32((f32)x + 0.5f,   line_end_y);
+						line.start = v2((f32)x + 0.5f, line_start_y);
+						line.end   = v2((f32)x + 0.5f,   line_end_y);
 						if (line.start != line.end) {
 							physics.static_lines.append(line);
 						}
@@ -1994,7 +1994,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			debug_draw_world_reset();
 			physics_debug_draw(&physics, time);
 
-			debug_draw_world_set_color(V4_f32(0.0f, 0.0f, 1.0f, 0.75f));
+			debug_draw_world_set_color(v4(0.0f, 0.0f, 1.0f, 0.75f));
 			for (u32 i = 0; i < physics_events.len; ++i) {
 				Physics_Event pe = physics_events[i];
 				if (pe.time != time) {
@@ -2339,7 +2339,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 #ifdef DEBUG_TRANSACTION_PROCESSING
 				debug_draw_world_reset();
-				debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 1.0f));
+				debug_draw_world_set_color(v4(1.0f, 1.0f, 0.0f, 1.0f));
 				debug_draw_world_arrow((v2)m.move.start, (v2)m.move.end);
 				debug_pause();
 #endif
@@ -2357,7 +2357,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 #ifdef DEBUG_TRANSACTION_PROCESSING
 				debug_draw_world_reset();
-				debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+				debug_draw_world_set_color(v4(0.0f, 1.0f, 0.0f, 1.0f));
 				debug_draw_world_arrow((v2)m.move.start, (v2)m.move.end);
 				debug_pause();
 #endif
@@ -2404,7 +2404,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 #ifdef DEBUG_TRANSACTION_PROCESSING
 				debug_draw_world_reset();
-				debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 1.0f));
+				debug_draw_world_set_color(v4(1.0f, 1.0f, 0.0f, 1.0f));
 				debug_draw_world_arrow((v2)start, (v2)end);
 				debug_pause();
 #endif
@@ -2423,14 +2423,14 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 #ifdef DEBUG_TRANSACTION_PROCESSING
 					debug_draw_world_reset();
-					debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 0.0f, 1.0f));
+					debug_draw_world_set_color(v4(0.0f, 1.0f, 0.0f, 1.0f));
 					debug_draw_world_arrow((v2)start, (v2)end);
 					debug_pause();
 #endif
 				} else {
 #ifdef DEBUG_TRANSACTION_PROCESSING
 					debug_draw_world_reset();
-					debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
+					debug_draw_world_set_color(v4(1.0f, 0.0f, 0.0f, 1.0f));
 					debug_draw_world_circle((v2)start, 0.5f);
 					debug_pause();
 #endif
@@ -2541,16 +2541,16 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 					f32 ca = cosf(angle);
 					f32 sa = sinf(angle);
 
-					circle.velocity = 5.0f * V2_f32( ca,  sa);
+					circle.velocity = 5.0f * v2( ca,  sa);
 					physics.linear_circles.append(circle);
 
-					circle.velocity = 5.0f * V2_f32(-sa,  ca);
+					circle.velocity = 5.0f * v2(-sa,  ca);
 					physics.linear_circles.append(circle);
 
-					circle.velocity = 5.0f * V2_f32(-ca, -sa);
+					circle.velocity = 5.0f * v2(-ca, -sa);
 					physics.linear_circles.append(circle);
 
-					circle.velocity = 5.0f * V2_f32( sa, -ca);
+					circle.velocity = 5.0f * v2( sa, -ca);
 					physics.linear_circles.append(circle);
 				}
 
@@ -2652,7 +2652,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 						if (!dx && !dy) {
 							continue;
 						}
-						v2_i16 end = start + V2_i16(dx, dy);
+						v2_i16 end = start + v2_i16(dx, dy);
 						Pos pend = (Pos)end;
 						if (game_is_passable(game, pend, BLOCK_WALK)) {
 							poss.append((Pos)end);
@@ -2986,7 +2986,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 					if (!(dx || dy)) {
 						continue;
 					}
-					Pos end = (Pos)((v2_i16)start + V2_i16(dx, dy));
+					Pos end = (Pos)((v2_i16)start + v2_i16(dx, dy));
 					Tile t = tiles[end];
 					if (tile_is_passable(t, move_mask)) {
 						Potential_Move pm = {};
@@ -3013,7 +3013,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 					if (!dx && !dy) {
 						continue;
 					}
-					v2_i16 end = start + (V2_i16)(dx, dy);
+					v2_i16 end = start + v2_i16(dx, dy);
 					d = iplayer_pos - end;
 					Pos pend = (Pos)end;
 					Tile t = tiles[pend];
@@ -3040,7 +3040,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 						if (!(dx || dy)) {
 							continue;
 						}
-						Pos end = (Pos)((v2_i16)start + V2_i16(dx, dy));
+						Pos end = (Pos)((v2_i16)start + v2_i16(dx, dy));
 						Tile t = tiles[end];
 						if (tile_is_passable(t, move_mask)) {
 							Potential_Move pm = {};
@@ -3068,7 +3068,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 						if (!dx && !dy) {
 							continue;
 						}
-						v2_i16 end = start + (V2_i16)(dx, dy);
+						v2_i16 end = start + v2_i16(dx, dy);
 						d = iplayer_pos - end;
 						Pos pend = (Pos)end;
 						Tile t = tiles[pend];
@@ -3099,7 +3099,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 #if 0
 	debug_draw_world_reset();
-	debug_draw_world_set_color(V4_f32(1.0f, 0.0f, 0.0f, 1.0f));
+	debug_draw_world_set_color(v4(1.0f, 0.0f, 0.0f, 1.0f));
 	for (u8 y = 1; y < 255; ++y) {
 		for (u8 x = 1; x < 255; ++x) {
 			Pos p = { x, y };
@@ -3134,7 +3134,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 #ifdef DEBUG_CREATE_MOVES
 		debug_draw_world_reset();
-		debug_draw_world_set_color(V4_f32(pm.weight, 0.0f, 0.0f, 1.0f));
+		debug_draw_world_set_color(v4(pm.weight, 0.0f, 0.0f, 1.0f));
 		debug_draw_world_arrow((v2)pm.start, (v2)pm.end);
 		debug_pause();
 #endif
@@ -3163,7 +3163,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 		debug_draw_world_reset();
 		for (u32 i = 0; i < potential_moves.len; ++i) {
 			Potential_Move pm = potential_moves[i];
-			debug_draw_world_set_color(V4_f32(pm.weight, 0.0f, 0.0f, 1.0f));
+			debug_draw_world_set_color(v4(pm.weight, 0.0f, 0.0f, 1.0f));
 			debug_draw_world_arrow((v2)pm.start, (v2)pm.end);
 		}
 		debug_pause();
@@ -3195,7 +3195,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 			/*
 			debug_draw_world_reset();
-			debug_draw_world_set_color(V4_f32(1.0f, 1.0f, 0.0f, 1.0f));
+			debug_draw_world_set_color(v4(1.0f, 1.0f, 0.0f, 1.0f));
 			debug_draw_world_arrow((v2)a.fireball.start, (v2)a.fireball.end);
 			debug_pause();
 			*/
@@ -3224,7 +3224,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 #ifdef DEBUG_SHOW_ACTIONS
 	debug_draw_world_reset();
-	debug_draw_world_set_color(V4_f32(0.0f, 1.0f, 1.0f, 1.0f));
+	debug_draw_world_set_color(v4(0.0f, 1.0f, 1.0f, 1.0f));
 	for (u32 i = 0; i < actions.len; ++i) {
 		Action action = actions[i];
 		switch (action.type) {
@@ -3857,7 +3857,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			text_anim.type = ANIM_TEXT;
 			text_anim.text.start_time = event->time;
 			text_anim.text.duration = constants.anims.text_duration;
-			text_anim.text.color = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+			text_anim.text.color = v4(1.0f, 1.0f, 1.0f, 1.0f);
 			text_anim.text.caption[0] = '*';
 			text_anim.text.caption[1] = 's';
 			text_anim.text.caption[2] = 't';
@@ -3875,7 +3875,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			text_anim.type = ANIM_TEXT;
 			text_anim.text.start_time = event->time;
 			text_anim.text.duration = constants.anims.text_duration;
-			text_anim.text.color = V4_f32(1.0f, 0.0f, 0.0f, 1.0f);
+			text_anim.text.color = v4(1.0f, 0.0f, 0.0f, 1.0f);
 
 			char *buffer = fmt("-%u", event->damaged.amount);
 			u32 i = 0;
@@ -4009,7 +4009,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			a.type = ANIM_TEXT;
 			a.text.start_time = event->time + constants.anims.heal.cast_time;
 			a.text.duration = 1.0f;
-			a.text.color = V4_f32(0.0f, 1.0f, 1.0f, 1.0f);
+			a.text.color = v4(0.0f, 1.0f, 1.0f, 1.0f);
 			snprintf((char*)a.text.caption,
 			         ARRAY_SIZE(a.text.caption),
 			         "%d",
@@ -4103,7 +4103,7 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 	auto& tiles = game->tiles;
 	for (u32 y = 1; y < 255; ++y) {
 		for (u32 x = 1; x < 255; ++x) {
-			Pos p = V2_u8(x, y);
+			Pos p = Pos(x, y);
 			Tile c = tiles[p];
 			switch (c.type) {
 			case TILE_EMPTY:
@@ -4121,14 +4121,14 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			}
 			case TILE_WALL: {
 				Appearance app = c.appearance;
-				u8 tl = tiles[(Pos)((v2_i16)p + V2_i16(-1, -1))].appearance == app;
-				u8 t  = tiles[(Pos)((v2_i16)p + V2_i16( 0, -1))].appearance == app;
-				u8 tr = tiles[(Pos)((v2_i16)p + V2_i16( 1, -1))].appearance == app;
-				u8 l  = tiles[(Pos)((v2_i16)p + V2_i16(-1,  0))].appearance == app;
-				u8 r  = tiles[(Pos)((v2_i16)p + V2_i16( 1,  0))].appearance == app;
-				u8 bl = tiles[(Pos)((v2_i16)p + V2_i16(-1,  1))].appearance == app;
-				u8 b  = tiles[(Pos)((v2_i16)p + V2_i16( 0,  1))].appearance == app;
-				u8 br = tiles[(Pos)((v2_i16)p + V2_i16( 1,  1))].appearance == app;
+				u8 tl = tiles[(Pos)((v2_i16)p + v2_i16(-1, -1))].appearance == app;
+				u8 t  = tiles[(Pos)((v2_i16)p + v2_i16( 0, -1))].appearance == app;
+				u8 tr = tiles[(Pos)((v2_i16)p + v2_i16( 1, -1))].appearance == app;
+				u8 l  = tiles[(Pos)((v2_i16)p + v2_i16(-1,  0))].appearance == app;
+				u8 r  = tiles[(Pos)((v2_i16)p + v2_i16( 1,  0))].appearance == app;
+				u8 bl = tiles[(Pos)((v2_i16)p + v2_i16(-1,  1))].appearance == app;
+				u8 b  = tiles[(Pos)((v2_i16)p + v2_i16( 0,  1))].appearance == app;
+				u8 br = tiles[(Pos)((v2_i16)p + v2_i16( 1,  1))].appearance == app;
 
 				u8 connection_mask = 0;
 				if (t && !(tl && tr && l && r)) {
@@ -4152,9 +4152,9 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 				anim.depth_offset = constants.z_offsets.wall;
 				world_anim->anims.append(anim);
 
-				if (tiles[(Pos)((v2_i16)p + V2_i16( 0,  1))].type != TILE_WALL) {
+				if (tiles[(Pos)((v2_i16)p + v2_i16( 0,  1))].type != TILE_WALL) {
 					anim.sprite_coords = { 30.0f, 36.0f };
-					anim.world_coords = (v2)p + V2_f32(0.0f, 1.0f);
+					anim.world_coords = (v2)p + v2(0.0f, 1.0f);
 					anim.depth_offset = constants.z_offsets.wall_shadow;
 					world_anim->anims.append(anim);
 				}
@@ -4173,14 +4173,14 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 
 				Tile_Type t = c.type;
 				u8 mask = 0;
-				if (tiles[(Pos)((v2_i16)p + V2_i16( 0, -1))].type == t) { mask |= 0x01; }
-				if (tiles[(Pos)((v2_i16)p + V2_i16( 1, -1))].type == t) { mask |= 0x02; }
-				if (tiles[(Pos)((v2_i16)p + V2_i16( 1,  0))].type == t) { mask |= 0x04; }
-				if (tiles[(Pos)((v2_i16)p + V2_i16( 1,  1))].type == t) { mask |= 0x08; }
-				if (tiles[(Pos)((v2_i16)p + V2_i16( 0,  1))].type == t) { mask |= 0x10; }
-				if (tiles[(Pos)((v2_i16)p + V2_i16(-1,  1))].type == t) { mask |= 0x20; }
-				if (tiles[(Pos)((v2_i16)p + V2_i16(-1,  0))].type == t) { mask |= 0x40; }
-				if (tiles[(Pos)((v2_i16)p + V2_i16(-1, -1))].type == t) { mask |= 0x80; }
+				if (tiles[(Pos)((v2_i16)p + v2_i16( 0, -1))].type == t) { mask |= 0x01; }
+				if (tiles[(Pos)((v2_i16)p + v2_i16( 1, -1))].type == t) { mask |= 0x02; }
+				if (tiles[(Pos)((v2_i16)p + v2_i16( 1,  0))].type == t) { mask |= 0x04; }
+				if (tiles[(Pos)((v2_i16)p + v2_i16( 1,  1))].type == t) { mask |= 0x08; }
+				if (tiles[(Pos)((v2_i16)p + v2_i16( 0,  1))].type == t) { mask |= 0x10; }
+				if (tiles[(Pos)((v2_i16)p + v2_i16(-1,  1))].type == t) { mask |= 0x20; }
+				if (tiles[(Pos)((v2_i16)p + v2_i16(-1,  0))].type == t) { mask |= 0x40; }
+				if (tiles[(Pos)((v2_i16)p + v2_i16(-1, -1))].type == t) { mask |= 0x80; }
 
 				if (~mask & 0xFF) {
 					Anim anim = {};
@@ -4386,7 +4386,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				instance.end_time = time + constants.anims.polymorph.duration;
 				f32 sin_inner_coeff = constants.anims.polymorph.rotation_speed;
 				sin_inner_coeff /= (PI_F32 / 2.0f);
-				instance.sin_inner_coeff = V2_f32(sin_inner_coeff, sin_inner_coeff);
+				instance.sin_inner_coeff = v2(sin_inner_coeff, sin_inner_coeff);
 
 				for (u32 i = 0; i < num_particles; ++i) {
 					instance.start_color = {
@@ -4402,10 +4402,10 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 						1.0f
 					};
 					f32 angle = 2.0f * PI_F32 * rand_f32();
-					instance.sin_phase_offset = V2_f32(PI_F32 / 2.0f, 0.0f) + angle;
+					instance.sin_phase_offset = v2(PI_F32 / 2.0f, 0.0f) + angle;
 					f32 radius = uniform_f32(constants.anims.polymorph.min_radius,
 					                         constants.anims.polymorph.max_radius);
-					instance.sin_outer_coeff = V2_f32(radius, radius);
+					instance.sin_outer_coeff = v2(radius, radius);
 					particles_add(particles, instance);
 				}
 				anims.remove(i);
@@ -4430,7 +4430,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 				for (u32 i = 0; i < num_particles; ++i) {
 					f32 radius = uniform_f32(0.1f, 0.5f);
 					f32 angle = rand_f32() * PI_F32 / 2.0f;
-					v2 offset = radius * V2_f32(cosf(angle), sinf(angle));
+					v2 offset = radius * v2(cosf(angle), sinf(angle));
 					f32 time_offset = rand_f32() * 0.1f;
 					instance.start_velocity = velocity;
 					instance.start_pos = start + offset;
@@ -4635,7 +4635,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 			instance.world_pos = lerp(anim->projectile.start, anim->projectile.end, dt);
 			instance.sprite_id = 0;
 			instance.depth_offset = 2.0f;
-			instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+			instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
 			instance.sprite_pos = anim->projectile.sprite_coords;
 
 			sprite_sheet_instances_add(&draw->effects_24, instance);
@@ -4653,7 +4653,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 			instance.world_pos = lerp(anim->projectile.start, anim->projectile.end, dt);
 			instance.sprite_id = 0;
 			instance.depth_offset = 2.0f;
-			instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+			instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
 			instance.sprite_pos = anim->projectile.sprite_coords;
 
 			sprite_sheet_instances_add(&draw->effects_32, instance);
@@ -4750,7 +4750,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 	if (camera_offset_mag > 0.0f) {
 		f32 theta = uniform_f32(0.0f, 2.0f * PI_F32);
 		m2 m = m2::rotation(theta);
-		v2 v = m * V2_f32(camera_offset_mag, 0.0f);
+		v2 v = m * v2(camera_offset_mag, 0.0f);
 		world_anim->camera_offset = v;
 	}
 }
@@ -5073,7 +5073,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 
 	anim = card_anim_state->card_anims;
 	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
-		anim->color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+		anim->color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
 		switch (anim->type) {
 		case CARD_ANIM_DECK:
 			anim->pos.type = CARD_POS_DECK;
@@ -5082,7 +5082,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			anim->pos.type = CARD_POS_DISCARD;
 			break;
 		case CARD_ANIM_DRAW: {
-			v2 start_pos = V2_f32(-ratio + hand_params.border / 2.0f,
+			v2 start_pos = v2(-ratio + hand_params.border / 2.0f,
 			                      -1.0f  + hand_params.height / 2.0f);
 			f32 start_rotation = 0.0f;
 
@@ -5093,7 +5093,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			f32 a = base_angle + deltas[hand_index];
 			f32 r = hand_params.radius;
 
-			v2 end_pos = r * V2_f32(cosf(a), sinf(a)) + hand_params.center;
+			v2 end_pos = r * v2(cosf(a), sinf(a)) + hand_params.center;
 			f32 end_rotation = a - PI_F32 / 2.0f;
 
 			f32 dt = (time - anim->draw.start_time) / anim->draw.duration;
@@ -5147,13 +5147,13 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			f32 z = anim->hand_to_in_play.start.zoom;
 			f32 r2 = r + (z - 1.0f) * hand_params.card_size.h;
 
-			v2 start_pos = r2 * V2_f32(cosf(a), sinf(a));
+			v2 start_pos = r2 * v2(cosf(a), sinf(a));
 			start_pos.x += hand_params.center.x;
 			start_pos.y += hand_params.top - r;
 			f32 start_angle = a - PI_F32 / 2.0f;
 			f32 start_zoom = z;
 
-			v2 end_pos = V2_f32(ratio - hand_params.border / 2.0f,
+			v2 end_pos = v2(ratio - hand_params.border / 2.0f,
 			                    -1.0f + 3.0f * hand_params.height / 2.0f);
 			f32 end_angle = 0.0f;
 			f32 end_zoom = 1.0f;
@@ -5167,7 +5167,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 		}
 		case CARD_ANIM_IN_PLAY:
 			anim->pos.type = CARD_POS_ABSOLUTE;
-			anim->pos.absolute.pos = V2_f32(ratio - hand_params.border / 2.0f,
+			anim->pos.absolute.pos = v2(ratio - hand_params.border / 2.0f,
 			                                -1.0f + 3.0f * hand_params.height / 2.0f);
 			anim->pos.absolute.angle = 0.0f;
 			anim->pos.absolute.zoom = 1.0f;
@@ -5180,13 +5180,13 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			f32 z = anim->hand_to_discard.start.zoom;
 			f32 r2 = r + (z - 1.0f) * hand_params.card_size.h;
 
-			v2 start_pos = r2 * V2_f32(cosf(a), sinf(a));
+			v2 start_pos = r2 * v2(cosf(a), sinf(a));
 			start_pos.x += hand_params.center.x;
 			start_pos.y += hand_params.top - r;
 			f32 start_angle = a - PI_F32 / 2.0f;
 			f32 start_zoom = z;
 
-			v2 end_pos = V2_f32(ratio - hand_params.border / 2.0f,
+			v2 end_pos = v2(ratio - hand_params.border / 2.0f,
 			                    -1.0f + hand_params.height / 2.0f);
 			f32 end_angle = 0.0f;
 			f32 end_zoom = 1.0f;
@@ -5205,7 +5205,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			f32 start_angle = anim->in_play_to_discard.start.absolute.angle;
 			f32 start_zoom  = anim->in_play_to_discard.start.absolute.zoom;
 
-			v2 end_pos = V2_f32(ratio - hand_params.border / 2.0f,
+			v2 end_pos = v2(ratio - hand_params.border / 2.0f,
 			                    -1.0f + hand_params.height / 2.0f);
 			f32 end_angle = 0.0f;
 			f32 end_zoom = 1.0f;
@@ -5669,7 +5669,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		memset(deltas, 0, (u32)params->num_cards * sizeof(deltas[0]));
 	}
 
-	v4 hand_color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+	v4 hand_color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
 	switch (card_anim_state->type) {
 	case CARD_ANIM_STATE_NORMAL:
 		break;
@@ -5705,7 +5705,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 			f32 z = anim->pos.hand.zoom;
 			f32 r2 = r + (z - 1.0f) * params->card_size.h;
 
-			v2 pos = r2 * V2_f32(cosf(a), sinf(a));
+			v2 pos = r2 * v2(cosf(a), sinf(a));
 			pos.y += params->top - r;
 
 			instance.screen_rotation = anim->pos.hand.angle - PI_F32 / 2.0f;
@@ -5764,7 +5764,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		instance.zoom = 1.0f;
 		instance.card_id = deck_id;
 		instance.z_offset = 0.0f;
-		instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+		instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
 		card_render_add_instance(card_render, instance);
 	}
 
@@ -5781,7 +5781,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		instance.card_id = discard_id;
 		instance.z_offset = 0.0f;
 		instance.card_pos = card_appearance_get_sprite_coords(card.appearance);
-		instance.color_mod = V4_f32(1.0f, 1.0f, 1.0f, 1.0f);
+		instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
 		card_render_add_instance(card_render, instance);
 	}
 
@@ -6967,7 +6967,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 
 			Sprite_Sheet_Font_Instance instance = {};
-			instance.world_pos = (v2)e->pos + V2_f32(0.5f, -0.25f);
+			instance.world_pos = (v2)e->pos + v2(0.5f, -0.25f);
 			instance.world_offset = { -(f32)(width / 2), -(f32)(height / 2) };
 			instance.zoom = 1.0f;
 			instance.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -7087,7 +7087,8 @@ void process_frame_aux_thread(void* uncast_args)
 	Program* program = (Program*)uncast_args;
 	global_program = program;
 	process_frame_aux(program, program->cur_input, program->cur_screen_size);
-	ASSERT(!interlocked_compare_exchange(&program->process_frame_signal, 1, 0));
+	auto orig_value = interlocked_compare_exchange(&program->process_frame_signal, 1, 0);
+	ASSERT(!orig_value);
 }
 
 void process_frame(Program* program, Input* input, v2_u32 screen_size)
