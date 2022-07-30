@@ -8,6 +8,7 @@
 #define PI_F64 3.141592653589793238462643383279502884197169399375105820974944
 #define PI_F32 3.141592653589793238462643383279502884197169399375105820974944f
 
+// TODO -- use function overloading
 #define MAKE_MIN_MAX_FUNCTIONS(Type) \
 	static inline Type min_##Type(Type a, Type b) \
 	{ \
@@ -35,7 +36,7 @@ static inline v2 lerp(v2 start, v2 end, f32 weight)
 
 static inline f32 clamp(f32 val, f32 low, f32 high)
 {
-	return min(max(low, val), high);
+	return min_f32(max_f32(low, val), high);
 }
 
 static inline f32 dot(v2 a, v2 b)

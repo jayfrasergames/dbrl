@@ -1,6 +1,12 @@
-#ifndef DBRL_STDAFX_H
-#define DBRL_STDAFX_H
+#pragma once
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <assert.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <string.h>
 
 #include "prelude.h"
-
-#endif
+#include "format.h"

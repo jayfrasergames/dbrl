@@ -3,6 +3,7 @@
 
 #include "prelude.h"
 #include "containers.hpp"
+#include "types.h"
 
 #include "field_of_vision_render_gpu_data_types.h"
 

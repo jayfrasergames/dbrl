@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <string.h>
 
 typedef uint8_t   u8;
 typedef uint16_t  u16;
@@ -108,16 +109,6 @@ VEC_TYPES
 	};
 VEC_TYPES
 #undef VEC_TYPE
-
-// define "constructors"
-/*
-#define VEC_TYPE(type) \
-	v2_##type V2_##type(type x, type y) { v2_##type v = { x, y }; return v; } \
-	v3_##type V3_##type(type x, type y, type z) { v3_##type v = { x, y, z }; return v; } \
-	v4_##type V4_##type(type x, type y, type z, type w) { v4_##type v = { x, y, z, w }; return v; }
-VEC_TYPES
-#undef VEC_TYPE
-*/
 
 // define cast operators
 #define VEC_TYPE(type) \
@@ -272,15 +263,5 @@ SIGNED_VEC_TYPES
 typedef v2_f32 v2;
 typedef v3_f32 v3;
 typedef v4_f32 v4;
-
-inline char *fmt(char *fmtstr, ...)
-{
-	static thread_local char buffer[4096];
-	va_list args;
-	va_start(args, fmtstr);
-	vsnprintf(buffer, ARRAY_SIZE(buffer), fmtstr, args);
-	va_end(args);
-	return buffer;
-}
 
 #endif

@@ -2,6 +2,7 @@
 #define CARD_RENDER_H
 
 #include "stdafx.h"
+#include "jfg_math.h"
 
 #ifdef JFG_D3D11_H
 

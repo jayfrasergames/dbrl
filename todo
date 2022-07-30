@@ -1,12 +1,10 @@
 * tasks:
 
   * technical
-    * clean up build system
-      * cmake
-      * precompiled headers
-      * get rid of "jfg" submodule (integrate everything into one c++ project)
-
     * don't precomile HLSL files - compile/recompile them at runtime
+
+    * cleanup prelude.h/stdafx.h
+
     * deprecate use of assets.bin for non-release candidates
 
     * get stack traces from assertion failures!!!

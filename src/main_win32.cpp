@@ -18,6 +18,8 @@
 
 #include "dbrl.h"
 
+#include "draw_dx11.h"
+
 u32 win32_try_read_file(char* filename, void* dest, u32 max_size)
 {
 	HANDLE file_handle = CreateFile(filename,
@@ -229,33 +231,19 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	HWND window = args->window;
 
-	if (!d3d11_try_load()) {
+	DX11_Renderer dx11_renderer = {};	
+
+	// TODO -- should probably post a quit message along with exiting!!!
+	if (!init(&dx11_renderer)) {
 		return 0;
 	}
 
-	ID3D11Device        *device;
-	ID3D11DeviceContext *context;
-
-	D3D_FEATURE_LEVEL feature_levels[] = { D3D_FEATURE_LEVEL_11_0 };
-
-	HRESULT hr = D3D11CreateDevice(
-		NULL,
-		D3D_DRIVER_TYPE_HARDWARE,
-		NULL,
-		D3D11_CREATE_DEVICE_DEBUG,
-		feature_levels,
-		ARRAY_SIZE(feature_levels),
-		D3D11_SDK_VERSION,
-		&device,
-		NULL,
-		&context);
-
-	if (FAILED(hr)) {
-		return 0;
-	}
+	// XXX -- move all of this into the renderer eventually
+	ID3D11Device        *device  = dx11_renderer.device;
+	ID3D11DeviceContext *context = dx11_renderer.device_context;
 
 	ID3D11InfoQueue *info_queue;
-	hr = device->QueryInterface(IID_PPV_ARGS(&info_queue));
+	HRESULT hr = device->QueryInterface(IID_PPV_ARGS(&info_queue));
 
 	if (FAILED(hr)) {
 		return 0;
