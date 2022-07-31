@@ -15,6 +15,7 @@ void input_reset(Input* input)
 		button->flags = new_flags;
 		button->num_transitions = 0;
 	}
+	input->text_input.reset();
 }
 
 void input_button_down(Input* input, Input_Button button)

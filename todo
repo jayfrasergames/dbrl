@@ -1,7 +1,18 @@
 * tasks:
 
   * technical
+    * console
+      * draw console
+        * make buffers (instance, constant)
+        * load codepage437 texture
+      * make console execute lua
+      * tab completion
+      * command history
+      * output history
+      * scrolling
+
     * load PNG assets at runtime
+    * load shaders from text files at run time
 
     * cleanup prelude.h/stdafx.h
 
@@ -9,18 +20,18 @@
       * load sounds from wave files at run time
 
     * get stack traces from assertion failures!!!
-    * load shaders from text files at run time
     * asynchronous sound loading
     * deprecate runner/DLL
     * deprecate use of Python scripts in build system
     * libraries
-      * lua
-      * dxc
-      * something for threading!
+      * something for threading! (threads.h?)
+      * libogg
 
   * editor
     * animation editor
     * dungeon generator editor
+    * card editor
+    * enemy editor
 
   * physics system
     * debug/create unit tests

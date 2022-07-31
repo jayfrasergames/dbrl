@@ -51,7 +51,8 @@ struct Input_Event
 	};
 };
 
-#define INPUT_MAX_EVENTS 32
+#define INPUT_MAX_EVENTS     32
+#define INPUT_MAX_TEXT_INPUT 32
 
 struct Input
 {
@@ -61,6 +62,7 @@ struct Input
 	Input_Button_Frame_Data button_data[NUM_INPUT_BUTTONS];
 	u32         len;
 	Input_Event event[INPUT_MAX_EVENTS];
+	Max_Length_Array<u8, 32> text_input;
 
 	u32 num_presses(Input_Button button)
 	{

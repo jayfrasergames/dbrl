@@ -36,6 +36,7 @@ set(headers
 )
 
 set(object_sources
+	console.cpp
 	assets.cpp
 	card_render.cpp
 	debug_draw_world.cpp
@@ -60,6 +61,8 @@ set(program_sources
 )
 
 set(shader_dir ../assets/shaders)
+set(lua_dir ../libs/lua/src)
+set(libpng_dir ../libs/libpng ../build/libs/libpng)
 
 set(shaders
 	${shader_dir}/card_render_gpu_data_types.h
@@ -95,14 +98,18 @@ endif()
 # TODO -- list explicitly which objects exes other than DBRL depend on -- rebuilding
 # everything each time any object changes is dumb :-)
 add_executable(dbrl WIN32 main_win32.cpp ${object_sources} ${precompiled_headers} ${headers} ${shaders})
-add_executable(build_assets_file assets_file.cpp ${object_sources} ${precompiled_headers} ${headers})
-add_executable(test_draw_dx11 test_draw_dx11.cpp ${object_sources} ${precompiled_headers} ${headers})
+target_precompile_headers(dbrl PUBLIC ${precompiled_headers})
 
-foreach(executable dbrl build_assets_file test_draw_dx11)
-	target_precompile_headers(${executable} PUBLIC ${precompiled_headers})
+add_executable(build_assets_file
+               assets_file.cpp
+               assets.cpp
+               assets.h)
+
+# add_executable(test_draw_dx11 test_draw_dx11.cpp draw_dx11.cpp draw.h)
+
+foreach(executable dbrl build_assets_file)
 	set_target_properties(${executable} PROPERTIES DEBUG_POSTFIX ${CMAKE_DEBUG_POSTFIX})
-	# target_link_libraries(${executable} D3DCompiler.lib)
-	target_include_directories(${executable} PUBLIC ${shader_dir})
+	target_include_directories(${executable} PUBLIC ${shader_dir} ${lua_dir} ${libpng_dir})
 endforeach()
 
 target_link_libraries(dbrl liblua png_static)

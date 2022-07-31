@@ -210,6 +210,12 @@ void draw(DX11_Renderer* renderer, Draw* draw)
 
 	imgui_d3d11_draw(&draw->imgui, dc, renderer->output_rtv, screen_size);
 
+	// draw console
+	{
+		auto *console = &draw->console;
+
+	}
+
 	dc->VSSetShader(renderer->vs[DX11_VS_PASS_THROUGH], NULL, 0);
 	dc->PSSetShader(renderer->ps[DX11_PS_PASS_THROUGH], NULL, 0);
 	dc->OMSetRenderTargets(1, &renderer->back_buffer_rtv, NULL);

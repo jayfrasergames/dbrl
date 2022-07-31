@@ -19,6 +19,7 @@
 #include "card_render.h"
 #include "particles.h"
 #include "physics.h"
+#include "console.h"
 
 #include <stdio.h>  // XXX - for snprintf
 
@@ -5852,6 +5853,8 @@ struct Card_Param
 
 struct Program
 {
+	lua_State *lua_state;
+
 	Platform_Functions platform_functions;
 
 	Program_State       state;
@@ -6142,6 +6145,9 @@ void program_init(Program* program, Draw* draw, Platform_Functions platform_func
 
 	program->draw = draw;
 
+	program->lua_state = luaL_newstate();
+	init(&program->draw->console, program->lua_state);
+
 	set_global_state(program);
 	program->state = PROGRAM_STATE_NO_PAUSE;
 	program->random_state.seed(0);
@@ -6221,6 +6227,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	program->screen_size = (v2)screen_size;
 	++program->frame_number;
 	program->sound.reset();
+
+	// XXX -- put this somewhere sensible
+	handle_input(&program->draw->console, input);
 
 	// process input
 	switch (program->program_input_state_stack.peek()) {

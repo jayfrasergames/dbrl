@@ -141,6 +141,14 @@ void input_back_buffer_button_up(Input_Button button)
 	ASSERT(input_buffer_pointer_lock_orig_value);
 }
 
+void input_text_input(char c)
+{
+	while (InterlockedCompareExchange(&input_buffer_pointer_lock, 1, 0)) ;
+	input_back_buffer->text_input.append(c);
+	auto input_buffer_pointer_lock_orig_value = InterlockedCompareExchange(&input_buffer_pointer_lock, 0, 1);
+	ASSERT(input_buffer_pointer_lock_orig_value);
+}
+
 void get_screen_size(HWND window, v2_u32* screen_size)
 {
 	RECT rect;
@@ -206,6 +214,15 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 		case VK_F5: input_back_buffer_button_up(INPUT_BUTTON_F5); break;
 		}
 		return 0;
+	case WM_CHAR: {
+		if (wparam > 0xFF) {
+			break;
+		}
+		char c = (char)wparam;
+		input_text_input(c);
+		return 0;
+	}
+
 	}
 	return DefWindowProc(window, msg, wparam, lparam);
 }
