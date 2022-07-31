@@ -6,10 +6,10 @@
     * cleanup prelude.h/stdafx.h
 
     * deprecate use of assets.bin for non-release candidates
+      * load sounds from wave files at run time
 
     * get stack traces from assertion failures!!!
     * load shaders from text files at run time
-    * load sounds from wave files at run time
     * asynchronous sound loading
     * deprecate runner/DLL
     * deprecate use of Python scripts in build system
@@ -18,7 +18,9 @@
       * dxc
       * something for threading!
 
-    * load image assets from PNGs (does this matter?)
+  * editor
+    * animation editor
+    * dungeon generator editor
 
   * physics system
     * debug/create unit tests

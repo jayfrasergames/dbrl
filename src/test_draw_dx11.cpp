@@ -17,13 +17,13 @@ int main(int argc, char **argv)
 	printf("%s\n", base_path_buffer);
 
 	DX11_Renderer dx11_renderer = {};
-	Render_Data *render_data = (Render_Data*)&dx11_renderer;
+	// Render_Data *render_data = (Render_Data*)&dx11_renderer;
 
 	// XXX -- get around asserts
 	dx11_renderer.device = (ID3D11Device*)1;
 	dx11_renderer.device_context = (ID3D11DeviceContext*)1;
 
-	init(&dx11_renderer);
+	// init(&dx11_renderer);
 	// const Render_Functions *render_functions = &dx11_render_functions;
 	// render_functions->reload_shaders(render_data);
 

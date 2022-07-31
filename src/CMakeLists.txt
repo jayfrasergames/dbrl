@@ -104,3 +104,5 @@ foreach(executable dbrl build_assets_file test_draw_dx11)
 	# target_link_libraries(${executable} D3DCompiler.lib)
 	target_include_directories(${executable} PUBLIC ${shader_dir})
 endforeach()
+
+target_link_libraries(dbrl liblua png_static)
