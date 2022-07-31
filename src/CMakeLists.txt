@@ -38,11 +38,19 @@ set(headers
 set(object_sources
 	assets.cpp
 	card_render.cpp
+	debug_draw_world.cpp
+	debug_line_draw.cpp
 	sprite_sheet.cpp
+	field_of_vision_render.cpp
+	input.cpp
+	imgui.cpp
 	dbrl.cpp
 	format.cpp
+	particles.cpp
+	pixel_art_upsampler.cpp
 	draw_dx11.cpp
 	jfg_d3d11.cpp
+	random.cpp
 )
 
 set(program_sources
@@ -84,6 +92,8 @@ if(MSVC)
 	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 endif()
 
+# TODO -- list explicitly which objects exes other than DBRL depend on -- rebuilding
+# everything each time any object changes is dumb :-)
 add_executable(dbrl WIN32 main_win32.cpp ${object_sources} ${precompiled_headers} ${headers} ${shaders})
 add_executable(build_assets_file assets_file.cpp ${object_sources} ${precompiled_headers} ${headers})
 add_executable(test_draw_dx11 test_draw_dx11.cpp ${object_sources} ${precompiled_headers} ${headers})

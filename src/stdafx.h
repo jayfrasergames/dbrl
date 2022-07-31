@@ -16,3 +16,4 @@
 
 #include "prelude.h"
 #include "format.h"
+#include "jfg_math.h"

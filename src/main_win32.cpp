@@ -225,110 +225,21 @@ struct Game_Loop_Args
 	HWND window;
 };
 
+Draw draw_data = {};
+
 DWORD __stdcall game_loop(void *uncast_args)
 {
 	Game_Loop_Args *args = (Game_Loop_Args*)uncast_args;
 
 	HWND window = args->window;
 
-	DX11_Renderer dx11_renderer = {};	
-
-	// TODO -- should probably post a quit message along with exiting!!!
-	if (!init(&dx11_renderer)) {
-		return 0;
-	}
-
-	// XXX -- move all of this into the renderer eventually
-	ID3D11Device        *device  = dx11_renderer.device;
-	ID3D11DeviceContext *context = dx11_renderer.device_context;
-
-	ID3D11InfoQueue *info_queue;
-	HRESULT hr = device->QueryInterface(IID_PPV_ARGS(&info_queue));
-
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	info_queue->SetMuteDebugOutput(FALSE);
-
-	IDXGIDevice *dxgi_device;
-	hr = device->QueryInterface(IID_PPV_ARGS(&dxgi_device));
-
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	IDXGIAdapter *dxgi_adapter;
-	hr = dxgi_device->GetAdapter(&dxgi_adapter);
-
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	IDXGIFactory *dxgi_factory;
-	hr = dxgi_adapter->GetParent(IID_PPV_ARGS(&dxgi_factory));
-
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	DXGI_SWAP_CHAIN_DESC swap_chain_desc = {};
-	swap_chain_desc.BufferDesc.Width = 0;
-	swap_chain_desc.BufferDesc.Height = 0;
-	swap_chain_desc.BufferDesc.RefreshRate.Numerator = 60;
-	swap_chain_desc.BufferDesc.RefreshRate.Denominator = 1;
-	swap_chain_desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	swap_chain_desc.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
-	swap_chain_desc.BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
-	swap_chain_desc.SampleDesc.Count = 1;
-	swap_chain_desc.SampleDesc.Quality = 0;
-	swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	swap_chain_desc.BufferCount = 2;
-	swap_chain_desc.OutputWindow = window;
-	swap_chain_desc.Windowed = TRUE;
-	swap_chain_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-	swap_chain_desc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-
-	IDXGISwapChain *swap_chain;
-	hr = dxgi_factory->CreateSwapChain(device, &swap_chain_desc, &swap_chain);
-
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	ID3D11Texture2D *back_buffer;
-	hr = swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	D3D11_TEXTURE2D_DESC back_buffer_desc = {};
-	back_buffer->GetDesc(&back_buffer_desc);
-
-	D3D11_RENDER_TARGET_VIEW_DESC back_buffer_rtv_desc = {};
-	back_buffer_rtv_desc.Format = back_buffer_desc.Format;
-	back_buffer_rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-	back_buffer_rtv_desc.Texture2D.MipSlice = 0;
-
-	ID3D11RenderTargetView *back_buffer_rtv;
-	hr = device->CreateRenderTargetView(back_buffer, &back_buffer_rtv_desc, &back_buffer_rtv);
-	if (FAILED(hr)) {
-		return 0;
-	}
-
-	D3D11_VIEWPORT viewport = {};
-	viewport.TopLeftX = 0.0f;
-	viewport.TopLeftY = 0.0f;
-	viewport.Width = (f32)back_buffer_desc.Width;
-	viewport.Height = (f32)back_buffer_desc.Height;
-	viewport.MinDepth = 0.0f;
-	viewport.MaxDepth = 1.0f;
-
 	IMGUI_Context imgui;
+	/*
 	if (!imgui_d3d11_init(&imgui, device)) {
 		show_debug_messages(window, info_queue);
 		return 0;
 	}
+	*/
 
 	Memory_Spec program_size = get_program_size();
 	Program* program = (Program*)malloc(program_size.size);
@@ -343,10 +254,15 @@ DWORD __stdcall game_loop(void *uncast_args)
 	platform_functions.start_thread = win32_start_thread;
 	platform_functions.sleep = win32_sleep;
 	platform_functions.try_read_file = win32_try_read_file;
-	program_init(program, platform_functions);
-	u8 d3d11_init_success = program_d3d11_init(program, device, screen_size);
+	program_init(program, &draw_data, platform_functions);
+	// u8 d3d11_init_success = program_d3d11_init(program, device, screen_size);
 
-	v2_u32 back_buffer_size;
+	DX11_Renderer dx11_renderer = {};	
+	// TODO -- should probably post a quit message along with exiting!!!
+	if (!init(&dx11_renderer, &draw_data, window)) {
+		return 0;
+	}
+
 	v2_u32 mouse_pos = { 0, 0 }, prev_mouse_pos = { 0, 0 };
 
 	Log d3d11_log = {};
@@ -357,7 +273,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	// TODO -- enumerate devices/give a choice of sound devices
 	IDirectSound *dsound = NULL;
-	hr = DirectSoundCreate(NULL, &dsound, NULL);
+	HRESULT hr = DirectSoundCreate(NULL, &dsound, NULL);
 	if (FAILED(hr)) {
 		return 0;
 	}
@@ -399,42 +315,11 @@ DWORD __stdcall game_loop(void *uncast_args)
 	u8 draw_debug_info = 0;
 	for (u32 frame_number = 0; running; ++frame_number) {
 
-#ifdef DEBUG
-		if (was_library_written()) {
-			if (game_library != NULL) {
-				program_d3d11_free(program);
-				BOOL library_freed = FreeLibrary(game_library);
-				ASSERT(library_freed);
-				// MessageBoxA(window, "Need to unload game library.", "DBRL", MB_OK);
-			}
-			u8 loaded_library_functions = load_game_functions();
-			ASSERT(loaded_library_functions);
-			if (game_library != NULL) {
-				d3d11_init_success = program_d3d11_init(program, device, screen_size);
-			} else {
-				d3d11_init_success = 0;
-			}
-			// MessageBoxA(window, "Here.", "DBRL", MB_OK);
-		}
-#endif
-
 		get_screen_size(window, &screen_size);
-
-		if (screen_size.w != prev_screen_size.w || screen_size.h != prev_screen_size.h) {
-			back_buffer_rtv->Release();
-			back_buffer->Release();
-			hr = swap_chain->ResizeBuffers(2, screen_size.w, screen_size.h,
-				DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
-			ASSERT(SUCCEEDED(hr));
-			hr = swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
-			ASSERT(SUCCEEDED(hr));
-			back_buffer->GetDesc(&back_buffer_desc);
-			back_buffer_rtv_desc.Format = back_buffer_desc.Format;
-			hr = device->CreateRenderTargetView(back_buffer, &back_buffer_rtv_desc,
-				&back_buffer_rtv);
+		if (screen_size != prev_screen_size) {
+			auto succeeded = set_screen_size(&dx11_renderer, screen_size);
+			ASSERT(succeeded);
 			prev_screen_size = screen_size;
-			back_buffer_size.w = back_buffer_desc.Width;
-			back_buffer_size.h = back_buffer_desc.Height;
 		}
 
 		swap_input_buffers();
@@ -454,19 +339,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 			mouse_pos = prev_mouse_pos;
 		}
 		input_front_buffer->mouse_pos = mouse_pos;
-		input_front_buffer->mouse_delta = {
-			(i32)mouse_pos.x - (i32)prev_mouse_pos.x,
-			(i32)mouse_pos.y - (i32)prev_mouse_pos.y
-		};
+		input_front_buffer->mouse_delta = (v2_i32)mouse_pos - (v2_i32)prev_mouse_pos;
 		prev_mouse_pos = mouse_pos;
 
-#ifdef DEBUG
-		if (game_library != NULL) {
-			process_frame(program, input_front_buffer, screen_size);
-		}
-#else
 		process_frame(program, input_front_buffer, screen_size);
-#endif
 
 		imgui_begin(&imgui, input_front_buffer, screen_size);
 		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
@@ -477,21 +353,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 			screen_size.w, screen_size.h);
 		imgui_text(&imgui, buffer);
 
-		viewport.Width = (f32)screen_size.w;
-		viewport.Height = (f32)screen_size.h;
-		context->RSSetViewports(1, &viewport);
-		f32 clear_color[4] = { 0.1f, 0.1f, 0.3f, 1.0f };
-		context->ClearRenderTargetView(back_buffer_rtv, clear_color);
-
-		if (d3d11_init_success) {
-			if (!program_d3d11_set_screen_size(program, device, screen_size)) {
-				imgui_text(&imgui, "Failed to set screen size.");
-			}
-			render_d3d11(program, context, back_buffer_rtv);
-		}
 		program_dsound_play(program);
 
 		// render any d3d11 messages we may have
+		/*
 		u64 num_messages = info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
 		if (num_messages) {
 			draw_debug_info = 1;
@@ -533,8 +398,8 @@ DWORD __stdcall game_loop(void *uncast_args)
 		if (draw_debug_info) {
 			imgui_d3d11_draw(&imgui, context, back_buffer_rtv, screen_size);
 		}
-
-		swap_chain->Present(1, 0);
+		*/
+		draw(&dx11_renderer, &draw_data);
 	}
 	return 1;
 }

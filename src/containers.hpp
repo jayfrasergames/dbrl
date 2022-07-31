@@ -12,6 +12,7 @@ struct Slice
 	operator bool() { return len; }
 	T& operator[](u32 idx) { ASSERT(idx < len); return base[idx]; }
 
+	Slice() = default;
 	Slice(T* base, u32 len) : base(base), len(len) { }
 };
 

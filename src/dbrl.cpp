@@ -17,7 +17,6 @@
 #include "sound.h"
 #include "sprite_sheet.h"
 #include "card_render.h"
-#include "pixel_art_upsampler.h"
 #include "particles.h"
 #include "physics.h"
 
@@ -5873,32 +5872,18 @@ struct Program
 	Action                             action_being_built;
 
 	World_Anim_State                   world_anim;
-	Draw                               draw;
+	Draw                              *draw;
 	Sound_Player                       sound;
 
 	u32           frame_number;
 	v2            screen_size;
 	v2_u32        max_screen_size;
-	IMGUI_Context imgui;
 
 	MT19937 random_state;
 
 	u32 prev_card_id;
 
 	Card_Anim_State card_anim_state;
-
-	Debug_Draw_World debug_draw_world;
-	Pixel_Art_Upsampler    pixel_art_upsampler;
-	union {
-		struct {
-			ID3D11Texture2D*           output_texture;
-			ID3D11UnorderedAccessView* output_uav;
-			ID3D11RenderTargetView*    output_rtv;
-			ID3D11ShaderResourceView*  output_srv;
-			ID3D11VertexShader*        output_vs;
-			ID3D11PixelShader*         output_ps;
-		} d3d11;
-	};
 
 	Assets_Header assets_header;
 	u8 assets_data[ASSETS_DATA_MAX_SIZE];
@@ -5919,7 +5904,7 @@ void set_global_state(Program* program)
 	debug_pause_log = &program->debug_pause_log;
 
 	program->random_state.set_current();
-	program->debug_draw_world.set_current();
+	program->draw->debug_draw_world.set_current();
 
 #define PLATFORM_FUNCTION(_return_type, name, ...) name = program->platform_functions.name;
 	PLATFORM_FUNCTIONS
@@ -5963,9 +5948,9 @@ void build_level_default(Program* program)
 		"#.............#..........................#\n"
 		"##########################################\n");
 
-	program->draw.camera.zoom = 14.0f;
+	program->draw->camera.zoom = 14.0f;
 	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw.camera.world_center = (v2)player_pos;
+	program->draw->camera.world_center = (v2)player_pos;
 
 	memset(&program->world_anim, 0, sizeof(program->world_anim));
 	world_anim_init(&program->world_anim, &program->game);
@@ -5982,9 +5967,9 @@ void build_level_anim_test(Program* program)
 		"#....@....#\n"
 		"###########\n");
 
-	program->draw.camera.zoom = 14.0f;
+	program->draw->camera.zoom = 14.0f;
 	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw.camera.world_center = (v2)player_pos;
+	program->draw->camera.world_center = (v2)player_pos;
 
 	memset(&program->world_anim, 0, sizeof(program->world_anim));
 	world_anim_init(&program->world_anim, &program->game);
@@ -6016,9 +6001,9 @@ void build_level_slime_test(Program* program)
 		"#............................#\n"
 		"##############################\n");
 
-	program->draw.camera.zoom = 14.0f;
+	program->draw->camera.zoom = 14.0f;
 	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw.camera.world_center = (v2)player_pos;
+	program->draw->camera.world_center = (v2)player_pos;
 
 	memset(&program->world_anim, 0, sizeof(program->world_anim));
 	world_anim_init(&program->world_anim, &program->game);
@@ -6050,9 +6035,9 @@ void build_level_lich(Program *program)
 		"#............................#\n"
 		"##############################\n");
 
-	program->draw.camera.zoom = 14.0f;
+	program->draw->camera.zoom = 14.0f;
 	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw.camera.world_center = (v2)player_pos;
+	program->draw->camera.world_center = (v2)player_pos;
 
 	memset(&program->world_anim, 0, sizeof(program->world_anim));
 	world_anim_init(&program->world_anim, &program->game);
@@ -6084,9 +6069,9 @@ void build_field_of_vision_test(Program *program)
 		"#............................#\n"
 		"##############################\n");
 
-	program->draw.camera.zoom = 14.0f;
+	program->draw->camera.zoom = 14.0f;
 	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw.camera.world_center = (v2)player_pos;
+	program->draw->camera.world_center = (v2)player_pos;
 
 	memset(&program->world_anim, 0, sizeof(program->world_anim));
 	world_anim_init(&program->world_anim, &program->game);
@@ -6147,7 +6132,7 @@ void load_assets(void* uncast_program)
 	sound_player_load_sounds(&program->sound, &program->assets_header);
 }
 
-void program_init(Program* program, Platform_Functions platform_functions)
+void program_init(Program* program, Draw* draw, Platform_Functions platform_functions)
 {
 	memset(program, 0, sizeof(*program));
 
@@ -6155,23 +6140,25 @@ void program_init(Program* program, Platform_Functions platform_functions)
 	PLATFORM_FUNCTIONS
 #undef PLATFORM_FUNCTION
 
+	program->draw = draw;
+
 	set_global_state(program);
 	program->state = PROGRAM_STATE_NO_PAUSE;
 	program->random_state.seed(0);
 
-	sprite_sheet_renderer_init(&program->draw.renderer,
-	                           &program->draw.tiles, 4,
+	sprite_sheet_renderer_init(&program->draw->renderer,
+	                           &program->draw->tiles, 4,
 	                           { 1600, 900 });
-	fov_render_init(&program->draw.fov_render, { 256, 256 });
+	fov_render_init(&program->draw->fov_render, { 256, 256 });
 
 
-	program->draw.tiles.data         = SPRITE_SHEET_TILES;
-	program->draw.creatures.data     = SPRITE_SHEET_CREATURES;
-	program->draw.water_edges.data   = SPRITE_SHEET_WATER_EDGES;
-	program->draw.effects_24.data    = SPRITE_SHEET_EFFECTS_24;
-	program->draw.effects_32.data    = SPRITE_SHEET_EFFECTS_32;
-	program->draw.boxy_bold.tex_size = boxy_bold_texture_size;
-	program->draw.boxy_bold.tex_data = boxy_bold_pixel_data;
+	program->draw->tiles.data         = SPRITE_SHEET_TILES;
+	program->draw->creatures.data     = SPRITE_SHEET_CREATURES;
+	program->draw->water_edges.data   = SPRITE_SHEET_WATER_EDGES;
+	program->draw->effects_24.data    = SPRITE_SHEET_EFFECTS_24;
+	program->draw->effects_32.data    = SPRITE_SHEET_EFFECTS_32;
+	program->draw->boxy_bold.tex_size = boxy_bold_texture_size;
+	program->draw->boxy_bold.tex_data = boxy_bold_pixel_data;
 
 	build_level_default(program);
 	build_deck_random_n(program, 100);
@@ -6202,187 +6189,7 @@ void program_dsound_play(Program* program)
 	sound_player_dsound_play(&program->sound);
 }
 
-u8 program_d3d11_init(Program* program, ID3D11Device* device, v2_u32 screen_size)
-{
-	HRESULT hr;
-	ID3D11Texture2D *output_texture;
-	{
-		D3D11_TEXTURE2D_DESC desc = {};
-		desc.Width              = screen_size.w;
-		desc.Height             = screen_size.h;
-		desc.MipLevels          = 1;
-		desc.ArraySize          = 1;
-		desc.Format             = DXGI_FORMAT_R8G8B8A8_UNORM;
-		desc.SampleDesc.Count   = 1;
-		desc.SampleDesc.Quality = 0;
-		desc.Usage              = D3D11_USAGE_DEFAULT;
-		desc.BindFlags          = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS
-		                                                     | D3D11_BIND_RENDER_TARGET;
-		desc.CPUAccessFlags     = 0;
-		desc.MiscFlags          = 0;
-
-		hr = device->CreateTexture2D(&desc, NULL, &output_texture);
-	}
-	if (FAILED(hr)) {
-		goto error_init_output_texture;
-	}
-
-	ID3D11UnorderedAccessView *output_uav;
-	hr = device->CreateUnorderedAccessView(output_texture, NULL, &output_uav);
-	if (FAILED(hr)) {
-		goto error_init_output_uav;
-	}
-
-	ID3D11RenderTargetView *output_rtv;
-	hr = device->CreateRenderTargetView(output_texture, NULL, &output_rtv);
-	if (FAILED(hr)) {
-		goto error_init_output_rtv;
-	}
-
-	ID3D11ShaderResourceView *output_srv;
-	hr = device->CreateShaderResourceView(output_texture, NULL, &output_srv);
-	if (FAILED(hr)) {
-		goto error_init_output_srv;
-	}
-
-	ID3D11VertexShader *output_vs;
-	hr = device->CreateVertexShader(PASS_THROUGH_VS, ARRAY_SIZE(PASS_THROUGH_VS), 0, &output_vs);
-	if (FAILED(hr)) {
-		goto error_init_output_vs;
-	}
-
-	ID3D11PixelShader *output_ps;
-	hr = device->CreatePixelShader(PASS_THROUGH_PS, ARRAY_SIZE(PASS_THROUGH_PS), 0, &output_ps);
-	if (FAILED(hr)) {
-		goto error_init_output_ps;
-	}
-
-	if (!sprite_sheet_renderer_d3d11_init(&program->draw.renderer, device)) {
-		goto error_init_sprite_sheet_renderer;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&program->draw.tiles, device)) {
-		goto error_init_sprite_sheet_tiles;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&program->draw.creatures, device)) {
-		goto error_init_sprite_sheet_creatures;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&program->draw.water_edges, device)) {
-		goto error_init_sprite_sheet_water_edges;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&program->draw.effects_24, device)) {
-		goto error_init_sprite_sheet_effects_24;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&program->draw.effects_32, device)) {
-		goto error_init_sprite_sheet_effects_32;
-	}
-
-	if (!sprite_sheet_font_instances_d3d11_init(&program->draw.boxy_bold, device)) {
-		goto error_init_sprite_sheet_font_boxy_bold;
-	}
-
-	if (!pixel_art_upsampler_d3d11_init(&program->pixel_art_upsampler, device)) {
-		goto error_init_pixel_art_upsampler;
-	}
-
-	if (!imgui_d3d11_init(&program->imgui, device)) {
-		goto error_init_imgui;
-	}
-
-	if (!card_render_d3d11_init(&program->draw.card_render, device)) {
-		goto error_init_card_render;
-	}
-
-	if (!debug_line_d3d11_init(&program->draw.card_debug_line, device)) {
-		goto error_init_debug_line;
-	}
-
-	if (!debug_draw_world_d3d11_init(&program->debug_draw_world, device)) {
-		goto error_init_debug_draw_world;
-	}
-
-	if (!fov_render_d3d11_init(&program->draw.fov_render, device)) {
-		goto error_init_fov_render;
-	}
-
-	program->max_screen_size      = screen_size;
-	program->d3d11.output_texture = output_texture;
-	program->d3d11.output_uav     = output_uav;
-	program->d3d11.output_rtv     = output_rtv;
-	program->d3d11.output_srv     = output_srv;
-	program->d3d11.output_vs      = output_vs;
-	program->d3d11.output_ps      = output_ps;
-
-	return 1;
-
-	fov_render_d3d11_free(&program->draw.fov_render);
-error_init_fov_render:
-	debug_draw_world_d3d11_free(&program->debug_draw_world);
-error_init_debug_draw_world:
-	debug_line_d3d11_free(&program->draw.card_debug_line);
-error_init_debug_line:
-	card_render_d3d11_free(&program->draw.card_render);
-error_init_card_render:
-	imgui_d3d11_free(&program->imgui);
-error_init_imgui:
-	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
-error_init_pixel_art_upsampler:
-	sprite_sheet_font_instances_d3d11_free(&program->draw.boxy_bold);
-error_init_sprite_sheet_font_boxy_bold:
-	sprite_sheet_instances_d3d11_free(&program->draw.effects_32);
-error_init_sprite_sheet_effects_32:
-	sprite_sheet_instances_d3d11_free(&program->draw.effects_24);
-error_init_sprite_sheet_effects_24:
-	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
-error_init_sprite_sheet_water_edges:
-	sprite_sheet_instances_d3d11_free(&program->draw.creatures);
-error_init_sprite_sheet_creatures:
-	sprite_sheet_instances_d3d11_free(&program->draw.tiles);
-error_init_sprite_sheet_tiles:
-	sprite_sheet_renderer_d3d11_free(&program->draw.renderer);
-error_init_sprite_sheet_renderer:
-	output_ps->Release();
-error_init_output_ps:
-	output_vs->Release();
-error_init_output_vs:
-	output_srv->Release();
-error_init_output_srv:
-	output_rtv->Release();
-error_init_output_rtv:
-	output_uav->Release();
-error_init_output_uav:
-	output_texture->Release();
-error_init_output_texture:
-	return 0;
-}
-
-void program_d3d11_free(Program* program)
-{
-	fov_render_d3d11_free(&program->draw.fov_render);
-	debug_draw_world_d3d11_free(&program->debug_draw_world);
-	debug_line_d3d11_free(&program->draw.card_debug_line);
-	card_render_d3d11_free(&program->draw.card_render);
-	imgui_d3d11_free(&program->imgui);
-	pixel_art_upsampler_d3d11_free(&program->pixel_art_upsampler);
-	sprite_sheet_font_instances_d3d11_free(&program->draw.boxy_bold);
-	sprite_sheet_instances_d3d11_free(&program->draw.effects_24);
-	sprite_sheet_instances_d3d11_free(&program->draw.effects_32);
-	sprite_sheet_instances_d3d11_free(&program->draw.water_edges);
-	sprite_sheet_instances_d3d11_free(&program->draw.creatures);
-	sprite_sheet_instances_d3d11_free(&program->draw.tiles);
-	sprite_sheet_renderer_d3d11_free(&program->draw.renderer);
-	program->d3d11.output_ps->Release();
-	program->d3d11.output_vs->Release();
-	program->d3d11.output_srv->Release();
-	program->d3d11.output_rtv->Release();
-	program->d3d11.output_uav->Release();
-	program->d3d11.output_texture->Release();
-}
-
+/*
 u8 program_d3d11_set_screen_size(Program* program, ID3D11Device* device, v2_u32 screen_size)
 {
 	v2_u32 prev_max_screen_size = program->max_screen_size;
@@ -6455,6 +6262,7 @@ error_init_output_uav:
 error_init_output_texture:
 	return 0;
 }
+*/
 
 static v2 screen_pos_to_world_pos(Camera* camera, v2_u32 screen_size, v2_u32 screen_pos)
 {
@@ -6483,7 +6291,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	set_global_state(program);
 	log_reset(debug_log);
 
-	program->debug_draw_world.reset();
+	program->draw->debug_draw_world.reset();
 
 	program->screen_size = (v2)screen_size;
 	++program->frame_number;
@@ -6501,34 +6309,34 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		break;
 	case GIS_DRAGGING_MAP:
 		if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags & INPUT_BUTTON_FLAG_HELD_DOWN) {
-			f32 raw_zoom = (f32)screen_size.y / program->draw.camera.zoom;
-			program->draw.camera.world_center -= (v2)input->mouse_delta / raw_zoom;
+			f32 raw_zoom = (f32)screen_size.y / program->draw->camera.zoom;
+			program->draw->camera.world_center -= (v2)input->mouse_delta / raw_zoom;
 		} else if (!(input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags
 		             & INPUT_BUTTON_FLAG_ENDED_DOWN)) {
 			program->program_input_state_stack.pop();
 		}
 		break;
 	}
-	program->draw.camera.zoom -= (f32)input->mouse_wheel_delta * 0.25f;
+	program->draw->camera.zoom -= (f32)input->mouse_wheel_delta * 0.25f;
 
 	if (input_get_num_up_transitions(input, INPUT_BUTTON_F1) % 2) {
 		program->display_debug_ui = !program->display_debug_ui;
 	}
 
 	f32 time = (f32)program->frame_number / 60.0f;
-	program->draw.renderer.time = time;
-	world_anim_draw(&program->world_anim, &program->draw, &program->sound, time);
-	program->draw.camera.offset = program->world_anim.camera_offset;
+	program->draw->renderer.time = time;
+	world_anim_draw(&program->world_anim, program->draw, &program->sound, time);
+	program->draw->camera.offset = program->world_anim.camera_offset;
 
 	if (program->program_input_state_stack.peek() == GIS_ANIMATING
 	 && !world_anim_is_animating(&program->world_anim)) {
 		program->program_input_state_stack.pop();
 	}
 
-	v2_i32 world_mouse_pos = (v2_i32)screen_pos_to_world_pos(&program->draw.camera,
+	v2_i32 world_mouse_pos = (v2_i32)screen_pos_to_world_pos(&program->draw->camera,
 	                                                         screen_size,
 	                                                         input->mouse_pos);
-	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw.renderer,
+	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&program->draw->renderer,
 	                                                (v2_u32)world_mouse_pos);
 
 	// XXX - check player can see sprite
@@ -6552,13 +6360,13 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	// XXX - ugh
 	program->card_anim_state.hand_params.card_size = { 0.5f*0.4f*48.0f/80.0f, 0.5f*0.4f*1.0f };
 
-	debug_line_reset(&program->draw.card_debug_line);
+	debug_line_reset(&program->draw->card_debug_line);
 	// card_anim_update_anims
 	u8 allow_highlight_card = program->program_input_state_stack.peek() == GIS_NONE;
 	allow_highlight_card |= program->program_input_state_stack.peek() == GIS_PLAYING_CARDS;
 	Card_UI_Event card_event = card_anim_draw(&program->card_anim_state,
 	                                          &program->game.card_state,
-	                                          &program->draw.card_render,
+	                                          &program->draw->card_render,
 	                                          &program->sound,
 	                                          screen_size,
 	                                          time,
@@ -6569,17 +6377,19 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	v2 card_mouse_pos = (v2)input->mouse_pos / (v2)screen_size;
 	card_mouse_pos.x = (card_mouse_pos.x * 2.0f - 1.0f) * ((f32)screen_size.x / (f32)screen_size.y);
 	card_mouse_pos.y = 1.0f - 2.0f * card_mouse_pos.y;
-	u32 selected_card_id = card_render_get_card_id_from_mouse_pos(&program->draw.card_render,
+	u32 selected_card_id = card_render_get_card_id_from_mouse_pos(&program->draw->card_render,
 	                                                              card_mouse_pos);
 	program->prev_card_id = selected_card_id;
 	{
 		f32 ratio = (f32)screen_size.x / (f32) screen_size.y;
-		program->draw.card_debug_line.constants.top_left     = { -ratio,  1.0f };
-		program->draw.card_debug_line.constants.bottom_right = {  ratio, -1.0f };
+		program->draw->card_debug_line.constants.top_left     = { -ratio,  1.0f };
+		program->draw->card_debug_line.constants.bottom_right = {  ratio, -1.0f };
 	}
-	card_render_draw_debug_lines(&program->draw.card_render,
-	                             &program->draw.card_debug_line,
+	/*
+	card_render_draw_debug_lines(&program->draw->card_render,
+	                             &program->draw->card_debug_line,
 	                             selected_card_id);
+	*/
 
 	if (selected_card_id) {
 		sprite_id = 0;
@@ -6587,7 +6397,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	switch (program->program_input_state_stack.peek()) {
 	case GIS_ANIMATING:
-		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, 0);
+		sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, 0);
 		break;
 	case GIS_PLAYING_CARDS: {
 		Action player_action = {};
@@ -6757,7 +6567,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 		card_anim_update_anims(&program->card_anim_state, card_state->events, time);
 
-		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
+		sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
 
 		break;
 	}
@@ -6833,14 +6643,14 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
 
-		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
+		sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
 		break;
 	}
 	case GIS_CARD_PARAMS: {
 		Card_Param *param = program->card_params_stack.peek_ptr();
 		switch (param->type) {
 		case CARD_PARAM_TARGET:
-			sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
+			sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
 			if (input_get_num_up_transitions(input, INPUT_BUTTON_MOUSE_LEFT)) {
 				Pos target;
 				if (sprite_id < MAX_ENTITIES) {
@@ -6857,10 +6667,10 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		case CARD_PARAM_CREATURE: {
 			Entity *e = game_get_entity_by_id(&program->game, sprite_id);
 			if (!e) {
-				sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, 0);
+				sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, 0);
 				break;
 			}
-			sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
+			sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
 			if (input_get_num_up_transitions(input, INPUT_BUTTON_MOUSE_LEFT)) {
 				*param->creature.id = e->id;
 				program->card_params_stack.pop();
@@ -6868,7 +6678,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			break;
 		}
 		case CARD_PARAM_AVAILABLE_TILE: {
-			sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, 0);
+			sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, 0);
 			Pos target;
 			if (sprite_id < MAX_ENTITIES) {
 				Entity *e = game_get_entity_by_id(&program->game, sprite_id);
@@ -6885,7 +6695,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			if (!game_is_passable(&program->game, target, mover_e->movement_type)) {
 				break;
 			}
-			sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, sprite_id);
+			sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
 			if (input_get_num_up_transitions(input, INPUT_BUTTON_MOUSE_LEFT)) {
 				*param->available_tile.dest = target;
 				program->card_params_stack.pop();
@@ -6954,7 +6764,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		break;
 	}
 	case GIS_DRAGGING_MAP:
-		sprite_sheet_renderer_highlight_sprite(&program->draw.renderer, 0);
+		sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, 0);
 		break;
 	}
 
@@ -6981,7 +6791,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				instance.glyph_pos = (v2)glyph.top_left;
 				instance.glyph_size = (v2)glyph.dimensions;
 
-				sprite_sheet_font_instances_add(&program->draw.boxy_bold, instance);
+				sprite_sheet_font_instances_add(&program->draw->boxy_bold, instance);
 
 				instance.world_offset.x += (f32)glyph.dimensions.w - 1.0f;
 			}
@@ -6989,7 +6799,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 	// imgui
-	IMGUI_Context *ic = &program->imgui;
+	IMGUI_Context *ic = &program->draw->imgui;
 	imgui_begin(ic, input, screen_size);
 	if (program->display_debug_ui) {
 		imgui_set_text_cursor(ic, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
@@ -7014,8 +6824,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			           sprite_pos.x, sprite_pos.y);
 			imgui_text(ic, "Card mouse pos: (%f, %f)", card_mouse_pos.x, card_mouse_pos.y);
 			imgui_text(ic, "Selected Card ID: %u", selected_card_id);
-			imgui_text(ic, "World Center: (%f, %f)", program->draw.camera.world_center.x,
-			           program->draw.camera.world_center.y);
+			imgui_text(ic, "World Center: (%f, %f)", program->draw->camera.world_center.x,
+			           program->draw->camera.world_center.y);
 			// draw input state stack
 			{
 				imgui_text(ic, "Program Input State Stack:");
@@ -7120,15 +6930,15 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 		case GIS_DRAGGING_MAP:
 			if (input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags
 			  & INPUT_BUTTON_FLAG_HELD_DOWN) {
-				f32 raw_zoom = (f32)screen_size.y / program->draw.camera.zoom;
-				program->draw.camera.world_center -= (v2)input->mouse_delta / raw_zoom;
+				f32 raw_zoom = (f32)screen_size.y / program->draw->camera.zoom;
+				program->draw->camera.world_center -= (v2)input->mouse_delta / raw_zoom;
 			} else if (!(input->button_data[INPUT_BUTTON_MOUSE_MIDDLE].flags
 				     & INPUT_BUTTON_FLAG_ENDED_DOWN)) {
 				program->program_input_state_stack.pop();
 			}
 			break;
 		}
-		program->draw.camera.zoom -= (f32)input->mouse_wheel_delta * 0.25f;
+		program->draw->camera.zoom -= (f32)input->mouse_wheel_delta * 0.25f;
 		if (input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
 			program->state = PROGRAM_STATE_NORMAL;
 			interlocked_compare_exchange(&program->debug_resume, 1, 0);
@@ -7136,11 +6946,11 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 				sleep(0);
 			}
 		} else {
-			imgui_begin(&program->imgui, input, screen_size);
-			imgui_set_text_cursor(&program->imgui,
+			imgui_begin(&program->draw->imgui, input, screen_size);
+			imgui_set_text_cursor(&program->draw->imgui,
 			                      { 1.0f, 0.0f, 1.0f, 1.0f },
 			                      { 5.0f, 5.0f });
-			imgui_text(&program->imgui, "DEBUG PAUSE");
+			imgui_text(&program->draw->imgui, "DEBUG PAUSE");
 			// draw log
 			{
 				u32 start = 0;
@@ -7150,7 +6960,7 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 				}
 
 				for (u32 i = start; i < end; ++i) {
-					imgui_text(&program->imgui,
+					imgui_text(&program->draw->imgui,
 					           log_get_line(&program->debug_pause_log, i));
 				}
 			}
@@ -7159,6 +6969,7 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	}
 }
 
+/*
 void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetView* output_rtv)
 {
 	v2_u32 screen_size_u32 = (v2_u32)program->screen_size;
@@ -7207,13 +7018,13 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	// debug_line_d3d11_draw(&program->draw.card_debug_line, dc, program->d3d11.output_rtv);
 
 	v2 debug_zoom = (v2)(world_br - world_tl) / 24.0f;
-	debug_draw_world_d3d11_draw(&program->debug_draw_world,
+	debug_draw_world_d3d11_draw(&program->draw.debug_draw_world,
 	                            dc,
 	                            program->d3d11.output_rtv,
 	                            program->draw.camera.world_center + program->draw.camera.offset,
 	                            debug_zoom);
 
-	imgui_d3d11_draw(&program->imgui, dc, program->d3d11.output_rtv, screen_size_u32);
+	imgui_d3d11_draw(&program->draw.imgui, dc, program->d3d11.output_rtv, screen_size_u32);
 
 	dc->VSSetShader(program->d3d11.output_vs, NULL, 0);
 	dc->PSSetShader(program->d3d11.output_ps, NULL, 0);
@@ -7221,3 +7032,4 @@ void render_d3d11(Program* program, ID3D11DeviceContext* dc, ID3D11RenderTargetV
 	dc->PSSetShaderResources(0, 1, &program->d3d11.output_srv);
 	dc->Draw(6, 0);
 }
+*/

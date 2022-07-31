@@ -3,6 +3,9 @@
 #include "prelude.h"
 #include "draw.h"
 #include "jfg_d3d11.h"
+#include <dxgi1_2.h>
+
+#include "pixel_art_upsampler.h"
 
 // SHADER(name, filename, shader_model, entry_point)
 #define DX11_PIXEL_SHADERS \
@@ -62,17 +65,31 @@ enum DX11_Compute_Shader
 
 struct DX11_Renderer
 {
-	HMODULE              d3d11_library;
+	// TODO -- remove this from here?
+	HMODULE                    d3d11_library;
 
-	ID3D11Device        *device;
-	ID3D11DeviceContext *device_context;
+	ID3D11Device              *device;
+	ID3D11DeviceContext       *device_context;
+	IDXGISwapChain            *swap_chain;
+	ID3D11Texture2D           *back_buffer;
+	ID3D11RenderTargetView    *back_buffer_rtv;
 
-	ID3D11PixelShader   *ps[NUM_DX11_PIXEL_SHADERS];
-	ID3D11VertexShader  *vs[NUM_DX11_VERTEX_SHADERS];
-	ID3D11ComputeShader *cs[NUM_DX11_COMPUTE_SHADERS];
+	ID3D11Texture2D           *output_texture;
+	ID3D11UnorderedAccessView *output_uav;
+	ID3D11RenderTargetView    *output_rtv;
+	ID3D11ShaderResourceView  *output_srv;
+
+	ID3D11PixelShader         *ps[NUM_DX11_PIXEL_SHADERS];
+	ID3D11VertexShader        *vs[NUM_DX11_VERTEX_SHADERS];
+	ID3D11ComputeShader       *cs[NUM_DX11_COMPUTE_SHADERS];
+
+	Pixel_Art_Upsampler        pixel_art_upsampler;
+
+	v2_u32 max_screen_size;
+	v2_u32 screen_size;
 };
 
-bool init(DX11_Renderer* renderer);
+bool init(DX11_Renderer* renderer, Draw* draw, HWND window);
+bool set_screen_size(DX11_Renderer* renderer, v2_u32 screen_size);
 void free(DX11_Renderer* renderer);
-
-extern const Render_Functions dx11_render_functions;
+void draw(DX11_Renderer* renderer, Draw* draw);
