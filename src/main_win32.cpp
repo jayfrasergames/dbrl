@@ -243,6 +243,7 @@ struct Game_Loop_Args
 };
 
 Draw draw_data = {};
+Render renderer = {};
 
 DWORD __stdcall game_loop(void *uncast_args)
 {
@@ -261,6 +262,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 	Memory_Spec program_size = get_program_size();
 	Program* program = (Program*)malloc(program_size.size);
 
+	if (!init(&renderer)) {
+		return 0;
+	}
+
 	ASSERT(((uintptr_t)program & (program_size.alignment - 1)) == 0);
 
 	v2_u32 screen_size, prev_screen_size;
@@ -271,7 +276,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	platform_functions.start_thread = win32_start_thread;
 	platform_functions.sleep = win32_sleep;
 	platform_functions.try_read_file = win32_try_read_file;
-	program_init(program, &draw_data, platform_functions);
+	program_init(program, &draw_data, &renderer, platform_functions);
 	// u8 d3d11_init_success = program_d3d11_init(program, device, screen_size);
 
 	DX11_Renderer dx11_renderer = {};	
@@ -279,6 +284,8 @@ DWORD __stdcall game_loop(void *uncast_args)
 	if (!init(&dx11_renderer, &draw_data, window)) {
 		return 0;
 	}
+
+	reload_textures(&dx11_renderer, &renderer);
 
 	v2_u32 mouse_pos = { 0, 0 }, prev_mouse_pos = { 0, 0 };
 
@@ -416,7 +423,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 			imgui_d3d11_draw(&imgui, context, back_buffer_rtv, screen_size);
 		}
 		*/
-		draw(&dx11_renderer, &draw_data);
+		draw(&dx11_renderer, &draw_data, &renderer);
 	}
 	return 1;
 }

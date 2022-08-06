@@ -5,6 +5,12 @@ project(dbrl)
 
 # TODO -- CMAKE_LIBRARY_OUTPUT_DIR
 
+# static link C standard library
+if(MSVC)
+	add_definitions(-DWIN32)
+	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+endif()
+
 set(CMAKE_DEBUG_POSTFIX _d)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_HOME_DIRECTORY}/bin)
 foreach(config ${CMAKE_CONFIGURATION_TYPES})

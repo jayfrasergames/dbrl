@@ -36,6 +36,8 @@
 #include "gen/pass_through_dxbc_pixel_shader.data.h"
 
 #include "draw.h"
+#include "texture.h"
+#include "render.h"
 
 // =============================================================================
 // Global Platform Functions
@@ -5855,6 +5857,7 @@ struct Program
 {
 	lua_State *lua_state;
 
+
 	Platform_Functions platform_functions;
 
 	Program_State       state;
@@ -5875,6 +5878,7 @@ struct Program
 	Action                             action_being_built;
 
 	World_Anim_State                   world_anim;
+	Render                            *render;
 	Draw                              *draw;
 	Sound_Player                       sound;
 
@@ -6135,7 +6139,7 @@ void load_assets(void* uncast_program)
 	sound_player_load_sounds(&program->sound, &program->assets_header);
 }
 
-void program_init(Program* program, Draw* draw, Platform_Functions platform_functions)
+void program_init(Program* program, Draw* draw, Render* render, Platform_Functions platform_functions)
 {
 	memset(program, 0, sizeof(*program));
 
@@ -6143,10 +6147,11 @@ void program_init(Program* program, Draw* draw, Platform_Functions platform_func
 	PLATFORM_FUNCTIONS
 #undef PLATFORM_FUNCTION
 
+	program->render = render;
 	program->draw = draw;
 
 	program->lua_state = luaL_newstate();
-	init(&program->draw->console, program->lua_state);
+	init(&program->draw->console, program->lua_state, render, &program->platform_functions);
 
 	set_global_state(program);
 	program->state = PROGRAM_STATE_NO_PAUSE;
@@ -6821,6 +6826,27 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			imgui_tree_end(ic);
 		}
 		imgui_tree_end(ic);
+	}
+
+	// render
+	{
+		auto r = &program->render->render_job_buffer;
+		reset(r);
+		Debug_Draw_World_Constant_Buffer cb = {};
+		cb.zoom = v2(1.0f, 1.0f);
+		cb.center = v2(0.0f, 0.0f);
+		begin_triangles(r, cb);
+		Debug_Draw_World_Triangle triangle = {};
+		f32 size = 0.25f;
+		triangle.a = v2(-size, -size);
+		triangle.b = v2( size, -size);
+		triangle.c = v2(-size,  size);
+		triangle.color = v4(0.0f, 0.0f, 1.0f, 0.25f);
+		push_triangle(r, triangle);
+		triangle.a = v2( size, size);
+		triangle.color = v4(1.0f, 0.0f, 0.0f, 0.25f);
+		push_triangle(r, triangle);
+		end(r);
 	}
 }
 

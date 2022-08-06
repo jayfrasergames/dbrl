@@ -9,6 +9,11 @@ struct Memory_Spec
 	size_t size;
 };
 
+inline uptr align(uptr ptr, uptr alignment)
+{
+	return (ptr + alignment - 1) & ~(alignment - 1);
+}
+
 // TODO -- allocators, global context etc
 
 #endif

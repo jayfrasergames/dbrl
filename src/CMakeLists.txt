@@ -52,6 +52,8 @@ set(object_sources
 	draw_dx11.cpp
 	jfg_d3d11.cpp
 	random.cpp
+	texture.cpp
+	render.cpp
 )
 
 set(program_sources

@@ -1,11 +1,15 @@
 #pragma once
 
 #include "prelude.h"
+#include "containers.hpp"
+
 #include "draw.h"
 #include "jfg_d3d11.h"
 #include <dxgi1_2.h>
 
 #include "pixel_art_upsampler.h"
+
+#include "render.h"
 
 // SHADER(name, filename, shader_model, entry_point)
 #define DX11_PIXEL_SHADERS \
@@ -63,6 +67,54 @@ enum DX11_Compute_Shader
 	NUM_DX11_COMPUTE_SHADERS
 };
 
+/*
+// CB(name, element_size, array_size)
+#define CONSTANT_BUFFERS \
+	CB_X(TRIANGLE_BUFFER, sizeof(Triangle_Constants), 8) \
+	CB_X(SPRITE_BUFFER,   sizeof(Triangle_Constants), 8)
+
+#define CB_1(name, element_size) CB(name, element_size)
+#define CB_2(name, element_size) CB(name##_1, element_size) CB(name##_2, element_size)
+#define CB_3(name, element_size) CB_2(name, element_size) CB(name##_3, element_size)
+#define CB_4(name, element_size) CB_3(name, element_size) CB(name##_4, element_size)
+#define CB_5(name, element_size) CB_4(name, element_size) CB(name##_5, element_size)
+#define CB_6(name, element_size) CB_5(name, element_size) CB(name##_6, element_size)
+#define CB_7(name, element_size) CB_6(name, element_size) CB(name##_7, element_size)
+#define CB_8(name, element_size) CB_7(name, element_size) CB(name##_8, element_size)
+
+#define CB_X(name, element_size, array_size) \
+	CB_ARRAY(name, element_size, array_size) \
+	CB_##array_size(name, element_size)
+
+enum DX11_Constant_Buffer_Array
+{
+#define CB(...)
+#define CB_ARRAY(name, _element_size, _array_size) DX11_CBA_##name,
+	CONSTANT_BUFFERS
+#undef CB_ARRAY
+#undef CB
+
+	NUM_CONSTANT_BUFFER_ARRYS,
+};
+
+enum DX11_Constant_Buffer
+{
+#define CB(name, _element_size, array_size) DX11_CB_##name,
+#define CB_ARRAY(...)
+	CONSTANT_BUFFERS
+#undef CB_ARRAY
+#undef CB
+
+	NUM_CONSTANT_BUFFERS,
+};
+*/
+
+// IB(name, element_width, max_elements, )
+#define INSTANCE_BUFFERS \
+	IB()
+
+#define MAX_CONSTANT_BUFFERS 64
+
 struct DX11_Renderer
 {
 	// TODO -- remove this from here?
@@ -79,9 +131,19 @@ struct DX11_Renderer
 	ID3D11RenderTargetView    *output_rtv;
 	ID3D11ShaderResourceView  *output_srv;
 
+	ID3D11Buffer              *cbs[MAX_CONSTANT_BUFFERS];
+
+	ID3D11ShaderResourceView  *instance_buffer_srv;
+	ID3D11Buffer              *instance_buffer;
+
+	ID3D11RasterizerState     *rasterizer_state;
+	ID3D11BlendState          *blend_state;
+
 	ID3D11PixelShader         *ps[NUM_DX11_PIXEL_SHADERS];
 	ID3D11VertexShader        *vs[NUM_DX11_VERTEX_SHADERS];
 	ID3D11ComputeShader       *cs[NUM_DX11_COMPUTE_SHADERS];
+
+	Max_Length_Array<ID3D11Texture2D*, MAX_TEXTURES> tex;
 
 	Pixel_Art_Upsampler        pixel_art_upsampler;
 
@@ -89,7 +151,9 @@ struct DX11_Renderer
 	v2_u32 screen_size;
 };
 
+bool reload_textures(DX11_Renderer* dx11_render, Render* render);
+
 bool init(DX11_Renderer* renderer, Draw* draw, HWND window);
 bool set_screen_size(DX11_Renderer* renderer, v2_u32 screen_size);
 void free(DX11_Renderer* renderer);
-void draw(DX11_Renderer* renderer, Draw* draw);
+void draw(DX11_Renderer* renderer, Draw* draw, Render* render);

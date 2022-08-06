@@ -9,6 +9,9 @@
 
 #define D3D11CreateDevice _D3D11CreateDevice
 
+// XXX -- might need to move this to an implementation file to avoid multiple pieces of code
+// including d3d11.h defining symbols for GUIDs
+#include <initguid.h>
 #include <d3d11.h>
 
 #undef D3D11CreateDevice

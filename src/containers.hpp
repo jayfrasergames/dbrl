@@ -59,6 +59,7 @@ struct Max_Length_Array
 {
 	u32 len;
 	T   items[size];
+	static const u32 max_size = size;
 
 	operator bool()             { return len; }
 	operator Slice<T>()         { return Slice<T>(items, len); }
@@ -84,6 +85,12 @@ struct Max_Length_Array
 	}
 };
 
+template<typename T, u32 size>
+inline bool has_space(Max_Length_Array<T, size> array)
+{
+	return array.len < array.max_size;
+}
+
 template <u32 size>
 struct Bit_Array
 {
@@ -94,5 +101,21 @@ struct Bit_Array
 	void unset(u32 idx) { ASSERT(idx < size); vals[idx / 32] &= ~(1 << (idx % 32)); }
 	u32  get(u32 idx)   { ASSERT(idx < size); return vals[idx / 32] & (1 << (idx % 32)); }
 };
+
+template<typename T>
+struct End_Of_Struct_Array
+{
+	u32 len;
+	T   items[];
+
+	operator Slice<T>() { return Slice<T>(items, len); }
+};
+
+template<typename T>
+inline void push(End_Of_Struct_Array<T>* xs, T x, void* end = NULL)
+{
+	xs->items[xs->len++] = x;
+	ASSERT(end == NULL || &xs->items[xs->len] <= end);
+}
 
 #endif

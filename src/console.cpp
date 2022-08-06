@@ -2,9 +2,13 @@
 
 #include "stdafx.h"
 
-bool init(Console* console, lua_State* lua_state)
+bool init(Console* console, lua_State* lua_state, Render* render, Platform_Functions* platform_functions)
 {
 	memset(console, 0, sizeof(*console));
+	Texture_ID font_tex_id = load_texture(render, "Codepage-437.png", platform_functions);
+	if (!font_tex_id) {
+		return false;
+	}
 	return true;
 }
 

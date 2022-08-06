@@ -20,6 +20,8 @@
 
 #else
 
+#include "prelude.h"
+
 	#define F1 f32
 	#define F2 v2
 	#define F3 v3

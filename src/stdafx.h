@@ -7,6 +7,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <string.h>
+#include <setjmp.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,3 +31,4 @@ extern "C" {
 #include "format.h"
 #include "jfg_math.h"
 #include "containers.hpp"
+#include "mem.h"

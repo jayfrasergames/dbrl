@@ -263,5 +263,6 @@ SIGNED_VEC_TYPES
 typedef v2_f32 v2;
 typedef v3_f32 v3;
 typedef v4_f32 v4;
+typedef v4_u8 Color;
 
 #endif

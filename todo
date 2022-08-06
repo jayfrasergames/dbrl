@@ -14,18 +14,26 @@
     * load PNG assets at runtime
     * load shaders from text files at run time
 
-    * cleanup prelude.h/stdafx.h
+    * cleanup
+      * prelude.h/stdafx.h
+      * draw -> render, folder for renderers
 
     * deprecate use of assets.bin for non-release candidates
       * load sounds from wave files at run time
 
     * get stack traces from assertion failures!!!
     * asynchronous sound loading
-    * deprecate runner/DLL
     * deprecate use of Python scripts in build system
+
     * libraries
       * something for threading! (threads.h?)
       * libogg
+
+    * memory allocation
+      * create a "large chunk allocator" for the assets manager and start loading/caching
+        files into this area (perhaps we want to eventually have a strategy of having an
+        assets file which is loaded in compressed format which remains resident in memory
+        if all compressed assets are small?)
 
   * editor
     * animation editor
@@ -84,7 +92,6 @@
     * imgui
       * display log
     * input
-    * dll reloading - don't reload if compile unsuccessful (i.e. don't write "written_library" in that case)
     * memory functions/context
     * global context/global error message
     * global context
