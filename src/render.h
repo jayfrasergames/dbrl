@@ -6,7 +6,7 @@
 
 #include "debug_draw_world_gpu_data_types.h"
 #include "triangle_gpu_data_types.h"
-#include "render_sprites_gpu_data_types.h"
+#include "sprites_gpu_data_types.h"
 
 #define MAX_TEXTURES             32
 #define MAX_TEXTURE_FILENAME_LEN 256
@@ -29,8 +29,9 @@ struct Render_Job
 			End_Of_Struct_Array<Debug_Draw_World_Triangle> triangles;
 		} triangles;
 		struct {
-			Texture_ID                                   sprite_sheet_id;
-			End_Of_Struct_Array<Render_Sprites_Instance> instances;
+			Texture_ID                           sprite_sheet_id;
+			Sprite_Constants                     constants;
+			End_Of_Struct_Array<Sprite_Instance> instances;
 		} sprites;
 	};
 };
@@ -66,5 +67,5 @@ Render_Job* next_job(Render_Job_Buffer* buffer);
 void begin_triangles(Render_Job_Buffer* buffer, Debug_Draw_World_Constant_Buffer constants);
 void push_triangle(Render_Job_Buffer* buffer, Debug_Draw_World_Triangle triangle);
 
-void begin_sprites(Render_Job_Buffer* buffer, Texture_ID texture_id);
-void push_sprite(Render_Job_Buffer* buffer, Render_Sprites_Instance instance);
+void begin_sprites(Render_Job_Buffer* buffer, Texture_ID texture_id, Sprite_Constants constants);
+void push_sprite(Render_Job_Buffer* buffer, Sprite_Instance instance);

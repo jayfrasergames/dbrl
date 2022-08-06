@@ -6832,6 +6832,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	{
 		auto r = &program->render->render_job_buffer;
 		reset(r);
+
 		Debug_Draw_World_Constant_Buffer cb = {};
 		cb.zoom = v2(1.0f, 1.0f);
 		cb.center = v2(0.0f, 0.0f);
@@ -6846,6 +6847,56 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		triangle.a = v2( size, size);
 		triangle.color = v4(1.0f, 0.0f, 0.0f, 0.25f);
 		push_triangle(r, triangle);
+		end(r);
+
+		Sprite_Constants sprite_constants = {};
+		sprite_constants.tile_input_size = v2(9.0f, 16.0f);
+		sprite_constants.tile_output_size = 2.0f * v2(9.0f, 16.0f);
+		auto tex_id = load_texture(program->render, "Codepage-437.png", &program->platform_functions);
+		begin_sprites(r, tex_id, sprite_constants);
+
+		const char *message = "Hello, world!";
+		Sprite_Instance instance = {};
+		instance.color = v4(1.0f, 0.0f, 0.0f, 1.0f);
+		instance.glyph_coords = v2(4.0f, 4.0f);
+		instance.output_coords = v2(4.0f, 4.0f);
+		for ( ; *message; ++message) {
+			u8 c = (u8)*message;
+			instance.glyph_coords = v2(c % 32, c / 32);
+			push_sprite(r, instance);
+			instance.output_coords.x += 1;
+		}
+		end(r);
+
+		cb.zoom = v2(1.0f, 1.0f);
+		cb.center = v2(0.0f, 0.0f);
+		begin_triangles(r, cb);
+		size = 0.125f;
+		triangle.a = v2(-size, -size);
+		triangle.b = v2( size, -size);
+		triangle.c = v2(-size,  size);
+		triangle.color = v4(1.0f, 0.0f, 1.0f, 0.25f);
+		push_triangle(r, triangle);
+		triangle.a = v2( size, size);
+		triangle.color = v4(1.0f, 1.0f, 0.0f, 0.25f);
+		push_triangle(r, triangle);
+		end(r);
+
+		sprite_constants.tile_input_size = v2(9.0f, 16.0f);
+		sprite_constants.tile_output_size = 4.0f * v2(9.0f, 16.0f);
+		tex_id = load_texture(program->render, "Codepage-437.png", &program->platform_functions);
+		begin_sprites(r, tex_id, sprite_constants);
+
+		message = "Another message!";
+		instance.color = v4(1.0f, 0.0f, 1.0f, 1.0f);
+		instance.glyph_coords = v2(4.0f, 4.0f);
+		instance.output_coords = v2(4.0f, 4.0f);
+		for ( ; *message; ++message) {
+			u8 c = (u8)*message;
+			instance.glyph_coords = v2(c % 32, c / 32);
+			push_sprite(r, instance);
+			instance.output_coords.x += 1;
+		}
 		end(r);
 	}
 }

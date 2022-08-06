@@ -3,6 +3,7 @@
 #include "stdafx.h"
 #include "jfg_d3d11.h"
 #include "draw.h"
+#include "shader_global_constants.h"
 
 #define D3DCompileFromFile _D3DCompileFromFile
 #include "d3dcompiler.h"
@@ -190,6 +191,23 @@ bool reload_textures(DX11_Renderer* dx11_render, Render* render)
 		set_name(out_tex, fmt("TEXTURE(%s)", render->textures[i].filename));
 
 		dx11_render->tex.append(out_tex);
+
+		ID3D11ShaderResourceView *srv = NULL;
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+		srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srv_desc.Texture2D.MipLevels = 1;
+		srv_desc.Texture2D.MostDetailedMip = 0;
+
+		hr = dx11_render->device->CreateShaderResourceView(out_tex, &srv_desc, &srv);
+		if (FAILED(hr)) {
+			return false;
+		}
+
+		set_name(srv, fmt("SRV(%s)", render->textures[i].filename));
+
+		dx11_render->srvs.append(srv);
 	}
 
 	return true;
@@ -286,10 +304,26 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 	HRESULT hr;
 	u32 cur_cb = 0;
 	ID3D11Buffer        **cbs = renderer->cbs;
+	ID3D11Buffer        **dispatch_cbs = renderer->dispatch_cbs;
 	ID3D11VertexShader  **vs  = renderer->vs;
 	ID3D11PixelShader   **ps  = renderer->ps;
 	ID3D11ComputeShader **cs  = renderer->cs;
-	ID3D11Texture2D     **tex = renderer->tex.items;
+	// ID3D11Texture2D     **tex = renderer->tex.items;
+	ID3D11ShaderResourceView **srvs = renderer->srvs.items;
+
+	// create "global" constant buffer
+	ID3D11Buffer *global_cb = NULL;
+	{
+		Shader_Global_Constants global_constants = {};
+		global_constants.screen_size = (v2)screen_size;
+
+		global_cb = cbs[cur_cb++];
+		D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+		hr = dc->Map(global_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+		ASSERT(SUCCEEDED(hr));
+		memcpy(mapped_res.pData, &global_constants, sizeof(global_constants));
+		dc->Unmap(global_cb, 0);
+	}
 
 	u32 cur_instance = 0;
 	D3D11_MAPPED_SUBRESOURCE instance_map = {};
@@ -297,6 +331,7 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 	ASSERT(SUCCEEDED(hr));
 	void *instance_buffer = instance_map.pData;
 
+	render_jobs->cur_pos = render_jobs->base;
 	for (auto job = (Render_Job*)render_jobs->base; job->type != RENDER_JOB_NONE; job = next_job(render_jobs)) {
 		dc->ClearState();
 		switch (job->type) {
@@ -306,14 +341,19 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 		case RENDER_JOB_TRIANGLES: {
 			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-			ID3D11Buffer *cb = cbs[cur_cb++];
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			ID3D11Buffer *dispatch_cb =  dispatch_cbs[cur_cb];
 			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+			hr = dc->Map(dispatch_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			auto dispatch_constants = (Shader_Per_Dispatch_Constants*)mapped_res.pData;
+			dispatch_constants->base_offset = cur_instance;
+			dc->Unmap(dispatch_cb, 0);
+
+			ID3D11Buffer *cb = cbs[cur_cb++];
 			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
 			ASSERT(SUCCEEDED(hr));
 			memcpy(mapped_res.pData, &job->triangles.constants, sizeof(job->triangles.constants));
 			dc->Unmap(cb, 0);
-
-			u32 first_instance = cur_instance;
 
 			u32 len = job->triangles.triangles.len;
 			auto *triangles = job->triangles.triangles.items;
@@ -338,8 +378,48 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			break;
 		}
 
-		case RENDER_JOB_TYPE_SPRITES:
+		case RENDER_JOB_TYPE_SPRITES: {
+			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			ID3D11Buffer *dispatch_cb =  dispatch_cbs[cur_cb];
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+			hr = dc->Map(dispatch_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			auto dispatch_constants = (Shader_Per_Dispatch_Constants*)mapped_res.pData;
+			dispatch_constants->base_offset = cur_instance;
+			dc->Unmap(dispatch_cb, 0);
+
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &job->sprites.constants, sizeof(job->sprites.constants));
+			dc->Unmap(cb, 0);
+
+			u32 len = job->sprites.instances.len;
+			auto *instances = job->sprites.instances.items;
+			for (u32 i = 0; i < len; ++i) {
+				push_instance(instance_buffer, &instances[i], &cur_instance);
+			}
+
+			ID3D11Buffer *cbs[] = { global_cb, dispatch_cb, cb };
+			dc->VSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->VSSetShaderResources(0, 1, &renderer->instance_buffer_srv);
+			dc->VSSetShader(vs[DX11_VS_SPRITE], NULL, 0);
+
+			dc->RSSetViewports(1, &viewport);
+			dc->RSSetState(renderer->rasterizer_state);
+
+			dc->PSSetShaderResources(0, 1, &srvs[job->sprites.sprite_sheet_id]);
+			dc->PSSetShader(ps[DX11_PS_SPRITE], NULL, 0);
+
+			ID3D11RenderTargetView *rtvs = { renderer->output_rtv };
+			dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), &rtvs, NULL);
+			dc->OMSetBlendState(renderer->blend_state, NULL, 0xFFFFFFFF);
+
+			dc->DrawInstanced(6, job->sprites.instances.len, 0, 0);
 			break;
+		}
+
 		}
 	}
 
@@ -658,6 +738,26 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 		}
 
 		renderer->cbs[i] = cb;
+	}
+
+	// create per dispatch constant buffers
+	for (u32 i = 0; i < ARRAY_SIZE(renderer->dispatch_cbs); ++i) {
+		ID3D11Buffer *cb = NULL;
+
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = align(sizeof(Shader_Per_Dispatch_Constants), 16);
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		desc.MiscFlags = 0;
+		desc.StructureByteStride = 0;
+
+		hr = device->CreateBuffer(&desc, NULL, &cb);
+		if (FAILED(hr)) {
+			return false;
+		}
+
+		renderer->dispatch_cbs[i] = cb;
 	}
 
 	// create instance buffer

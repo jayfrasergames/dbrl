@@ -17,12 +17,6 @@ bool init(Render* render)
 	return true;
 }
 
-static void push(Render_Job_Buffer* buffer, void* dst, void* src, size_t size)
-{
-	ASSERT((uptr)dst - (uptr)buffer->base + size <= buffer->size);
-	memcpy(dst, src, size);
-}
-
 void init(Render_Job_Buffer* buffer, void* base, size_t size)
 {
 	buffer->base = base;
@@ -37,47 +31,61 @@ void reset(Render_Job_Buffer* buffer)
 {
 	buffer->cur_pos = buffer->base;
 	auto job = (Render_Job*)buffer->cur_pos;
-	job->type = RENDER_JOB_NONE;
+	// job->type = RENDER_JOB_NONE;
+	memset(job, 0, sizeof(*job));
+
+	// XXX
+	memset(buffer->base, 0, buffer->size);
 }
 
 template<typename T>
 static size_t end_size(End_Of_Struct_Array<T> xs)
 {
-	return sizeof(xs.items[0]) + xs.len;
+	return sizeof(xs.items[0]) * xs.len;
 }
 
-size_t size(Render_Job* job)
+size_t job_size(Render_Job* job)
 {
-	size_t result = (size_t)OFFSET_OF(Render_Job, triangles);
 	switch (job->type) {
 	case RENDER_JOB_NONE:
-		break;
+		return OFFSET_OF(Render_Job, triangles);
 	case RENDER_JOB_TRIANGLES:
-		result += sizeof(job->triangles) + end_size(job->triangles.triangles);
-		break;
+		return OFFSET_OF(Render_Job, triangles.triangles.items) + end_size(job->triangles.triangles);
 	case RENDER_JOB_TYPE_SPRITES:
-		result += sizeof(job->sprites) + end_size(job->sprites.instances);
-		break;
+		return OFFSET_OF(Render_Job, sprites.instances.items) + end_size(job->sprites.instances);
 	}
-	return align(result, alignof(Render_Job));
+	ASSERT(false);
+	return (size_t)-1;
+}
+
+static void push(Render_Job_Buffer* buffer, void* src, size_t size)
+{
+	auto job = (Render_Job*)buffer->cur_pos;
+	size_t tmp = job_size(job);
+	void *dst = (void*)((uptr)job + job_size(job));
+	ASSERT((uptr)dst - (uptr)buffer->base + size <= buffer->size);
+	memcpy(dst, src, size);
 }
 
 Render_Job* next_job(Render_Job_Buffer* buffer)
 {
 	auto job = (Render_Job*)buffer->cur_pos;
-	buffer->cur_pos = (void*)((uptr)job + size(job));
-	ASSERT((uptr)buffer->cur_pos - (uptr)buffer->base <= buffer->size);
+	buffer->cur_pos = (void*)((uptr)job + job_size(job));
+	buffer->cur_pos = (void*)align((uptr)buffer->cur_pos, alignof(Render_Job));
+	ASSERT((uptr)buffer->cur_pos - (uptr)buffer->base + sizeof(Render_Job) <= buffer->size);
 	return (Render_Job*)buffer->cur_pos;
 }
 
 void end(Render_Job_Buffer* buffer)
 {
 	next_job(buffer);
+	memset(buffer->cur_pos, 0, sizeof(Render_Job));
 }
 
 void begin_triangles(Render_Job_Buffer* buffer, Debug_Draw_World_Constant_Buffer constants)
 {
 	auto job = (Render_Job*)buffer->cur_pos;
+	ASSERT(job->type == RENDER_JOB_NONE);
 	job->type = RENDER_JOB_TRIANGLES;
 	job->triangles.constants = constants;
 	job->triangles.triangles.len = 0;
@@ -88,21 +96,25 @@ void push_triangle(Render_Job_Buffer* buffer, Debug_Draw_World_Triangle triangle
 	auto job = (Render_Job*)buffer->cur_pos;
 	ASSERT(job->type == RENDER_JOB_TRIANGLES);
 	void *buffer_end = &job->triangles.triangles.items[job->triangles.triangles.len];
-	push(buffer, buffer_end, &triangle, sizeof(triangle));
+	push(buffer, &triangle, sizeof(triangle));
 	job->triangles.triangles.len += 1;
 }
 
-void begin_sprites(Render_Job_Buffer* buffer, Texture_ID texture_id)
+void begin_sprites(Render_Job_Buffer* buffer, Texture_ID texture_id, Sprite_Constants constants)
 {
 	auto job = (Render_Job*)buffer->cur_pos;
+	ASSERT(job->type == RENDER_JOB_NONE);
 	job->type = RENDER_JOB_TYPE_SPRITES;
 	job->sprites.sprite_sheet_id = texture_id;
+	job->sprites.constants = constants;
 }
 
-void push_sprite(Render_Job_Buffer* buffer, Render_Sprites_Instance instance)
+void push_sprite(Render_Job_Buffer* buffer, Sprite_Instance instance)
 {
 	auto job = (Render_Job*)buffer->cur_pos;
-	push(&job->sprites.instances, instance, (void*)((uptr)buffer->base + buffer->size));
+	ASSERT(job->type == RENDER_JOB_TYPE_SPRITES);
+	push(buffer, &instance, sizeof(instance));
+	job->sprites.instances.len += 1;
 }
 
 Texture_ID load_texture(Render* render, const char* filename, Platform_Functions* platform_functions)

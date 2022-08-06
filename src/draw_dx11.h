@@ -13,6 +13,7 @@
 
 // SHADER(name, filename, shader_model, entry_point)
 #define DX11_PIXEL_SHADERS \
+	DX11_PS(SPRITE,              "sprites.hlsl",                 "ps_sprite") \
 	DX11_PS(SPRITE_SHEET_RENDER, "sprite_sheet.hlsl",           "ps_sprite") \
 	DX11_PS(SPRITE_SHEET_FONT,   "sprite_sheet.hlsl",           "ps_font") \
 	DX11_PS(PASS_THROUGH,        "pass_through_output.hlsl",    "ps_pass_through") \
@@ -23,6 +24,7 @@
 	DX11_PS(FOV_FILL,            "field_of_vision_render.hlsl", "ps_fill")
 
 #define DX11_VERTEX_SHADERS \
+	DX11_VS(SPRITE,              "sprites.hlsl",                 "vs_sprite") \
 	DX11_VS(SPRITE_SHEET_RENDER, "sprite_sheet.hlsl",           "vs_sprite") \
 	DX11_VS(SPRITE_SHEET_FONT,   "sprite_sheet.hlsl",           "vs_font") \
 	DX11_VS(PASS_THROUGH,        "pass_through_output.hlsl",    "vs_pass_through") \
@@ -109,10 +111,6 @@ enum DX11_Constant_Buffer
 };
 */
 
-// IB(name, element_width, max_elements, )
-#define INSTANCE_BUFFERS \
-	IB()
-
 #define MAX_CONSTANT_BUFFERS 64
 
 struct DX11_Renderer
@@ -132,6 +130,7 @@ struct DX11_Renderer
 	ID3D11ShaderResourceView  *output_srv;
 
 	ID3D11Buffer              *cbs[MAX_CONSTANT_BUFFERS];
+	ID3D11Buffer              *dispatch_cbs[MAX_CONSTANT_BUFFERS];
 
 	ID3D11ShaderResourceView  *instance_buffer_srv;
 	ID3D11Buffer              *instance_buffer;
@@ -143,7 +142,8 @@ struct DX11_Renderer
 	ID3D11VertexShader        *vs[NUM_DX11_VERTEX_SHADERS];
 	ID3D11ComputeShader       *cs[NUM_DX11_COMPUTE_SHADERS];
 
-	Max_Length_Array<ID3D11Texture2D*, MAX_TEXTURES> tex;
+	Max_Length_Array<ID3D11ShaderResourceView*, MAX_TEXTURES> srvs;
+	Max_Length_Array<ID3D11Texture2D*, MAX_TEXTURES>          tex;
 
 	Pixel_Art_Upsampler        pixel_art_upsampler;
 

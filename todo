@@ -11,8 +11,43 @@
       * output history
       * scrolling
 
-    * load PNG assets at runtime
-    * load shaders from text files at run time
+    * logging
+      * have a list of different logs and make an interface for reading those logs
+      * logs can create notifications if something bad happens
+      * per frame log - reset it every frame :)
+
+    * global error state/error.h
+
+    * abstract renderer
+      * move to using adstracted renderer
+
+    * cleanup renderer
+      * port shaders to cleaned up renderer
+        * card_render
+        * debug_draw_world
+        * debug_line_draw
+        * field_of_vision
+        * imgui
+        * particles
+        * pass_through_output
+        * pixel_art_upsampler
+        * sprite_sheet
+      * port textures to be loaded from PNG
+        * creatures
+        * tiles
+        * effects_24
+        * effects_32
+        * boxy_bold
+      * load PNG assets at runtime
+      * load shaders from text files at run time
+        * should be able to start up if we only compile a subset of all shaders
+        * output shader compile errors to a log
+        * attempt shader reloads, don't reload shaders if they previously had 
+          a working version but now don't
+
+    * asset reloading at runtime
+      * load asset through asset manager?
+      * asset manager watches for changes that require that asset be reloaded?
 
     * cleanup
       * prelude.h/stdafx.h
@@ -35,14 +70,14 @@
         assets file which is loaded in compressed format which remains resident in memory
         if all compressed assets are small?)
 
+    * physics system
+      * debug/create unit tests
+
   * editor
     * animation editor
     * dungeon generator editor
     * card editor
     * enemy editor
-
-  * physics system
-    * debug/create unit tests
 
   * variable move duration depending on user input frequency
     * animation "speeding up" when moves made rapidly
@@ -59,12 +94,17 @@
   * "rational" class?
 
 * scenarios:
+  * field of vision
+    * visible
+    * previously seen (show tiles but not creatures)
+    * never seen (don't show tiles)
   * invisible wall
   * fireball hits barrels, chain reaction
   * enemies
     * spiders (traps)
     * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
   * doors
+    * open/close field of vision
   * spells/cards
     * magic missile
     * fireball
@@ -83,15 +123,6 @@
       * sound effect
 
 * features
-  * game
-    * pretty walls/shadows etc
-      * shadows from floor to water
-    * cards
-    * spells
-  * library
-    * imgui
-      * display log
-    * input
     * memory functions/context
     * global context/global error message
     * global context
@@ -100,8 +131,6 @@
   * debug draw transparency
 
 * cleanup
-  * move to "pure" ECS
-  * split into multiple files/move to CMake in the "normal" fashion
   * "stateless" DX11 usage
   * use precompiled header?
 
