@@ -5857,7 +5857,8 @@ struct Program
 {
 	lua_State *lua_state;
 
-
+	bool is_console_visible;
+	Console console;
 	Platform_Functions platform_functions;
 
 	Program_State       state;
@@ -6151,7 +6152,26 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 	program->draw = draw;
 
 	program->lua_state = luaL_newstate();
-	init(&program->draw->console, program->lua_state, render, &program->platform_functions);
+	init(&program->console, v2_u32(80, 25), program->lua_state, render, &program->platform_functions);
+	print(&program->console, "Hello, world!");
+	print(&program->console, "Hello, sailor!");
+	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
+	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
+	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
+	print(&program->console, "Hello, sailor!");
+	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
+	print(&program->console, "Hello, sailor!");
+	print(&program->console, "procedure foo(x: int)\nvar\n\ty: int;\nbegin\n\tx = x + y;\nend;");
+	print(&program->console, "Hello, sailor!");
+	print(&program->console, "procedure foo(x: int)\nvar\n\ty: int;\nbegin\n\tx = x + y;\nend;");
+	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
+	print(&program->console, "procedure foo(x: int)\nvar\n\ty: int;\nbegin\n\tx = x + y;\nend;");
+	print(&program->console, "when are we going to get off the bottom of the screen???");
+	print(&program->console, "when are we going to get off the bottom of the screen???");
+	print(&program->console, "when are we going to get off the bottom of the screen???");
+	print(&program->console, "Off the bottom!!!");
+	print(&program->console, "Off the bottom!!!");
+	print(&program->console, "Off the bottom!!!");
 
 	set_global_state(program);
 	program->state = PROGRAM_STATE_NO_PAUSE;
@@ -6234,7 +6254,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	program->sound.reset();
 
 	// XXX -- put this somewhere sensible
-	handle_input(&program->draw->console, input);
+	if (program->is_console_visible) {
+		handle_input(&program->console, input);
+	}
 
 	// process input
 	switch (program->program_input_state_stack.peek()) {
@@ -6260,6 +6282,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	if (input_get_num_up_transitions(input, INPUT_BUTTON_F1) % 2) {
 		program->display_debug_ui = !program->display_debug_ui;
+	}
+	if (input_get_num_up_transitions(input, INPUT_BUTTON_F2) % 2) {
+		program->is_console_visible = !program->is_console_visible;
 	}
 
 	f32 time = (f32)program->frame_number / 60.0f;
@@ -6829,75 +6854,11 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 	// render
+	reset(&program->render->render_job_buffer);
 	{
-		auto r = &program->render->render_job_buffer;
-		reset(r);
-
-		Debug_Draw_World_Constant_Buffer cb = {};
-		cb.zoom = v2(1.0f, 1.0f);
-		cb.center = v2(0.0f, 0.0f);
-		begin_triangles(r, cb);
-		Debug_Draw_World_Triangle triangle = {};
-		f32 size = 0.25f;
-		triangle.a = v2(-size, -size);
-		triangle.b = v2( size, -size);
-		triangle.c = v2(-size,  size);
-		triangle.color = v4(0.0f, 0.0f, 1.0f, 0.25f);
-		push_triangle(r, triangle);
-		triangle.a = v2( size, size);
-		triangle.color = v4(1.0f, 0.0f, 0.0f, 0.25f);
-		push_triangle(r, triangle);
-		end(r);
-
-		Sprite_Constants sprite_constants = {};
-		sprite_constants.tile_input_size = v2(9.0f, 16.0f);
-		sprite_constants.tile_output_size = 2.0f * v2(9.0f, 16.0f);
-		auto tex_id = load_texture(program->render, "Codepage-437.png", &program->platform_functions);
-		begin_sprites(r, tex_id, sprite_constants);
-
-		const char *message = "Hello, world!";
-		Sprite_Instance instance = {};
-		instance.color = v4(1.0f, 0.0f, 0.0f, 1.0f);
-		instance.glyph_coords = v2(4.0f, 4.0f);
-		instance.output_coords = v2(4.0f, 4.0f);
-		for ( ; *message; ++message) {
-			u8 c = (u8)*message;
-			instance.glyph_coords = v2(c % 32, c / 32);
-			push_sprite(r, instance);
-			instance.output_coords.x += 1;
+		if (program->is_console_visible) {
+			render(&program->console, program->render, time);
 		}
-		end(r);
-
-		cb.zoom = v2(1.0f, 1.0f);
-		cb.center = v2(0.0f, 0.0f);
-		begin_triangles(r, cb);
-		size = 0.125f;
-		triangle.a = v2(-size, -size);
-		triangle.b = v2( size, -size);
-		triangle.c = v2(-size,  size);
-		triangle.color = v4(1.0f, 0.0f, 1.0f, 0.25f);
-		push_triangle(r, triangle);
-		triangle.a = v2( size, size);
-		triangle.color = v4(1.0f, 1.0f, 0.0f, 0.25f);
-		push_triangle(r, triangle);
-		end(r);
-
-		sprite_constants.tile_input_size = v2(9.0f, 16.0f);
-		sprite_constants.tile_output_size = 4.0f * v2(9.0f, 16.0f);
-		tex_id = load_texture(program->render, "Codepage-437.png", &program->platform_functions);
-		begin_sprites(r, tex_id, sprite_constants);
-
-		message = "Another message!";
-		instance.color = v4(1.0f, 0.0f, 1.0f, 1.0f);
-		instance.glyph_coords = v2(4.0f, 4.0f);
-		instance.output_coords = v2(4.0f, 4.0f);
-		for ( ; *message; ++message) {
-			u8 c = (u8)*message;
-			instance.glyph_coords = v2(c % 32, c / 32);
-			push_sprite(r, instance);
-			instance.output_coords.x += 1;
-		}
-		end(r);
 	}
 }
 

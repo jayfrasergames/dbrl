@@ -10,7 +10,6 @@
 #include "debug_draw_world.h"
 #include "debug_line_draw.h"
 #include "imgui.h"
-#include "console.h"
 
 struct Camera
 {
@@ -34,5 +33,4 @@ struct Draw
 	Debug_Line card_debug_line;
 	Debug_Draw_World debug_draw_world;
 	IMGUI_Context imgui;
-	Console console;
 };

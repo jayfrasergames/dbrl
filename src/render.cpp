@@ -50,7 +50,7 @@ size_t job_size(Render_Job* job)
 	case RENDER_JOB_NONE:
 		return OFFSET_OF(Render_Job, triangles);
 	case RENDER_JOB_TRIANGLES:
-		return OFFSET_OF(Render_Job, triangles.triangles.items) + end_size(job->triangles.triangles);
+		return OFFSET_OF(Render_Job, triangles.instances.items) + end_size(job->triangles.instances);
 	case RENDER_JOB_TYPE_SPRITES:
 		return OFFSET_OF(Render_Job, sprites.instances.items) + end_size(job->sprites.instances);
 	}
@@ -82,22 +82,20 @@ void end(Render_Job_Buffer* buffer)
 	memset(buffer->cur_pos, 0, sizeof(Render_Job));
 }
 
-void begin_triangles(Render_Job_Buffer* buffer, Debug_Draw_World_Constant_Buffer constants)
+void begin_triangles(Render_Job_Buffer* buffer)
 {
 	auto job = (Render_Job*)buffer->cur_pos;
 	ASSERT(job->type == RENDER_JOB_NONE);
 	job->type = RENDER_JOB_TRIANGLES;
-	job->triangles.constants = constants;
-	job->triangles.triangles.len = 0;
+	job->triangles.instances.len = 0;
 }
 
-void push_triangle(Render_Job_Buffer* buffer, Debug_Draw_World_Triangle triangle)
+void push_triangle(Render_Job_Buffer* buffer, Triangle_Instance instance)
 {
 	auto job = (Render_Job*)buffer->cur_pos;
 	ASSERT(job->type == RENDER_JOB_TRIANGLES);
-	void *buffer_end = &job->triangles.triangles.items[job->triangles.triangles.len];
-	push(buffer, &triangle, sizeof(triangle));
-	job->triangles.triangles.len += 1;
+	push(buffer, &instance, sizeof(instance));
+	job->triangles.instances.len += 1;
 }
 
 void begin_sprites(Render_Job_Buffer* buffer, Texture_ID texture_id, Sprite_Constants constants)
@@ -129,7 +127,7 @@ Texture_ID load_texture(Render* render, const char* filename, Platform_Functions
 	auto texture = load_texture(filename, platform_functions);
 	ASSERT(texture);	
 	if (!texture) {
-		return 0xFFFFFFFF;
+		return INVALID_TEXTURE_ID;
 	}
 
 	Texture_ID tex_id = render->textures.len++;

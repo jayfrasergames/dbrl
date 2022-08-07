@@ -13,7 +13,8 @@
 
 // SHADER(name, filename, shader_model, entry_point)
 #define DX11_PIXEL_SHADERS \
-	DX11_PS(SPRITE,              "sprites.hlsl",                 "ps_sprite") \
+	DX11_PS(SPRITE,              "sprites.hlsl",                "ps_sprite") \
+	DX11_PS(TRIANGLE,            "triangle.hlsl",               "ps_triangle") \
 	DX11_PS(SPRITE_SHEET_RENDER, "sprite_sheet.hlsl",           "ps_sprite") \
 	DX11_PS(SPRITE_SHEET_FONT,   "sprite_sheet.hlsl",           "ps_font") \
 	DX11_PS(PASS_THROUGH,        "pass_through_output.hlsl",    "ps_pass_through") \
@@ -24,7 +25,8 @@
 	DX11_PS(FOV_FILL,            "field_of_vision_render.hlsl", "ps_fill")
 
 #define DX11_VERTEX_SHADERS \
-	DX11_VS(SPRITE,              "sprites.hlsl",                 "vs_sprite") \
+	DX11_VS(TRIANGLE,            "triangle.hlsl",               "vs_triangle") \
+	DX11_VS(SPRITE,              "sprites.hlsl",                "vs_sprite") \
 	DX11_VS(SPRITE_SHEET_RENDER, "sprite_sheet.hlsl",           "vs_sprite") \
 	DX11_VS(SPRITE_SHEET_FONT,   "sprite_sheet.hlsl",           "vs_font") \
 	DX11_VS(PASS_THROUGH,        "pass_through_output.hlsl",    "vs_pass_through") \

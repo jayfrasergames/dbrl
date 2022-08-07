@@ -205,13 +205,23 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 	case WM_KEYDOWN:
 		switch (wparam) {
 		case VK_F1: input_back_buffer_button_down(INPUT_BUTTON_F1); break;
+		case VK_F2: input_back_buffer_button_down(INPUT_BUTTON_F2); break;
 		case VK_F5: input_back_buffer_button_down(INPUT_BUTTON_F5); break;
+		case VK_UP: input_back_buffer_button_down(INPUT_BUTTON_UP); break;
+		case VK_DOWN: input_back_buffer_button_down(INPUT_BUTTON_DOWN); break;
+		case VK_LEFT: input_back_buffer_button_down(INPUT_BUTTON_LEFT); break;
+		case VK_RIGHT: input_back_buffer_button_down(INPUT_BUTTON_RIGHT); break;
 		}
 		return 0;
 	case WM_KEYUP:
 		switch (wparam) {
 		case VK_F1: input_back_buffer_button_up(INPUT_BUTTON_F1); break;
+		case VK_F2: input_back_buffer_button_up(INPUT_BUTTON_F2); break;
 		case VK_F5: input_back_buffer_button_up(INPUT_BUTTON_F5); break;
+		case VK_UP: input_back_buffer_button_up(INPUT_BUTTON_UP); break;
+		case VK_DOWN: input_back_buffer_button_up(INPUT_BUTTON_DOWN); break;
+		case VK_LEFT: input_back_buffer_button_up(INPUT_BUTTON_LEFT); break;
+		case VK_RIGHT: input_back_buffer_button_up(INPUT_BUTTON_RIGHT); break;
 		}
 		return 0;
 	case WM_CHAR: {

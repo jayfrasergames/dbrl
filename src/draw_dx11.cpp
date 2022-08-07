@@ -349,32 +349,37 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			dispatch_constants->base_offset = cur_instance;
 			dc->Unmap(dispatch_cb, 0);
 
+			/*
 			ID3D11Buffer *cb = cbs[cur_cb++];
 			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
 			ASSERT(SUCCEEDED(hr));
 			memcpy(mapped_res.pData, &job->triangles.constants, sizeof(job->triangles.constants));
 			dc->Unmap(cb, 0);
+			*/
 
-			u32 len = job->triangles.triangles.len;
-			auto *triangles = job->triangles.triangles.items;
+			++cur_cb;
+
+			u32 len = job->triangles.instances.len;
+			auto *instances = job->triangles.instances.items;
 			for (u32 i = 0; i < len; ++i) {
-				push_instance(instance_buffer, &triangles[i], &cur_instance);
+				push_instance(instance_buffer, &instances[i], &cur_instance);
 			}
 
-			dc->VSSetConstantBuffers(0, 1, &cb);
+			ID3D11Buffer *cbs[] = { global_cb, dispatch_cb };
+			dc->VSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
 			dc->VSSetShaderResources(0, 1, &renderer->instance_buffer_srv);
-			dc->VSSetShader(vs[DX11_VS_DDW_TRIANGLE], NULL, 0);
+			dc->VSSetShader(vs[DX11_VS_TRIANGLE], NULL, 0);
 
 			dc->RSSetViewports(1, &viewport);
 			dc->RSSetState(renderer->rasterizer_state);
 
-			dc->PSSetShader(ps[DX11_PS_DDW_TRIANGLE], NULL, 0);
+			dc->PSSetShader(ps[DX11_PS_TRIANGLE], NULL, 0);
 
 			ID3D11RenderTargetView *rtvs = { renderer->output_rtv };
 			dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), &rtvs, NULL);
 			dc->OMSetBlendState(renderer->blend_state, NULL, 0xFFFFFFFF);
 
-			dc->DrawInstanced(3, job->triangles.triangles.len, 0, 0);
+			dc->DrawInstanced(3, job->triangles.instances.len, 0, 0);
 			break;
 		}
 
