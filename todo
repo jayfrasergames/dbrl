@@ -16,17 +16,19 @@
       * move output history to generic logging thing
 
     * global error state/error.h
+      * move functions over to using jfg_error.h
+      * add an error log (once logging is done)
 
     * abstract renderer
       * move to using adstracted renderer
 
     * cleanup renderer
-      * port shaders to cleaned up renderer
+      * port shaders to cleaned up renderer (reverse order they are rendered in dbrl.cpp)
+        * imgui
         * card_render
         * debug_draw_world
         * debug_line_draw
         * field_of_vision
-        * imgui
         * particles
         * pass_through_output
         * pixel_art_upsampler
