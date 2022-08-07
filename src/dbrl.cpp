@@ -40,24 +40,12 @@
 #include "render.h"
 
 // =============================================================================
-// Global Platform Functions
-
-#define PLATFORM_FUNCTION(return_type, name, ...) return_type (*name)(__VA_ARGS__) = NULL;
-PLATFORM_FUNCTIONS
-#undef PLATFORM_FUNCTION
-
-// =============================================================================
 // type definitions/constants
 
 
 struct Program;
 thread_local Program *global_program;
-thread_local Log *debug_log;
-thread_local Log *debug_pause_log;
 void debug_pause();
-
-#define DLOG(...) log(debug_log, __VA_ARGS__)
-#define DPLOG(...) log(debug_pause_log, __VA_ARGS__)
 
 template <typename T>
 struct Map_Cache
@@ -2051,7 +2039,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				}
 			}
 
-			DPLOG("Time: %f, %x", time, *(u32*)&time);
+			// DPLOG("Time: %f, %x", time, *(u32*)&time);
 			debug_pause();
 		}
 
@@ -5043,16 +5031,16 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 	u32 num_card_anims = card_anim_state->num_card_anims;
 	u32 selected_card_index = card_anim_state->hand_size;
 	Card_Anim *anim = card_anim_state->card_anims;
-	log(debug_log, "highlighted_card_id = %u", highlighted_card_id);
+	// log(debug_log, "highlighted_card_id = %u", highlighted_card_id);
 	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 		if (anim->card_id == highlighted_card_id) {
 			switch (anim->type) {
 			case CARD_ANIM_IN_HAND:
 				selected_card_index = anim->hand.index;
-				log(debug_log, "set selected_card_index 1");
+				// log(debug_log, "set selected_card_index 1");
 				break;
 			case CARD_ANIM_HAND_TO_HAND:
-				log(debug_log, "set selected_card_index 2");
+				// log(debug_log, "set selected_card_index 2");
 				selected_card_index = anim->hand_to_hand.index;
 				break;
 			default:
@@ -5061,12 +5049,12 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 			break;
 		}
 	}
-	log(debug_log, "num_card_anims: %u", num_card_anims);
+	// log(debug_log, "num_card_anims: %u", num_card_anims);
 	if (selected_card_index < card_anim_state->hand_size) {
-		log(debug_log, "selected_card_index < card_anim_state->hand_size");
+		// log(debug_log, "selected_card_index < card_anim_state->hand_size");
 		hand_calc_deltas(deltas, &hand_params, selected_card_index);
 	} else {
-		log(debug_log, "selected_card_index >= card_anim_state->hand_size");
+		// log(debug_log, "selected_card_index >= card_anim_state->hand_size");
 		highlighted_card_id = 0;
 		memset(deltas, 0, selected_card_index * sizeof(deltas[0]));
 	}
@@ -5908,15 +5896,11 @@ Memory_Spec get_program_size()
 void set_global_state(Program* program)
 {
 	global_program = program;
-	debug_log = &program->debug_log;
-	debug_pause_log = &program->debug_pause_log;
+	// debug_log = &program->debug_log;
+	// debug_pause_log = &program->debug_pause_log;
 
 	program->random_state.set_current();
 	program->draw->debug_draw_world.set_current();
-
-#define PLATFORM_FUNCTION(_return_type, name, ...) name = program->platform_functions.name;
-	PLATFORM_FUNCTIONS
-#undef PLATFORM_FUNCTION
 }
 
 void build_level_default(Program* program)
@@ -6245,7 +6229,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 {
 	// start off by setting global state
 	set_global_state(program);
-	log_reset(debug_log);
+	// log_reset(debug_log);
 
 	program->draw->debug_draw_world.reset();
 
@@ -6838,18 +6822,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			imgui_tree_end(ic);
 		}
 		constants_do_imgui(ic);
-		if (imgui_tree_begin(ic, "debug log")) {
-			u32 start = 0;
-			u32 end = debug_log->cur_line;
-			if (end > LOG_MAX_LINES) {
-				start = end - LOG_MAX_LINES;
-			}
-
-			for (u32 i = start; i < end; ++i) {
-				imgui_text(ic, log_get_line(debug_log, i));
-			}
-			imgui_tree_end(ic);
-		}
 		imgui_tree_end(ic);
 	}
 
@@ -6923,19 +6895,6 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 			                      { 1.0f, 0.0f, 1.0f, 1.0f },
 			                      { 5.0f, 5.0f });
 			imgui_text(&program->draw->imgui, "DEBUG PAUSE");
-			// draw log
-			{
-				u32 start = 0;
-				u32 end = program->debug_pause_log.cur_line;
-				if (end > LOG_MAX_LINES) {
-					start = end - LOG_MAX_LINES;
-				}
-
-				for (u32 i = start; i < end; ++i) {
-					imgui_text(&program->draw->imgui,
-					           log_get_line(&program->debug_pause_log, i));
-				}
-			}
 		}
 		break;
 	}

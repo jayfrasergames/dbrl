@@ -590,15 +590,19 @@ error_init_output_texture:
 	return false;
 }
 
-bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
+JFG_Error init(DX11_Renderer* renderer, Log* log, Draw* draw, HWND window)
 {
+	renderer->log = log;
+
 	if (!d3d11_try_load()) {
-		return false;
+		jfg_set_error("Failed to load d3d11 DLL!");
+		return JFG_ERROR;
 	}
 
 	d3d_compiler_library = LoadLibraryA("D3DCompiler_47.dll");
 	if (!d3d_compiler_library) {
-		return false;
+		jfg_set_error("Failed to load d3d compiler DLL!");
+		return JFG_ERROR;
 	}
 
 #define D3D_COMPILE_FUNC(return_type, name, ...) \
@@ -621,21 +625,24 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 		&renderer->device_context);
 
 	if (FAILED(hr)) {
-		return false;
+		jfg_set_error("Failed to create D3D11 device!");
+		return JFG_ERROR;
 	}
 
 	ID3D11Device *device = renderer->device;
 
 	if (!reload_shaders(renderer)) {
-		return false;
+		return JFG_ERROR;
 	}
 
 	ID3D11InfoQueue *info_queue;
 	hr = device->QueryInterface(IID_PPV_ARGS(&info_queue));
 
 	if (FAILED(hr)) {
-		return 0;
+		jfg_set_error("Failed to create info queue!");
+		return JFG_ERROR;
 	}
+	renderer->info_queue = info_queue;
 
 	info_queue->SetMuteDebugOutput(FALSE);
 
@@ -643,21 +650,22 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 	hr = device->QueryInterface(IID_PPV_ARGS(&dxgi_device));
 
 	if (FAILED(hr)) {
-		return 0;
+		jfg_set_error("Failed to create DXGI device!");
+		return JFG_ERROR;
 	}
 
 	IDXGIAdapter *dxgi_adapter;
 	hr = dxgi_device->GetAdapter(&dxgi_adapter);
 
 	if (FAILED(hr)) {
-		return 0;
+		return JFG_ERROR;
 	}
 
 	IDXGIFactory *dxgi_factory;
 	hr = dxgi_adapter->GetParent(IID_PPV_ARGS(&dxgi_factory));
 
 	if (FAILED(hr)) {
-		return 0;
+		return JFG_ERROR;
 	}
 
 	DXGI_SWAP_CHAIN_DESC swap_chain_desc = {};
@@ -680,12 +688,12 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 	hr = dxgi_factory->CreateSwapChain(device, &swap_chain_desc, &renderer->swap_chain);
 
 	if (FAILED(hr)) {
-		return 0;
+		return JFG_ERROR;
 	}
 
 	hr = renderer->swap_chain->GetBuffer(0, IID_PPV_ARGS(&renderer->back_buffer));
 	if (FAILED(hr)) {
-		return 0;
+		return JFG_ERROR;
 	}
 
 	D3D11_TEXTURE2D_DESC back_buffer_desc = {};
@@ -700,7 +708,7 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 	                                    &back_buffer_rtv_desc,
 	                                    &renderer->back_buffer_rtv);
 	if (FAILED(hr)) {
-		return 0;
+		return JFG_ERROR;
 	}
 
 	D3D11_VIEWPORT viewport = {};
@@ -713,16 +721,16 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 
 	auto screen_size = v2_u32(back_buffer_desc.Width, back_buffer_desc.Height);
 	if (!create_output_texture(renderer, screen_size)) {
-		return false;
+		return JFG_ERROR;
 	}
 	renderer->screen_size = screen_size;
 
 	if (!program_d3d11_init(draw, renderer->device)) {
-		return false;
+		return JFG_ERROR;
 	}
 
 	if (!pixel_art_upsampler_d3d11_init(&renderer->pixel_art_upsampler, renderer->device)) {
-		return false;
+		return JFG_ERROR;
 	}
 
 	// create constant buffers
@@ -739,7 +747,7 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 
 		hr = device->CreateBuffer(&desc, NULL, &cb);
 		if (FAILED(hr)) {
-			return false;
+			return JFG_ERROR;
 		}
 
 		renderer->cbs[i] = cb;
@@ -759,7 +767,7 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 
 		hr = device->CreateBuffer(&desc, NULL, &cb);
 		if (FAILED(hr)) {
-			return false;
+			return JFG_ERROR;
 		}
 
 		renderer->dispatch_cbs[i] = cb;
@@ -779,7 +787,7 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 
 		hr = device->CreateBuffer(&desc, NULL, &instance_buffer);
 		if (FAILED(hr)) {
-			return false;
+			return JFG_ERROR;
 		}
 
 		renderer->instance_buffer = instance_buffer;
@@ -799,7 +807,7 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 		                                      &desc,
 		                                      &srv);
 		if (FAILED(hr)) {
-			return false;
+			return JFG_ERROR;
 		}
 
 		renderer->instance_buffer_srv = srv;
@@ -823,7 +831,7 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 
 		hr = device->CreateBlendState(&desc, &bs);
 		if (FAILED(hr)) {
-			return false;
+			return JFG_ERROR;
 		}
 		renderer->blend_state = bs;
 	}
@@ -846,13 +854,13 @@ bool init(DX11_Renderer* renderer, Draw* draw, HWND window)
 
 		hr = device->CreateRasterizerState(&desc, &rs);
 		if (FAILED(hr)) {
-			return false;
+			return JFG_ERROR;
 		}
 
 		renderer->rasterizer_state = rs;
 	}
 
-	return true;
+	return JFG_SUCCESS;
 }
 
 bool set_screen_size(DX11_Renderer* renderer, v2_u32 screen_size)
@@ -903,4 +911,28 @@ bool set_screen_size(DX11_Renderer* renderer, v2_u32 screen_size)
 void free(DX11_Renderer* renderer)
 {
 	// TODO -- close DLL etc
+}
+
+bool check_errors(DX11_Renderer* renderer, u32 frame_number)
+{
+	char buffer[4096];
+	Log *l = renderer->log;
+	ID3D11InfoQueue *info_queue = renderer->info_queue;
+	u64 num_messages = renderer->info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
+	if (num_messages) {
+		logf(l, "Frame %u: There are %llu D3D11 messages:", frame_number, num_messages);
+		for (u64 i = 0; i < num_messages; ++i) {
+			size_t message_len;
+			HRESULT hr = info_queue->GetMessage(i, NULL, &message_len);
+			ASSERT(message_len < ARRAY_SIZE(buffer));
+			ASSERT(SUCCEEDED(hr));
+			D3D11_MESSAGE *message = (D3D11_MESSAGE*)buffer;
+			hr = info_queue->GetMessage(i, message, &message_len);
+			ASSERT(SUCCEEDED(hr));
+			log(l, message->pDescription);
+		}
+		info_queue->ClearStoredMessages();
+		return true;
+	}
+	return false;
 }

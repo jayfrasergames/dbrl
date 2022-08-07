@@ -47,6 +47,33 @@ u32 win32_try_read_file(char* filename, void* dest, u32 max_size)
 	return bytes_read;
 }
 
+JFG_Error win32_try_write_file(const char* filename, void* src, size_t size)
+{
+	HANDLE file_handle = CreateFile(filename,
+	                                GENERIC_WRITE,
+	                                FILE_SHARE_WRITE,
+	                                NULL,
+	                                CREATE_ALWAYS,
+	                                FILE_ATTRIBUTE_NORMAL,
+	                                NULL);
+	if (!file_handle) {
+		jfg_set_error("Failed to create file \"%s\"", filename);
+		return JFG_ERROR;
+	}
+
+	JFG_Error error = JFG_SUCCESS;
+
+	DWORD bytes_written = 0;
+	BOOL succeeded = WriteFile(file_handle, src, size, &bytes_written, NULL);
+	if (!succeeded || bytes_written != size) {
+		jfg_set_error("Failed to write file \"%s\"", filename);
+		error = JFG_ERROR;
+	}
+
+	CloseHandle(file_handle);
+	return JFG_SUCCESS;
+}
+
 void show_debug_messages(HWND window, ID3D11InfoQueue *info_queue)
 {
 	// u64 num_messages = info_queue->GetNumStoredMessages();
@@ -206,6 +233,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 		switch (wparam) {
 		case VK_F1: input_back_buffer_button_down(INPUT_BUTTON_F1); break;
 		case VK_F2: input_back_buffer_button_down(INPUT_BUTTON_F2); break;
+		case VK_F3: input_back_buffer_button_down(INPUT_BUTTON_F3); break;
 		case VK_F5: input_back_buffer_button_down(INPUT_BUTTON_F5); break;
 		case VK_UP: input_back_buffer_button_down(INPUT_BUTTON_UP); break;
 		case VK_DOWN: input_back_buffer_button_down(INPUT_BUTTON_DOWN); break;
@@ -217,6 +245,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam
 		switch (wparam) {
 		case VK_F1: input_back_buffer_button_up(INPUT_BUTTON_F1); break;
 		case VK_F2: input_back_buffer_button_up(INPUT_BUTTON_F2); break;
+		case VK_F3: input_back_buffer_button_up(INPUT_BUTTON_F3); break;
 		case VK_F5: input_back_buffer_button_up(INPUT_BUTTON_F5); break;
 		case VK_UP: input_back_buffer_button_up(INPUT_BUTTON_UP); break;
 		case VK_DOWN: input_back_buffer_button_up(INPUT_BUTTON_DOWN); break;
@@ -252,6 +281,7 @@ struct Game_Loop_Args
 	HWND window;
 };
 
+char d3d11_log_buffer[8192] = {};
 Draw draw_data = {};
 Render renderer = {};
 
@@ -276,6 +306,10 @@ DWORD __stdcall game_loop(void *uncast_args)
 		return 0;
 	}
 
+	Log d3d11_log = {};
+	init(&d3d11_log, d3d11_log_buffer, ARRAY_SIZE(d3d11_log_buffer), &renderer);
+	d3d11_log.grid_size = v2_u32(80, 40);
+
 	ASSERT(((uintptr_t)program & (program_size.alignment - 1)) == 0);
 
 	v2_u32 screen_size, prev_screen_size;
@@ -286,20 +320,26 @@ DWORD __stdcall game_loop(void *uncast_args)
 	platform_functions.start_thread = win32_start_thread;
 	platform_functions.sleep = win32_sleep;
 	platform_functions.try_read_file = win32_try_read_file;
+	platform_functions.try_write_file = win32_try_write_file;
+
+	start_thread = win32_start_thread;
+	sleep = win32_sleep;
+	try_read_file = win32_try_read_file;
+	try_write_file = win32_try_write_file;
+
 	program_init(program, &draw_data, &renderer, platform_functions);
 	// u8 d3d11_init_success = program_d3d11_init(program, device, screen_size);
 
 	DX11_Renderer dx11_renderer = {};	
 	// TODO -- should probably post a quit message along with exiting!!!
-	if (!init(&dx11_renderer, &draw_data, window)) {
+	if (init(&dx11_renderer, &d3d11_log, &draw_data, window) != JFG_SUCCESS) {
 		return 0;
 	}
 
+	load_textures(&renderer, &platform_functions);
 	reload_textures(&dx11_renderer, &renderer);
 
 	v2_u32 mouse_pos = { 0, 0 }, prev_mouse_pos = { 0, 0 };
-
-	Log d3d11_log = {};
 
 	if (!dsound_try_load()) {
 		return 0;
@@ -314,6 +354,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	hr = dsound->SetCooperativeLevel(window, DSSCL_PRIORITY);
 	if (FAILED(hr)) {
+		// XXX -- amusing this is called "d3d11 log"
 		log(&d3d11_log, "Failed to set direct sound priority");
 	}
 
@@ -346,7 +387,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	program_dsound_init(program, dsound);
 
-	u8 draw_debug_info = 0;
+	bool draw_debug_info = false;
 	for (u32 frame_number = 0; running; ++frame_number) {
 
 		get_screen_size(window, &screen_size);
@@ -360,6 +401,9 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		if (input_get_num_up_transitions(input_front_buffer, INPUT_BUTTON_F5)) {
 			draw_debug_info = !draw_debug_info;
+		}
+		if (input_get_num_up_transitions(input_front_buffer, INPUT_BUTTON_F3)) {
+			write_to_file(&d3d11_log, "d3d11_log.txt");
 		}
 
 		POINT point;
@@ -389,50 +433,12 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		program_dsound_play(program);
 
-		// render any d3d11 messages we may have
-		/*
-		u64 num_messages = info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
-		if (num_messages) {
-			draw_debug_info = 1;
-			char buffer[1024] = {};
-			snprintf(buffer,
-			         ARRAY_SIZE(buffer),
-			         "Frame %u: There are %llu D3D11 messages",
-			         frame_number,
-			         num_messages);
-			// imgui_text(&imgui, buffer);
-			log(&d3d11_log, buffer);
-			for (u64 i = 0; i < num_messages; ++i) {
-				size_t message_len;
-				HRESULT hr = info_queue->GetMessage(i, NULL, &message_len);
-				ASSERT(SUCCEEDED(hr));
-				D3D11_MESSAGE *message = (D3D11_MESSAGE*)malloc(message_len);
-				hr = info_queue->GetMessage(i, message, &message_len);
-				ASSERT(SUCCEEDED(hr));
-				// imgui_text(&imgui, (char*)message->pDescription);
-				log(&d3d11_log, (char*)message->pDescription);
-				free(message);
-			}
-			info_queue->ClearStoredMessages();
-		}
-
-		// draw log
-		{
-			u32 start = 0;
-			u32 end = d3d11_log.cur_line;
-			if (end > LOG_MAX_LINES) {
-				start = end - LOG_MAX_LINES;
-			}
-
-			for (u32 i = start; i < end; ++i) {
-				imgui_text(&imgui, log_get_line(&d3d11_log, i));
-			}
-		}
-
+		bool new_errors = check_errors(&dx11_renderer, frame_number);
+		draw_debug_info |= new_errors;
 		if (draw_debug_info) {
-			imgui_d3d11_draw(&imgui, context, back_buffer_rtv, screen_size);
+			render(&d3d11_log, &renderer);
 		}
-		*/
+
 		draw(&dx11_renderer, &draw_data, &renderer);
 	}
 	return 1;

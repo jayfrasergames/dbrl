@@ -3,6 +3,7 @@
 #include "prelude.h"
 #include "texture.h"
 #include "containers.hpp"
+#include "jfg_error.h"
 
 #include "sprites_gpu_data_types.h"
 #include "triangle_gpu_data_types.h"
@@ -56,7 +57,8 @@ struct Render
 };
 
 bool init(Render* render);
-Texture_ID load_texture(Render* render, const char* filename, Platform_Functions* platform_functions);
+Texture_ID get_texture_id(Render* render, const char* filename);
+JFG_Error load_textures(Render* render, Platform_Functions* platform_functions);
 
 void init(Render_Job_Buffer* buffer, void* base, size_t size);
 

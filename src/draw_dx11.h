@@ -2,6 +2,7 @@
 
 #include "prelude.h"
 #include "containers.hpp"
+#include "jfg_error.h"
 
 #include "draw.h"
 #include "jfg_d3d11.h"
@@ -9,6 +10,7 @@
 
 #include "pixel_art_upsampler.h"
 
+#include "log.h"
 #include "render.h"
 
 // SHADER(name, filename, shader_model, entry_point)
@@ -117,11 +119,14 @@ enum DX11_Constant_Buffer
 
 struct DX11_Renderer
 {
+	Log                       *log;
 	// TODO -- remove this from here?
 	HMODULE                    d3d11_library;
 
 	ID3D11Device              *device;
 	ID3D11DeviceContext       *device_context;
+	ID3D11InfoQueue           *info_queue;
+
 	IDXGISwapChain            *swap_chain;
 	ID3D11Texture2D           *back_buffer;
 	ID3D11RenderTargetView    *back_buffer_rtv;
@@ -155,7 +160,8 @@ struct DX11_Renderer
 
 bool reload_textures(DX11_Renderer* dx11_render, Render* render);
 
-bool init(DX11_Renderer* renderer, Draw* draw, HWND window);
+JFG_Error init(DX11_Renderer* renderer, Log* log, Draw* draw, HWND window);
 bool set_screen_size(DX11_Renderer* renderer, v2_u32 screen_size);
+bool check_errors(DX11_Renderer* renderer, u32 frame_number);
 void free(DX11_Renderer* renderer);
 void draw(DX11_Renderer* renderer, Draw* draw, Render* render);

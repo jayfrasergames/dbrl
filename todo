@@ -1,20 +1,19 @@
 * tasks:
 
   * technical
-    * console
-      * draw console
-        * make buffers (instance, constant)
-        * load codepage437 texture
-      * make console execute lua
-      * tab completion
-      * command history
-      * output history
-      * scrolling
+    * fix D3D11 errors
 
     * logging
       * have a list of different logs and make an interface for reading those logs
       * logs can create notifications if something bad happens
       * per frame log - reset it every frame :)
+      * export to clipboard
+
+    * console
+      * command history
+      * tab completion
+      * scrolling
+      * move output history to generic logging thing
 
     * global error state/error.h
 

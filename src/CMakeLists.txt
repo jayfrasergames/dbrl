@@ -41,14 +41,17 @@ set(object_sources
 	card_render.cpp
 	debug_draw_world.cpp
 	debug_line_draw.cpp
+	jfg_error.cpp
 	sprite_sheet.cpp
 	field_of_vision_render.cpp
 	input.cpp
 	imgui.cpp
+	log.cpp
 	dbrl.cpp
 	format.cpp
 	particles.cpp
 	pixel_art_upsampler.cpp
+	platform_functions.cpp
 	draw_dx11.cpp
 	jfg_d3d11.cpp
 	random.cpp

@@ -72,7 +72,7 @@ static int l_print(lua_State* lua_state)
 bool init(Console* console, v2_u32 size, lua_State* lua_state, Render* render, Platform_Functions* platform_functions)
 {
 	memset(console, 0, sizeof(*console));
-	console->font_tex_id = load_texture(render, "Codepage-437.png", platform_functions);
+	console->font_tex_id = get_texture_id(render, "Codepage-437.png");
 	if (console->font_tex_id == INVALID_TEXTURE_ID) {
 		return false;
 	}

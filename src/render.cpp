@@ -115,7 +115,7 @@ void push_sprite(Render_Job_Buffer* buffer, Sprite_Instance instance)
 	job->sprites.instances.len += 1;
 }
 
-Texture_ID load_texture(Render* render, const char* filename, Platform_Functions* platform_functions)
+Texture_ID get_texture_id(Render* render, const char* filename)
 {
 	for (u32 i = 0; i < render->textures.len; ++i) {
 		if (strcmp(filename, render->textures[i].filename) == 0) {
@@ -123,17 +123,29 @@ Texture_ID load_texture(Render* render, const char* filename, Platform_Functions
 		}
 	}
 
-	ASSERT(has_space(render->textures));
-	auto texture = load_texture(filename, platform_functions);
-	ASSERT(texture);	
-	if (!texture) {
+	if (!has_space(render->textures)) {
 		return INVALID_TEXTURE_ID;
 	}
-
 	Texture_ID tex_id = render->textures.len++;
 	auto *new_tex = &render->textures.items[tex_id];
 	strncpy(new_tex->filename, filename, ARRAY_SIZE(new_tex->filename));
-	new_tex->texture = texture;
+	new_tex->texture = NULL;
 
 	return tex_id;
+}
+
+JFG_Error load_textures(Render* render, Platform_Functions* platform_functions)
+{
+	for (u32 i = 0; i < render->textures.len; ++i) {
+		auto texture = &render->textures[i];
+		if (!texture->texture) {
+			texture->texture = load_texture(texture->filename, platform_functions);
+			if (!texture->texture) {
+				jfg_set_error("Failed to load texture \"%s\"!", texture->filename);
+				return JFG_ERROR;
+			}
+		}
+	}
+
+	return JFG_SUCCESS;
 }
