@@ -139,6 +139,10 @@ struct DX11_Renderer
 	ID3D11Buffer              *cbs[MAX_CONSTANT_BUFFERS];
 	ID3D11Buffer              *dispatch_cbs[MAX_CONSTANT_BUFFERS];
 
+	ID3D11InputLayout         *sprite_input_layout;
+	ID3D11ShaderResourceView  *sprite_instance_buffer_srv;
+	ID3D11Buffer              *sprite_instance_buffer;
+
 	ID3D11ShaderResourceView  *instance_buffer_srv;
 	ID3D11Buffer              *instance_buffer;
 
@@ -148,6 +152,8 @@ struct DX11_Renderer
 	ID3D11PixelShader         *ps[NUM_DX11_PIXEL_SHADERS];
 	ID3D11VertexShader        *vs[NUM_DX11_VERTEX_SHADERS];
 	ID3D11ComputeShader       *cs[NUM_DX11_COMPUTE_SHADERS];
+
+	ID3DBlob                  *vs_code[NUM_DX11_VERTEX_SHADERS];
 
 	Max_Length_Array<ID3D11ShaderResourceView*, MAX_TEXTURES> srvs;
 	Max_Length_Array<ID3D11Texture2D*, MAX_TEXTURES>          tex;

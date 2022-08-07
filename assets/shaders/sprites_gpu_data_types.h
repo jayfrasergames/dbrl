@@ -11,9 +11,9 @@ struct Sprite_Constants
 
 struct Sprite_Instance
 {
-	F2 glyph_coords;
-	F2 output_coords;
-	F4 color;
+	F2 glyph_coords  SEMANTIC_NAME(GLYPH_COORDS);
+	F2 output_coords SEMANTIC_NAME(OUTPUT_COORDS);
+	F4 color         SEMANTIC_NAME(COLOR);
 };
 
 #endif

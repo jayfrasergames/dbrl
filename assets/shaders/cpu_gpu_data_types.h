@@ -3,6 +3,8 @@
 
 #ifdef JFG_HLSL
 
+	#define SEMANTIC_NAME(name) : name
+
 	#define F1 float
 	#define F2 float2
 	#define F3 float3
@@ -21,6 +23,8 @@
 #else
 
 #include "prelude.h"
+
+	#define SEMANTIC_NAME(name)
 
 	#define F1 f32
 	#define F2 v2

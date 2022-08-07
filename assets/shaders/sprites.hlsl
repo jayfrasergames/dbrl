@@ -20,7 +20,6 @@ cbuffer cb2 : register(b2)
 	Sprite_Constants constants;
 };
 
-StructuredBuffer<Sprite_Instance> instances : register(t0);
 Texture2D<float4>                 tex       : register(t0);
 
 struct VS_Sprite_Output
@@ -51,12 +50,11 @@ static const float2 TRIANGLE_VERTICES[] = {
 	float2(1.0f,  1.0f),
 };
 
-VS_Sprite_Output vs_sprite(uint vid : SV_VertexID, uint iid : SV_InstanceID)
+VS_Sprite_Output vs_sprite(uint vid : SV_VertexID, Sprite_Instance instance)
 {
 	VS_Sprite_Output output;
 
 	float2 vertex = TRIANGLE_VERTICES[vid];
-	Sprite_Instance instance = instances[iid + dispatch_constants.base_offset];
 
 	float2 tex_coord = (instance.glyph_coords + vertex) * constants.tile_input_size;
 	float2 pos = (instance.output_coords + vertex) * constants.tile_output_size / global_constants.screen_size;

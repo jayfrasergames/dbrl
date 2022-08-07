@@ -1,6 +1,7 @@
 #ifndef PLATFORM_FUNCTIONS_H
 #define PLATFORM_FUNCTIONS_H
 
+#include "prelude.h"
 #include "jfg_error.h"
 
 typedef void (*Thread_Function)(void* data);
