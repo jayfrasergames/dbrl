@@ -10,12 +10,7 @@ cbuffer cb : register(b0)
 	Shader_Global_Constants global_constants;
 };
 
-cbuffer dispatch_cb : register(b1)
-{
-	Shader_Per_Dispatch_Constants dispatch_constants;
-};
-
-cbuffer cb2 : register(b2)
+cbuffer cb2 : register(b1)
 {
 	Sprite_Constants constants;
 };

@@ -181,7 +181,6 @@ void render(Console* console, Render* render, f32 time)
 	v2 top_right = v2(bottom_right.x, top_left.y);
 	v2 bottom_left = v2(top_left.x, bottom_right.y);
 
-	begin_triangles(r);
 	Triangle_Instance t = {};
 	t.color = v4(0.0f, 0.0f, 0.0f, 0.5f);
 	t.a = top_left;
@@ -190,7 +189,6 @@ void render(Console* console, Render* render, f32 time)
 	push_triangle(r, t);
 	t.a = bottom_right;
 	push_triangle(r, t);
-	end(r);
 
 	Sprite_Constants sprite_constants = {};
 	sprite_constants.tile_input_size = glyph_size;
@@ -255,8 +253,6 @@ end_history_buffer_print:
 		instance.output_coords = (v2)cursor_pos + console_top_left;
 		push_sprite(r, instance);
 	}
-
-	end(r);
 }
 
 static u32 get_next_line_start(Console* console, u32 pos)

@@ -19,13 +19,30 @@ D3D_COMPILE_FUNCS
 #define SAFE_RELEASE(x) do { if (x) { x->Release(); x = NULL; } } while(0)
 
 #define CONSTANT_BUFFER_SIZE 1024
-#define MAX_INSTANCE_WIDTH   64
-#define MAX_INSTANCES        64*1024
-#define INSTANCE_BUFFER_SIZE MAX_INSTANCE_WIDTH * MAX_INSTANCES
 
 static HMODULE d3d_compiler_library = NULL;
 const char* D3D_COMPILER_DLL_NAME = "D3DCompiler_47.dll";
 const char* SHADER_DIR = "..\\assets\\shaders";
+
+static DX11_Vertex_Shader vertex_shader_for_instance_buffer(Instance_Buffer_ID instance_buffer_id)
+{
+	switch (instance_buffer_id) {
+	case INSTANCE_BUFFER_SPRITE:   return DX11_VS_SPRITE;
+	case INSTANCE_BUFFER_TRIANGLE: return DX11_VS_TRIANGLE;
+	}
+	ASSERT(0);
+	return (DX11_Vertex_Shader)-1;
+}
+
+static DXGI_FORMAT get_dxgi_format(Format format)
+{
+	switch (format) {
+	case FORMAT_R32G32_F32:       return DXGI_FORMAT_R32G32_FLOAT;
+	case FORMAT_R32G32B32A32_F32: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+	}
+	ASSERT(0);
+	return DXGI_FORMAT_UNKNOWN;
+}
 
 enum Shader_Type
 {
@@ -232,6 +249,23 @@ static void push_instance(void* buffer, T* instance, u32* cur_pos)
 	memcpy((void*)((uptr)buffer + idx * MAX_INSTANCE_WIDTH), instance, sizeof(*instance));
 }
 
+void begin_frame(DX11_Renderer* renderer, Render* render)
+{
+	ID3D11DeviceContext *dc = renderer->device_context;
+	for (u32 i = 0; i < NUM_INSTANCE_BUFFERS; ++i) {
+		auto dx_ib = renderer->instance_buffers[i];
+
+		D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+		HRESULT hr = dc->Map(dx_ib, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+		ASSERT(SUCCEEDED(hr));
+
+		auto abs_ib = &render->render_job_buffer.instance_buffers[i];
+		abs_ib->base = mapped_res.pData;
+		abs_ib->buffer_head = mapped_res.pData;
+		abs_ib->cur_pos = 0;
+	}
+}
+
 void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 {
 	Render_Job_Buffer *render_jobs = &render->render_job_buffer;
@@ -326,16 +360,12 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 		dc->Unmap(global_cb, 0);
 	}
 
-	u32 cur_instance = 0;
-	D3D11_MAPPED_SUBRESOURCE instance_map = {};
-	hr = dc->Map(renderer->instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instance_map);
-	ASSERT(SUCCEEDED(hr));
-	void *instance_buffer = instance_map.pData;
+	for (u32 i = 0; i < ARRAY_SIZE(renderer->instance_buffers); ++i) {
+		dc->Unmap(renderer->instance_buffers[i], 0);
+	}
 
-	u32 sprite_instance_buffer_offset = 0;
-
-	render_jobs->cur_pos = render_jobs->base;
-	for (auto job = (Render_Job*)render_jobs->base; job->type != RENDER_JOB_NONE; job = next_job(render_jobs)) {
+	for (u32 i = 0; i < render_jobs->jobs.len; ++i) {
+		auto job = &render_jobs->jobs[i];
 		dc->ClearState();
 		switch (job->type) {
 		case RENDER_JOB_NONE:
@@ -343,34 +373,13 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			break;
 		case RENDER_JOB_TRIANGLES: {
 			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_TRIANGLE]);
+			u32 stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_TRIANGLE].element_size;
+			u32 offset = 0;
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_TRIANGLE], &stride, &offset);
 
-			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
-			ID3D11Buffer *dispatch_cb =  dispatch_cbs[cur_cb];
-			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
-			hr = dc->Map(dispatch_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
-			auto dispatch_constants = (Shader_Per_Dispatch_Constants*)mapped_res.pData;
-			dispatch_constants->base_offset = cur_instance;
-			dc->Unmap(dispatch_cb, 0);
-
-			/*
-			ID3D11Buffer *cb = cbs[cur_cb++];
-			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
-			ASSERT(SUCCEEDED(hr));
-			memcpy(mapped_res.pData, &job->triangles.constants, sizeof(job->triangles.constants));
-			dc->Unmap(cb, 0);
-			*/
-
-			++cur_cb;
-
-			u32 len = job->triangles.instances.len;
-			auto *instances = job->triangles.instances.items;
-			for (u32 i = 0; i < len; ++i) {
-				push_instance(instance_buffer, &instances[i], &cur_instance);
-			}
-
-			ID3D11Buffer *cbs[] = { global_cb, dispatch_cb };
+			ID3D11Buffer *cbs[] = { global_cb };
 			dc->VSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
-			dc->VSSetShaderResources(0, 1, &renderer->instance_buffer_srv);
 			dc->VSSetShader(vs[DX11_VS_TRIANGLE], NULL, 0);
 
 			dc->RSSetViewports(1, &viewport);
@@ -382,24 +391,19 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), &rtvs, NULL);
 			dc->OMSetBlendState(renderer->blend_state, NULL, 0xFFFFFFFF);
 
-			dc->DrawInstanced(3, job->triangles.instances.len, 0, 0);
+			dc->DrawInstanced(3, job->triangles.count, 0, job->triangles.start);
 			break;
 		}
 
-		case RENDER_JOB_TYPE_SPRITES: {
+		case RENDER_JOB_SPRITES: {
 			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-			dc->IASetInputLayout(renderer->sprite_input_layout);
-			u32 stride = 32;
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_SPRITE]);
+			u32 stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_SPRITE].element_size;
 			u32 offset = 0;
-			dc->IASetVertexBuffers(0, 1, &renderer->sprite_instance_buffer, &stride, &offset);
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_SPRITE], &stride, &offset);
 
 			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
-			ID3D11Buffer *dispatch_cb =  dispatch_cbs[cur_cb];
 			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
-			hr = dc->Map(dispatch_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
-			auto dispatch_constants = (Shader_Per_Dispatch_Constants*)mapped_res.pData;
-			dispatch_constants->base_offset = cur_instance;
-			dc->Unmap(dispatch_cb, 0);
 
 			ID3D11Buffer *cb = cbs[cur_cb++];
 			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
@@ -407,24 +411,7 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			memcpy(mapped_res.pData, &job->sprites.constants, sizeof(job->sprites.constants));
 			dc->Unmap(cb, 0);
 
-			hr = dc->Map(renderer->sprite_instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
-			ASSERT(SUCCEEDED(hr));
-			u32 len = job->sprites.instances.len;
-			u32 sprite_size = sizeof(job->sprites.instances.items[0]);
-			memcpy((void*)((uptr)mapped_res.pData + sprite_instance_buffer_offset * sprite_size),
-			       job->sprites.instances.items,
-			       len * sprite_size);
-			dc->Unmap(renderer->sprite_instance_buffer, 0);
-
-			/*
-			u32 len = job->sprites.instances.len;
-			auto *instances = job->sprites.instances.items;
-			for (u32 i = 0; i < len; ++i) {
-				push_instance(instance_buffer, &instances[i], &cur_instance);
-			}
-			*/
-
-			ID3D11Buffer *cbs[] = { global_cb, dispatch_cb, cb };
+			ID3D11Buffer *cbs[] = { global_cb, cb };
 			dc->VSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
 			dc->VSSetShader(vs[DX11_VS_SPRITE], NULL, 0);
 
@@ -438,15 +425,12 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), &rtvs, NULL);
 			dc->OMSetBlendState(renderer->blend_state, NULL, 0xFFFFFFFF);
 
-			dc->DrawInstanced(6, job->sprites.instances.len, 0, sprite_instance_buffer_offset);
-			sprite_instance_buffer_offset += len;
+			dc->DrawInstanced(6, job->sprites.count, 0, job->sprites.start);
 			break;
 		}
 
 		}
 	}
-
-	dc->Unmap(renderer->instance_buffer, 0);
 
 	dc->ClearState();
 
@@ -608,7 +592,7 @@ error_init_output_texture:
 	return false;
 }
 
-JFG_Error init(DX11_Renderer* renderer, Log* log, Draw* draw, HWND window)
+JFG_Error init(DX11_Renderer* renderer, Render* abstract_renderer, Log* log, Draw* draw, HWND window)
 {
 	renderer->log = log;
 
@@ -791,46 +775,6 @@ JFG_Error init(DX11_Renderer* renderer, Log* log, Draw* draw, HWND window)
 		renderer->dispatch_cbs[i] = cb;
 	}
 
-	// create instance buffer
-	{
-		ID3D11Buffer *instance_buffer = NULL;
-
-		D3D11_BUFFER_DESC desc = {};
-		desc.ByteWidth = INSTANCE_BUFFER_SIZE;
-		desc.Usage = D3D11_USAGE_DYNAMIC;
-		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		desc.StructureByteStride = MAX_INSTANCE_WIDTH;
-
-		hr = device->CreateBuffer(&desc, NULL, &instance_buffer);
-		if (FAILED(hr)) {
-			return JFG_ERROR;
-		}
-
-		renderer->instance_buffer = instance_buffer;
-	}
-
-	// create instance buffer SRV
-	{
-		ID3D11ShaderResourceView *srv = NULL;
-
-		D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
-		desc.Format = DXGI_FORMAT_UNKNOWN;
-		desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		desc.Buffer.FirstElement = 0;
-		desc.Buffer.NumElements  = MAX_INSTANCES;
-
-		hr = device->CreateShaderResourceView(renderer->instance_buffer,
-		                                      &desc,
-		                                      &srv);
-		if (FAILED(hr)) {
-			return JFG_ERROR;
-		}
-
-		renderer->instance_buffer_srv = srv;
-	}
-
 	// create blend state
 	{
 		ID3D11BlendState *bs = NULL;
@@ -878,18 +822,18 @@ JFG_Error init(DX11_Renderer* renderer, Log* log, Draw* draw, HWND window)
 		renderer->rasterizer_state = rs;
 	}
 
-	// create sprite instance buffer
-	{
+	for (u32 i = 0; i < ARRAY_SIZE(renderer->instance_buffers); ++i) {
 		ID3D11Buffer *instance_buffer = NULL;
 
+		auto ib_metadata = &INSTANCE_BUFFER_METADATA[i];
+
 		D3D11_BUFFER_DESC desc = {};
-		desc.ByteWidth = INSTANCE_BUFFER_SIZE;
+		desc.ByteWidth = ib_metadata->size;
 		desc.Usage = D3D11_USAGE_DYNAMIC;
 		desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		desc.MiscFlags = 0;
-		// XXX -- don't know if this is necessary?
-		desc.StructureByteStride = sizeof(Sprite_Instance);
+		desc.StructureByteStride = 0;
 
 		hr = device->CreateBuffer(&desc, NULL, &instance_buffer);
 		if (FAILED(hr)) {
@@ -897,48 +841,47 @@ JFG_Error init(DX11_Renderer* renderer, Log* log, Draw* draw, HWND window)
 			return JFG_ERROR;
 		}
 
-		renderer->sprite_instance_buffer = instance_buffer;
+		renderer->instance_buffers[i] = instance_buffer;
 	}
 
-	// create sprite instance buffer SRV
-	/*
-	{
-		ID3D11ShaderResourceView *srv = NULL;
-
-		D3D11_SHADER_RESOURCE_VIEW_DESC desc = {};
-		desc.Format = DXGI_FORMAT_UNKNOWN;
-		desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		desc.Buffer.FirstElement = 0;
-		desc.Buffer.NumElements  = MAX_INSTANCES;
-
-		hr = device->CreateShaderResourceView(renderer->sprite_instance_buffer, &desc, &srv);
-		if (FAILED(hr)) {
-			jfg_set_error("Failed to create sprite instance buffer srv!");
-			return JFG_ERROR;
-		}
-
-		renderer->sprite_instance_buffer_srv = srv;
-	}
-	*/
-
-	// create sprite input layout
-	{
+	for (u32 i = 0; i < ARRAY_SIZE(renderer->input_layouts); ++i) {
 		ID3D11InputLayout *input_layout = NULL;
 
-		D3D11_INPUT_ELEMENT_DESC input_element_descs[] = {
-			{ "GLYPH_COORDS",  0, DXGI_FORMAT_R32G32_FLOAT,       0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-			{ "OUTPUT_COORDS", 0, DXGI_FORMAT_R32G32_FLOAT,       0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-			{ "COLOR",         0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-		};
+		auto ib = (Instance_Buffer_ID)i;
+		auto ib_metadata = &INSTANCE_BUFFER_METADATA[i];
+		auto vs = vertex_shader_for_instance_buffer(ib);
 
-		ID3DBlob *vs_code = renderer->vs_code[DX11_VS_SPRITE];
-		hr = device->CreateInputLayout(input_element_descs, ARRAY_SIZE(input_element_descs), vs_code->GetBufferPointer(), vs_code->GetBufferSize(), &input_layout);
+		D3D11_INPUT_ELEMENT_DESC input_elem_descs[NUM_INPUT_ELEMS] = {};
+
+		u32 input_elem_start_index = NUM_INPUT_ELEMS;
+		u32 num_input_elems = 0;
+		for (u32 i = 0; i < ARRAY_SIZE(INSTANCE_BUFFER_INPUT_ELEM_METADATA); ++i) {
+			auto ie_metadata = &INSTANCE_BUFFER_INPUT_ELEM_METADATA[i];
+			if (ie_metadata->instance_buffer_id == ib) {
+				auto desc = &input_elem_descs[num_input_elems++];
+				desc->SemanticName = ie_metadata->semantic_name;
+				desc->SemanticIndex = 0;
+				desc->Format = get_dxgi_format(ie_metadata->format);
+				desc->InputSlot = 0;
+				desc->AlignedByteOffset = D3D11_APPEND_ALIGNED_ELEMENT;
+				desc->InputSlotClass = D3D11_INPUT_PER_INSTANCE_DATA;
+				desc->InstanceDataStepRate = 1;
+			}
+		}
+
+		auto vs_code = renderer->vs_code[vs];
+		hr = device->CreateInputLayout(input_elem_descs,
+		                               num_input_elems,
+		                               vs_code->GetBufferPointer(),
+		                               vs_code->GetBufferSize(),
+		                               &input_layout);
 		if (FAILED(hr)) {
-			jfg_set_error("Failed to create input layout for sprite renderer!");
+			check_errors(renderer, 0);
+			jfg_set_error("Failed to create input layout!");
 			return JFG_ERROR;
 		}
 
-		renderer->sprite_input_layout = input_layout;
+		renderer->input_layouts[i] = input_layout;
 	}
 
 	return JFG_SUCCESS;
@@ -1001,7 +944,11 @@ bool check_errors(DX11_Renderer* renderer, u32 frame_number)
 	ID3D11InfoQueue *info_queue = renderer->info_queue;
 	u64 num_messages = renderer->info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
 	if (num_messages) {
-		logf(l, "Frame %u: There are %llu D3D11 messages:", frame_number, num_messages);
+		if (frame_number) {
+			logf(l, "Frame %u: There are %llu D3D11 messages:", frame_number, num_messages);
+		} else {
+			logf(l, "There are %llu D3D11 messages:", num_messages);
+		}
 		for (u64 i = 0; i < num_messages; ++i) {
 			size_t message_len;
 			HRESULT hr = info_queue->GetMessage(i, NULL, &message_len);

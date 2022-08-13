@@ -1,5 +1,45 @@
 * tasks:
 
+
+* scenarios:
+  * field of vision
+    * visible
+    * previously seen (show tiles but not creatures)
+    * never seen (don't show tiles)
+  * doors
+    * open/close field of vision
+  * fireball hits barrels, chain reaction
+  * invisible wall
+  * enemies
+    * spiders (traps)
+    * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
+  * improve anims etc
+    * exchange
+      * cast sound
+      * "particle" effects
+    * poison card (take damage, anims etc)
+      * card flash
+      * sound effect
+
+  * spells/cards
+    * magic missile
+    * fireball
+    * lightning (bounces off walls etc)
+    * teleport sphere (chaos sphere?)
+    * cloud/grease
+    * freeze
+    * flesh to stone
+    * disease (card can't be discarded)
+
+  * editor
+    * editor mode
+    * entity picking/tile editing
+
+    * animation editor
+    * dungeon generator editor
+    * card editor
+    * enemy editor
+
   * technical
     * fix D3D11 errors
 
@@ -74,12 +114,6 @@
     * physics system
       * debug/create unit tests
 
-  * editor
-    * animation editor
-    * dungeon generator editor
-    * card editor
-    * enemy editor
-
   * variable move duration depending on user input frequency
     * animation "speeding up" when moves made rapidly
   * improve imgui
@@ -93,37 +127,7 @@
   * transaction processing
     * only collapse "Entity_Damage" events after processing transactions
   * "rational" class?
-
-* scenarios:
-  * field of vision
-    * visible
-    * previously seen (show tiles but not creatures)
-    * never seen (don't show tiles)
-  * invisible wall
-  * fireball hits barrels, chain reaction
-  * enemies
-    * spiders (traps)
-    * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
-  * doors
-    * open/close field of vision
-  * spells/cards
-    * magic missile
-    * fireball
-    * lightning (bounces off walls etc)
-    * teleport sphere (chaos sphere?)
-    * cloud/grease
-    * freeze
-    * flesh to stone
-    * disease (card can't be discarded)
-  * improve anims etc
-    * exchange
-      * cast sound
-      * "particle" effects
-    * poison card (take damage, anims etc)
-      * card flash
-      * sound effect
-
-* features
+* technical
     * memory functions/context
     * global context/global error message
     * global context

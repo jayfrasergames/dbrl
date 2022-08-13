@@ -281,7 +281,7 @@ struct Game_Loop_Args
 	HWND window;
 };
 
-char d3d11_log_buffer[8192] = {};
+char d3d11_log_buffer[8096] = {};
 Draw draw_data = {};
 Render renderer = {};
 
@@ -302,7 +302,8 @@ DWORD __stdcall game_loop(void *uncast_args)
 	Memory_Spec program_size = get_program_size();
 	Program* program = (Program*)malloc(program_size.size);
 
-	if (!init(&renderer)) {
+	if (init(&renderer)) {
+		MessageBox(window, jfg_get_error(), "DBRL", MB_OK);
 		return 0;
 	}
 
@@ -332,7 +333,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	DX11_Renderer dx11_renderer = {};	
 	// TODO -- should probably post a quit message along with exiting!!!
-	if (init(&dx11_renderer, &d3d11_log, &draw_data, window) != JFG_SUCCESS) {
+	if (init(&dx11_renderer, &renderer, &d3d11_log, &draw_data, window) != JFG_SUCCESS) {
 		return 0;
 	}
 
@@ -388,7 +389,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	program_dsound_init(program, dsound);
 
 	bool draw_debug_info = false;
-	for (u32 frame_number = 0; running; ++frame_number) {
+	for (u32 frame_number = 1; running; ++frame_number) {
 
 		get_screen_size(window, &screen_size);
 		if (screen_size != prev_screen_size) {
@@ -419,6 +420,8 @@ DWORD __stdcall game_loop(void *uncast_args)
 		input_front_buffer->mouse_pos = mouse_pos;
 		input_front_buffer->mouse_delta = (v2_i32)mouse_pos - (v2_i32)prev_mouse_pos;
 		prev_mouse_pos = mouse_pos;
+
+		begin_frame(&dx11_renderer, &renderer);
 
 		process_frame(program, input_front_buffer, screen_size);
 

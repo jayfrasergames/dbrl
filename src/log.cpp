@@ -23,6 +23,7 @@ void reset(Log* l)
 	l->read_pos = 0;
 	// XXX - is this necessary?
 	l->buffer[0] = 0;
+	l->scroll_state = LOG_SCROLL_STATE_BOTTOM;
 }
 
 void log(Log* l, const char* str)
@@ -46,6 +47,9 @@ void log(Log* l, const char* str)
 		l->start_pos = ++buffer_pos - buffer_size;
 	}
 	ASSERT(l->end_pos >= l->start_pos);
+	if (l->read_pos < l->start_pos) {
+		l->read_pos = l->start_pos;
+	}
 	if (l->scroll_state == LOG_SCROLL_STATE_BOTTOM) {
 		scroll(l, LOG_SCROLL_BOTTOM);
 	}
@@ -79,7 +83,6 @@ void render(Log* l, Render* render)
 	v2 top_right = v2(bottom_right.x, top_left.y);
 	v2 bottom_left = v2(top_left.x, bottom_right.y);
 
-	begin_triangles(r);
 	Triangle_Instance t = {};
 	t.color = v4(0.0f, 0.0f, 0.0f, 0.5f);
 	t.a = top_left;
@@ -88,7 +91,6 @@ void render(Log* l, Render* render)
 	push_triangle(r, t);
 	t.a = bottom_right;
 	push_triangle(r, t);
-	end(r);
 
 	Sprite_Constants sprite_constants = {};
 	sprite_constants.tile_input_size = glyph_size;
@@ -128,7 +130,6 @@ void render(Log* l, Render* render)
 			break;
 		}
 	}
-	end(r);
 }
 
 static u32 get_next_line_start(Log* l, u32 pos)

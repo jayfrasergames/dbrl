@@ -73,48 +73,6 @@ enum DX11_Compute_Shader
 	NUM_DX11_COMPUTE_SHADERS
 };
 
-/*
-// CB(name, element_size, array_size)
-#define CONSTANT_BUFFERS \
-	CB_X(TRIANGLE_BUFFER, sizeof(Triangle_Constants), 8) \
-	CB_X(SPRITE_BUFFER,   sizeof(Triangle_Constants), 8)
-
-#define CB_1(name, element_size) CB(name, element_size)
-#define CB_2(name, element_size) CB(name##_1, element_size) CB(name##_2, element_size)
-#define CB_3(name, element_size) CB_2(name, element_size) CB(name##_3, element_size)
-#define CB_4(name, element_size) CB_3(name, element_size) CB(name##_4, element_size)
-#define CB_5(name, element_size) CB_4(name, element_size) CB(name##_5, element_size)
-#define CB_6(name, element_size) CB_5(name, element_size) CB(name##_6, element_size)
-#define CB_7(name, element_size) CB_6(name, element_size) CB(name##_7, element_size)
-#define CB_8(name, element_size) CB_7(name, element_size) CB(name##_8, element_size)
-
-#define CB_X(name, element_size, array_size) \
-	CB_ARRAY(name, element_size, array_size) \
-	CB_##array_size(name, element_size)
-
-enum DX11_Constant_Buffer_Array
-{
-#define CB(...)
-#define CB_ARRAY(name, _element_size, _array_size) DX11_CBA_##name,
-	CONSTANT_BUFFERS
-#undef CB_ARRAY
-#undef CB
-
-	NUM_CONSTANT_BUFFER_ARRYS,
-};
-
-enum DX11_Constant_Buffer
-{
-#define CB(name, _element_size, array_size) DX11_CB_##name,
-#define CB_ARRAY(...)
-	CONSTANT_BUFFERS
-#undef CB_ARRAY
-#undef CB
-
-	NUM_CONSTANT_BUFFERS,
-};
-*/
-
 #define MAX_CONSTANT_BUFFERS 64
 
 struct DX11_Renderer
@@ -140,8 +98,10 @@ struct DX11_Renderer
 	ID3D11Buffer              *dispatch_cbs[MAX_CONSTANT_BUFFERS];
 
 	ID3D11InputLayout         *sprite_input_layout;
-	ID3D11ShaderResourceView  *sprite_instance_buffer_srv;
 	ID3D11Buffer              *sprite_instance_buffer;
+
+	ID3D11InputLayout         *input_layouts[NUM_INSTANCE_BUFFERS];
+	ID3D11Buffer              *instance_buffers[NUM_INSTANCE_BUFFERS];
 
 	ID3D11ShaderResourceView  *instance_buffer_srv;
 	ID3D11Buffer              *instance_buffer;
@@ -166,8 +126,10 @@ struct DX11_Renderer
 
 bool reload_textures(DX11_Renderer* dx11_render, Render* render);
 
-JFG_Error init(DX11_Renderer* renderer, Log* log, Draw* draw, HWND window);
+JFG_Error init(DX11_Renderer* renderer, Render* render, Log* log, Draw* draw, HWND window);
 bool set_screen_size(DX11_Renderer* renderer, v2_u32 screen_size);
 bool check_errors(DX11_Renderer* renderer, u32 frame_number);
 void free(DX11_Renderer* renderer);
+
+void begin_frame(DX11_Renderer* renderer, Render* render);
 void draw(DX11_Renderer* renderer, Draw* draw, Render* render);

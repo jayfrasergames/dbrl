@@ -68,6 +68,7 @@ struct Max_Length_Array
 
 	void reset()         { len = 0; }
 	void append(T item)  { ASSERT(len < size); items[len++] = item; }
+	T*   append()        { ASSERT(len < size); return &items[len++]; }
 	T    pop()           { ASSERT(len); return items[--len]; }
 	void remove(u32 idx) { ASSERT(idx < len); items[idx] = items[--len]; }
 	void remove_preserve_order(u32 idx)
