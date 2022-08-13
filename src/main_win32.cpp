@@ -425,7 +425,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		process_frame(program, input_front_buffer, screen_size);
 
-		imgui_begin(&imgui, input_front_buffer, screen_size);
+		imgui_begin(&imgui, input_front_buffer);
 		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
 		char buffer[1024];
 		snprintf(buffer, ARRAY_SIZE(buffer), "Frame: %u", frame_number);

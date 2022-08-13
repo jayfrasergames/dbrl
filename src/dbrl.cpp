@@ -6748,7 +6748,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	// imgui
 	IMGUI_Context *ic = &program->draw->imgui;
-	imgui_begin(ic, input, screen_size);
+	imgui_begin(ic, input);
 	if (program->display_debug_ui) {
 		imgui_set_text_cursor(ic, { 1.0f, 0.0f, 1.0f, 1.0f }, { 5.0f, 5.0f });
 		if (imgui_tree_begin(ic, "show mouse info")) {
@@ -6756,7 +6756,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			imgui_text(ic, "Mouse Delta: (%d, %d)",
 			           input->mouse_delta.x, input->mouse_delta.y);
 			imgui_text(ic, "Mouse world pos: (%d, %d)", world_mouse_pos.x, world_mouse_pos.y);
-			Pos sprite_pos;
+			Pos sprite_pos = Pos(0, 0);
 			{
 				u32 num_entities = program->game.entities.len;
 				Entity *entities = program->game.entities.items;
@@ -6827,6 +6827,10 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	// render
 	reset(&program->render->render_job_buffer);
+
+	if (program->display_debug_ui) {
+		render(ic, program->render);
+	}
 	{
 		if (program->is_console_visible) {
 			render(&program->console, program->render, time);
@@ -6890,7 +6894,7 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 				sleep(0);
 			}
 		} else {
-			imgui_begin(&program->draw->imgui, input, screen_size);
+			imgui_begin(&program->draw->imgui, input);
 			imgui_set_text_cursor(&program->draw->imgui,
 			                      { 1.0f, 0.0f, 1.0f, 1.0f },
 			                      { 5.0f, 5.0f });

@@ -334,8 +334,6 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 	                            draw->camera.world_center + draw->camera.offset,
 	                            debug_zoom);
 
-	imgui_d3d11_draw(&draw->imgui, dc, renderer->output_rtv, screen_size);
-
 	HRESULT hr;
 	u32 cur_cb = 0;
 	ID3D11Buffer        **cbs = renderer->cbs;
@@ -477,10 +475,6 @@ static bool program_d3d11_init(Draw* draw, ID3D11Device* device)
 		goto error_init_sprite_sheet_font_boxy_bold;
 	}
 
-	if (!imgui_d3d11_init(&draw->imgui, device)) {
-		goto error_init_imgui;
-	}
-
 	if (!card_render_d3d11_init(&draw->card_render, device)) {
 		goto error_init_card_render;
 	}
@@ -507,8 +501,6 @@ error_init_debug_draw_world:
 error_init_debug_line:
 	card_render_d3d11_free(&draw->card_render);
 error_init_card_render:
-	imgui_d3d11_free(&draw->imgui);
-error_init_imgui:
 	sprite_sheet_font_instances_d3d11_free(&draw->boxy_bold);
 error_init_sprite_sheet_font_boxy_bold:
 	sprite_sheet_instances_d3d11_free(&draw->effects_32);
