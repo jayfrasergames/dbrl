@@ -299,30 +299,6 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 
 	uda->BeginEvent(L"Frame");
 
-	uda->BeginEvent(L"Old Renderer (discared)");
-
-	dc->RSSetViewports(1, &viewport);
-
-	f32 clear_color[] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	dc->ClearRenderTargetView(renderer->back_buffer_rtv, clear_color);
-	dc->ClearRenderTargetView(renderer->output_rtv, clear_color);
-
-	fov_render_d3d11_draw(&draw->fov_render, dc);
-	sprite_sheet_renderer_d3d11_begin(&draw->renderer, dc);
-	sprite_sheet_instances_d3d11_draw(&draw->renderer, &draw->tiles, dc);
-	sprite_sheet_instances_d3d11_draw(&draw->renderer, &draw->creatures, dc);
-	sprite_sheet_instances_d3d11_draw(&draw->renderer, &draw->water_edges, dc);
-	sprite_sheet_renderer_d3d11_do_particles(&draw->renderer, dc);
-	sprite_sheet_instances_d3d11_draw(&draw->renderer, &draw->effects_24, dc);
-	sprite_sheet_instances_d3d11_draw(&draw->renderer, &draw->effects_32, dc);
-	sprite_sheet_renderer_d3d11_highlight_sprite(&draw->renderer, dc);
-	sprite_sheet_renderer_d3d11_begin_font(&draw->renderer, dc);
-	sprite_sheet_font_instances_d3d11_draw(&draw->renderer, &draw->boxy_bold, dc);
-	sprite_sheet_renderer_d3d11_end(&draw->renderer, dc);
-	fov_render_d3d11_composite(&draw->fov_render,
-	                           dc,
-	                           draw->renderer.d3d11.output_uav,
-	                           draw->renderer.size);
 	HRESULT hr;
 	u32 cur_cb = 0;
 	ID3D11Buffer        **cbs = renderer->cbs;
@@ -351,8 +327,6 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 		memcpy(mapped_res.pData, &global_constants, sizeof(global_constants));
 		dc->Unmap(global_cb, 0);
 	}
-
-	uda->EndEvent(); // Old renderer (discarded)
 
 	for (u32 i = 0; i < ARRAY_SIZE(renderer->instance_buffers); ++i) {
 		dc->Unmap(renderer->instance_buffers[i], 0);
@@ -779,34 +753,6 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 
 static bool program_d3d11_init(Draw* draw, ID3D11Device* device)
 {
-	if (!sprite_sheet_renderer_d3d11_init(&draw->renderer, device)) {
-		goto error_init_sprite_sheet_renderer;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&draw->tiles, device)) {
-		goto error_init_sprite_sheet_tiles;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&draw->creatures, device)) {
-		goto error_init_sprite_sheet_creatures;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&draw->water_edges, device)) {
-		goto error_init_sprite_sheet_water_edges;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&draw->effects_24, device)) {
-		goto error_init_sprite_sheet_effects_24;
-	}
-
-	if (!sprite_sheet_instances_d3d11_init(&draw->effects_32, device)) {
-		goto error_init_sprite_sheet_effects_32;
-	}
-
-	if (!sprite_sheet_font_instances_d3d11_init(&draw->boxy_bold, device)) {
-		goto error_init_sprite_sheet_font_boxy_bold;
-	}
-
 	if (!card_render_d3d11_init(&draw->card_render, device)) {
 		goto error_init_card_render;
 	}
@@ -819,34 +765,14 @@ static bool program_d3d11_init(Draw* draw, ID3D11Device* device)
 		goto error_init_debug_draw_world;
 	}
 
-	if (!fov_render_d3d11_init(&draw->fov_render, device)) {
-		goto error_init_fov_render;
-	}
-
 	return true;
 
-	fov_render_d3d11_free(&draw->fov_render);
-error_init_fov_render:
 	debug_draw_world_d3d11_free(&draw->debug_draw_world);
 error_init_debug_draw_world:
 	debug_line_d3d11_free(&draw->card_debug_line);
 error_init_debug_line:
 	card_render_d3d11_free(&draw->card_render);
 error_init_card_render:
-	sprite_sheet_font_instances_d3d11_free(&draw->boxy_bold);
-error_init_sprite_sheet_font_boxy_bold:
-	sprite_sheet_instances_d3d11_free(&draw->effects_32);
-error_init_sprite_sheet_effects_32:
-	sprite_sheet_instances_d3d11_free(&draw->effects_24);
-error_init_sprite_sheet_effects_24:
-	sprite_sheet_instances_d3d11_free(&draw->water_edges);
-error_init_sprite_sheet_water_edges:
-	sprite_sheet_instances_d3d11_free(&draw->creatures);
-error_init_sprite_sheet_creatures:
-	sprite_sheet_instances_d3d11_free(&draw->tiles);
-error_init_sprite_sheet_tiles:
-	sprite_sheet_renderer_d3d11_free(&draw->renderer);
-error_init_sprite_sheet_renderer:
 	return false;
 }
 
