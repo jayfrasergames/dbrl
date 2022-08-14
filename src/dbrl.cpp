@@ -33,9 +33,6 @@
 #include "gen/sprite_sheet_effects_32.data.h"
 #include "gen/boxy_bold.data.h"
 
-#include "gen/pass_through_dxbc_vertex_shader.data.h"
-#include "gen/pass_through_dxbc_pixel_shader.data.h"
-
 #include "draw.h"
 #include "texture.h"
 #include "render.h"
