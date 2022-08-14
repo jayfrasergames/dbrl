@@ -12,8 +12,6 @@ set(headers
 	debug_line_dxbc_pixel_shader.data.h
 	debug_line_dxbc_vertex_shader.data.h
 	field_of_vision_render.h
-	imgui_dxbc_text_pixel_shader.data.h
-	imgui_dxbc_text_vertex_shader.data.h
 	imgui.h
 	input.h
 	jfg_d3d11.h
@@ -44,6 +42,7 @@ set(object_sources
 	jfg_error.cpp
 	sprite_sheet.cpp
 	field_of_vision_render.cpp
+	fov.cpp
 	input.cpp
 	imgui.cpp
 	log.cpp
@@ -83,7 +82,6 @@ set(shaders
 	${shader_dir}/debug_draw_world.hlsl
 	${shader_dir}/debug_line_draw.hlsl
 	${shader_dir}/field_of_vision_render.hlsl
-	${shader_dir}/imgui.hlsl
 	${shader_dir}/particles.hlsl
 	${shader_dir}/pass_through_output.hlsl
 	${shader_dir}/pixel_art_upsampler.hlsl

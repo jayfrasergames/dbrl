@@ -17,7 +17,7 @@ void fov_render_reset(Field_Of_Vision_Render* render)
 	}
 }
 
-u32 fov_render_add_fov(Field_Of_Vision_Render* render, Map_Cache_Bool* fov)
+u32 fov_render_add_fov(Field_Of_Vision_Render* render, Field_Of_Vision* fov)
 {
 	u32 buffer_id = render->free_buffers.pop();
 	Field_Of_Vision_Draw draw = {};
@@ -460,18 +460,18 @@ void fov_render_d3d11_draw(Field_Of_Vision_Render* render, ID3D11DeviceContext* 
 		Field_Of_Vision_Draw draw = fov_draws[i];
 		u32 buffer_idx = draw.id - 1;
 
-		Map_Cache_Bool *fov = draw.fov;
+		auto &fov = *draw.fov;
 		for (u32 y = 1; y < 255; ++y) {
 			for (u32 x = 1; x < 255; ++x) {
-				bool tl = fov->get(v2_u8(x - 1, y - 1));
-				bool t  = fov->get(v2_u8(    x, y - 1));
-				bool tr = fov->get(v2_u8(x + 1, y - 1));
-				bool l  = fov->get(v2_u8(x - 1,     y));
-				bool c  = fov->get(v2_u8(    x,     y));
-				bool r  = fov->get(v2_u8(x + 1,     y));
-				bool bl = fov->get(v2_u8(x - 1, y + 1));
-				bool b  = fov->get(v2_u8(    x, y + 1));
-				bool br = fov->get(v2_u8(x + 1, y + 1));
+				bool tl = fov[Pos(x - 1, y - 1)] == FOV_VISIBLE;
+				bool t  = fov[Pos(    x, y - 1)] == FOV_VISIBLE;
+				bool tr = fov[Pos(x + 1, y - 1)] == FOV_VISIBLE;
+				bool l  = fov[Pos(x - 1,     y)] == FOV_VISIBLE;
+				bool c  = fov[Pos(    x,     y)] == FOV_VISIBLE;
+				bool r  = fov[Pos(x + 1,     y)] == FOV_VISIBLE;
+				bool bl = fov[Pos(x - 1, y + 1)] == FOV_VISIBLE;
+				bool b  = fov[Pos(    x, y + 1)] == FOV_VISIBLE;
+				bool br = fov[Pos(x + 1, y + 1)] == FOV_VISIBLE;
 				u8 mask = 0;
 				if (t)  { mask |= 0x01; }
 				if (tr) { mask |= 0x02; }

@@ -76,8 +76,9 @@ struct Sprite_Sheet_Instances
 {
 	Sprite_Sheet_Data data;
 
-	u32 num_instances;
-	Sprite_Sheet_Instance instances[SPRITE_SHEET_MAX_INSTANCES];
+	// u32 num_instances;
+	// Sprite_Sheet_Instance instances[SPRITE_SHEET_MAX_INSTANCES];
+	Max_Length_Array<Sprite_Sheet_Instance, SPRITE_SHEET_MAX_INSTANCES> instances;
 
 #ifdef SPRITE_SHEET_DEFINE_GFX
 	union {

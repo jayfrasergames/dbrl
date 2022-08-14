@@ -13,6 +13,13 @@ static inline Pos u16_to_pos(u16 n)
 	return Pos(n % 256, n / 256);
 }
 
+template <typename T>
+struct Map_Cache
+{
+	T items[256 * 256];
+	T& operator[](Pos pos) { return items[pos.y * 256 + pos.x]; }
+};
+
 struct Map_Cache_Bool
 {
 	u64  items[256 * 256 / 64];

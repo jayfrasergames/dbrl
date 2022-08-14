@@ -20,27 +20,27 @@ struct Sprite_Sheet_Constant_Buffer
 
 struct Sprite_Sheet_Instance
 {
-	F2 sprite_pos;
-	F2 world_pos;
+	F2 sprite_pos    SEMANTIC_NAME(SPRITE_POS);
+	F2 world_pos     SEMANTIC_NAME(WORLD_POS);
 
-	U1 sprite_id;
-	F1 depth_offset;
-	F1 y_offset;
+	U1 sprite_id     SEMANTIC_NAME(SPRITE_ID);
+	F1 depth_offset  SEMANTIC_NAME(DEPTH_OFFSET);
+	F1 y_offset      SEMANTIC_NAME(Y_OFFSET);
 
-	F4 color_mod;
+	F4 color_mod     SEMANTIC_NAME(COLOR_MOD);
 };
 
 struct Sprite_Sheet_Font_Instance
 {
-	F2 glyph_pos;
-	F2 glyph_size;
+	F2 glyph_pos     SEMANTIC_NAME(GLYPH_POS);
+	F2 glyph_size    SEMANTIC_NAME(GLYPH_SIZE);
 
-	F2 world_pos;
-	F2 world_offset;
+	F2 world_pos     SEMANTIC_NAME(WORLD_POS);
+	F2 world_offset  SEMANTIC_NAME(WORLD_OFFSET);
 
-	F1 zoom;
+	F1 zoom          SEMANTIC_NAME(ZOOM);
 
-	F4 color_mod;
+	F4 color_mod     SEMANTIC_NAME(COLOR_MOD);
 };
 
 struct Sprite_Sheet_Highlight_Constant_Buffer

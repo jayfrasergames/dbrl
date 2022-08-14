@@ -26,7 +26,6 @@ struct Log
 	u32              start_pos;
 	u32              end_pos;
 	u32              read_pos;
-	Texture_ID       font_tex_id;
 	v2_u32           grid_size;
 	Log_Scroll_State scroll_state;
 };

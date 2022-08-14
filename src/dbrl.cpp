@@ -10,6 +10,7 @@
 
 #include "types.h"
 
+#include "fov.h"
 #include "field_of_vision_render.h"
 #include "assets.h"
 #include "constants.h"
@@ -46,13 +47,6 @@
 struct Program;
 thread_local Program *global_program;
 void debug_pause();
-
-template <typename T>
-struct Map_Cache
-{
-	T items[256 * 256];
-	T& operator[](Pos pos) { return items[pos.y * 256 + pos.x]; }
-};
 
 // =============================================================================
 // game
@@ -229,7 +223,7 @@ struct Event
 		} heal;
 		struct {
 			f32 duration;
-			Map_Cache_Bool *fov;
+			Field_Of_Vision *fov;
 		} field_of_vision;
 		struct {
 			Entity_ID caster_id;
@@ -503,7 +497,7 @@ struct Game
 
 	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
 
-	Map_Cache_Bool field_of_vision;
+	Field_Of_Vision field_of_vision;
 };
 
 Entity_ID game_new_entity_id(Game *game)
@@ -659,292 +653,32 @@ u8 game_is_pos_opaque(Game* game, Pos pos)
 	return 0;
 }
 
-void calculate_field_of_vision(Game *game, Entity_ID vision_entity_id, Map_Cache_Bool *fov)
+void calculate_field_of_vision(Game* game, Entity_ID entity_id, Map_Cache_Bool* fov)
 {
-	const u8 is_wall            = 1 << 0;
-	const u8 bevel_top_left     = 1 << 1;
-	const u8 bevel_top_right    = 1 << 2;
-	const u8 bevel_bottom_left  = 1 << 3;
-	const u8 bevel_bottom_right = 1 << 4;
-	Map_Cache<u8> map;
-	memset(map.items, 0, sizeof(map.items));
+	Map_Cache_Bool map = {};
+	map.reset();
 
 	auto& tiles = game->tiles;
 	for (u16 y = 0; y < 256; ++y) {
 		for (u16 x = 0; x < 256; ++x) {
 			Pos p = Pos((u8)x, (u8)y);
 			if (game_is_pos_opaque(game, p)) {
-				map[p] |= is_wall;
+				map.set(p);
 			}
 		}
-	}
-
-	for (u16 i = 0; i < 256; ++i) {
-		u8 x = (u8)i;
-		map[Pos(  x,   0)] |= is_wall;
-		map[Pos(  x, 255)] |= is_wall;
-		map[Pos(  0,   x)] |= is_wall;
-		map[Pos(255,   x)] |= is_wall;
 	}
 
 	auto& entities = game->entities;
 	for (u32 i = 0; i < entities.len; ++i) {
 		if (entities[i].blocks_vision) {
-			map[entities[i].pos] |= is_wall;
+			map.set(entities[i].pos);
 		}
 	}
 
-	for (u8 y = 1; y < 255; ++y) {
-		for (u8 x = 1; x < 255; ++x) {
-			u8 center = map[Pos(x, y)];
-			if (!center) {
-				continue;
-			}
+	auto entity = game_get_entity_by_id(game, entity_id);
+	ASSERT(entity);
 
-			u8 above  = map[Pos(    x, y - 1)];
-			u8 left   = map[Pos(x - 1,     y)];
-			u8 right  = map[Pos(x + 1,     y)];
-			u8 bottom = map[Pos(    x, y + 1)];
-
-			if (!above  && !left)  { center |= bevel_top_left;     }
-			if (!above  && !right) { center |= bevel_top_right;    }
-			if (!bottom && !left)  { center |= bevel_bottom_left;  }
-			if (!bottom && !right) { center |= bevel_bottom_right; }
-
-			map[Pos(x, y)] = center;
-		}
-	}
-
-	Entity *vision_entity = game_get_entity_by_id(game, vision_entity_id);
-	ASSERT(vision_entity);
-
-	struct Sector
-	{
-		Rational start;
-		Rational end;
-	};
-
-	fov->reset();
-	Max_Length_Array<Sector, 1024> sectors_1, sectors_2;
-	Max_Length_Array<Sector, 1024> *sectors_front = &sectors_1, *sectors_back = &sectors_2;
-
-	const i32 half_cell_size = 2;
-	const i32 cell_margin = 1;
-	const i32 cell_size = 2 * half_cell_size;
-	const i32 cell_inner_size = cell_size - 2 * cell_margin;
-	const Rational wall_see_low  = Rational::cancel(1, 6);
-	const Rational wall_see_high = Rational::cancel(5, 6);
-
-	Pos vision_pos = vision_entity->pos;
-	fov->set(vision_pos);
-
-	for (u8 octant_id = 0; octant_id < 8; ++octant_id) {
-		/*
-		octants:
-
-		\ 4  | 0  /
-		5 \  |  / 1
-		    \|/
-		-----+-----
-		    /|\
-		7 /  |  \ 3
-		/ 6  |  2 \
-		*/
-
-		sectors_front->reset();
-		sectors_back->reset();
-		{
-			Sector s = {};
-			s.start.numerator = 0;
-			s.start.denominator = 1;
-			s.end.numerator = 1;
-			s.end.denominator = 1;
-			sectors_front->append(s);
-		}
-
-		for (u16 y_iter = 0; ; ++y_iter) {
-			auto& old_sectors = *sectors_front;
-			auto& new_sectors = *sectors_back;
-			new_sectors.reset();
-
-			if (!old_sectors) {
-				goto next_octant;
-			}
-
-			for (u32 i = 0; i < old_sectors.len; ++i) {
-				Sector s = old_sectors[i];
-
-				u16 x_start = ((y_iter * cell_size - cell_size / 2) * s.start.numerator
-						+ (s.start.denominator * cell_size / 2))
-					      / (s.start.denominator * cell_size);
-
-				u16 x_end = ((y_iter * cell_size + cell_size / 2) * s.end.numerator
-					      + (s.end.denominator * cell_size / 2) - 1)
-					    / (cell_size * s.end.denominator);
-
-				u8 prev_was_clear = 0;
-				for (u16 x_iter = x_start; x_iter <= x_end; ++x_iter) {
-					u8 btl, bbr;
-					i32 x, y;
-					switch (octant_id) {
-					case 0:
-						btl = bevel_top_left;
-						bbr = bevel_bottom_right;
-						x = (i32)vision_pos.x + (i32)x_iter;
-						y = (i32)vision_pos.y - (i32)y_iter;
-						break;
-					case 1:
-						btl = bevel_bottom_right;
-						bbr = bevel_top_left;
-						x = (i32)vision_pos.x + (i32)y_iter;
-						y = (i32)vision_pos.y - (i32)x_iter;
-						break;
-					case 2:
-						btl = bevel_bottom_left;
-						bbr = bevel_top_right;
-						x = (i32)vision_pos.x + (i32)x_iter;
-						y = (i32)vision_pos.y + (i32)y_iter;
-						break;
-					case 3:
-						btl = bevel_top_right;
-						bbr = bevel_bottom_left;
-						x = (i32)vision_pos.x + (i32)y_iter;
-						y = (i32)vision_pos.y + (i32)x_iter;
-						break;
-					case 4:
-						btl = bevel_top_right;
-						bbr = bevel_bottom_left;
-						x = (i32)vision_pos.x - (i32)x_iter;
-						y = (i32)vision_pos.y - (i32)y_iter;
-						break;
-					case 5:
-						btl = bevel_bottom_left;
-						bbr = bevel_top_right;
-						x = (i32)vision_pos.x - (i32)y_iter;
-						y = (i32)vision_pos.y - (i32)x_iter;
-						break;
-					case 6:
-						btl = bevel_bottom_right;
-						bbr = bevel_top_left;
-						x = (i32)vision_pos.x - (i32)x_iter;
-						y = (i32)vision_pos.y + (i32)y_iter;
-						break;
-					case 7:
-						btl = bevel_top_left;
-						bbr = bevel_bottom_right;
-						x = (i32)vision_pos.x - (i32)y_iter;
-						y = (i32)vision_pos.y + (i32)x_iter;
-						break;
-					}
-					if (!(0 < y && y < 255)) { goto next_octant; }
-					if (!(0 < x && x < 255)) { x_end = x_iter; }
-					Pos p = Pos((u8)x, (u8)y);
-					u8 cell = map[p];
-					if (cell & is_wall) {
-						u8 horiz_visible = 0;
-						Rational horiz_left_intersect = Rational::cancel(
-							s.start.numerator * ((i32)y_iter * cell_size
-							                      - half_cell_size)
-							+ s.start.denominator * (half_cell_size
-							                     - (i32)x_iter * cell_size),
-							s.start.denominator * cell_size
-						);
-						Rational horiz_right_intersect = Rational::cancel(
-							s.end.numerator * ((i32)y_iter * cell_size
-									      - half_cell_size)
-							+ s.end.denominator * (half_cell_size
-									       - (i32)x_iter * cell_size),
-							s.end.denominator * cell_size
-						);
-						Rational vert_left_intersect = Rational::cancel(
-							s.start.denominator * (2 * x_iter - 1)
-							+ s.start.numerator * (1 - 2 * y_iter),
-							2 * s.start.numerator
-						);
-						Rational vert_right_intersect = Rational::cancel(
-							s.end.denominator * (2 * x_iter - 1)
-							+ s.end.numerator * (1 - 2 * y_iter),
-							2 * s.end.numerator
-						);
-						u8 vert_visible = 0;
-
-						if (horiz_left_intersect  <= wall_see_high
-						 && horiz_right_intersect >= wall_see_low) {
-							fov->set(p);
-						} else if (prev_was_clear
-							&& vert_left_intersect  >= wall_see_low
-							&& vert_right_intersect <= wall_see_high) {
-							fov->set(p);
-						}
-
-						Rational left_slope, right_slope;
-						if (cell & btl) {
-							left_slope = Rational::cancel(
-								(i32)x_iter * cell_size - cell_size / 2,
-								(i32)y_iter * cell_size
-							);
-						} else {
-							left_slope = Rational::cancel(
-								(i32)x_iter * cell_size - cell_size / 2,
-								(i32)y_iter * cell_size + cell_size / 2
-							);
-						}
-						if (cell & bbr) {
-							right_slope = Rational::cancel(
-								(i32)x_iter * cell_size + cell_size / 2,
-								(i32)y_iter * cell_size
-							);
-						} else {
-							right_slope = Rational::cancel(
-								(i32)x_iter * cell_size + cell_size / 2,
-								(i32)y_iter * cell_size - cell_size / 2
-							);
-						}
-
-						if (prev_was_clear) {
-							Sector new_sector = s;
-							if (left_slope < new_sector.end) {
-								new_sector.end = left_slope;
-							}
-							if (new_sector.end > new_sector.start) {
-								new_sectors.append(new_sector);
-							}
-							prev_was_clear = 0;
-						}
-						s.start = right_slope;
-					} else {
-						// Sector s = old_sectors[cur_sector];
-						Rational left_slope = Rational::cancel(
-							(i32)x_iter * cell_size + cell_margin - cell_size / 2,
-							(i32)y_iter * cell_size - cell_margin + cell_size / 2
-						);
-						Rational right_slope = Rational::cancel(
-							(i32)x_iter * cell_size - cell_margin + cell_size / 2,
-							(i32)y_iter * cell_size + cell_margin - cell_size / 2
-						);
-						if (right_slope > s.start && left_slope < s.end) {
-							fov->set(p);
-						}
-						prev_was_clear = 1;
-					}
-				}
-				if (prev_was_clear) {
-					if (s.end > s.start) {
-						new_sectors.append(s);
-					}
-				}
-			}
-
-			// swap sector buffers
-			{
-				auto tmp = sectors_front;
-				sectors_front = sectors_back;
-				sectors_back = tmp;
-			}
-		}
-
-	next_octant: ;
-	}
+	calculate_fov(fov, &map, entity->pos);
 }
 
 u8 calculate_line_of_sight(Game *game, Entity_ID vision_entity_id, Pos target)
@@ -2914,8 +2648,10 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 	// XXX - tmp - recalculate FOV
 	{
-		game->field_of_vision.reset();
-		calculate_field_of_vision(game, player_id, &game->field_of_vision);
+		Map_Cache_Bool fov = {};
+		fov.reset();
+		calculate_field_of_vision(game, player_id, &fov);
+		update(&game->field_of_vision, &fov);
 		Event e = {};
 		e.type = EVENT_FIELD_OF_VISION_CHANGED;
 		e.time = 0.0f; // XXX
@@ -3460,7 +3196,11 @@ void game_build_from_string(Game* game, char* str)
 	game->next_entity_id = e_id;
 	game->next_controller_id = c_id;
 
-	calculate_field_of_vision(game, player_controller->player.entity_id, &game->field_of_vision);
+	memset(&game->field_of_vision, 0, sizeof(game->field_of_vision));
+	Map_Cache_Bool can_see = {};
+	can_see.reset();
+	calculate_field_of_vision(game, player_controller->player.entity_id, &can_see);
+	update(&game->field_of_vision, &can_see);
 }
 
 // =============================================================================
@@ -3483,40 +3223,13 @@ void peek_move_resolve(Slice<Action> moves)
 	}
 }
 
-
-// =============================================================================
-// draw
-
-/*
-struct Camera
-{
-	v2  world_center;
-	v2  offset;
-	f32 zoom;
-};
-
-struct Draw
-{
-	Camera camera;
-	Field_Of_Vision_Render fov_render;
-	Sprite_Sheet_Renderer  renderer;
-	Sprite_Sheet_Instances tiles;
-	Sprite_Sheet_Instances creatures;
-	Sprite_Sheet_Instances water_edges;
-	Sprite_Sheet_Instances effects_24;
-	Sprite_Sheet_Instances effects_32;
-	Sprite_Sheet_Font_Instances boxy_bold;
-	Card_Render card_render;
-	Debug_Line card_debug_line;
-};
-*/
-
 // =============================================================================
 // anim
 
 enum Anim_Type
 {
 	ANIM_TILE_STATIC,
+	ANIM_TILE_LIQUID,
 	ANIM_WATER_EDGE,
 	ANIM_CREATURE_IDLE,
 	ANIM_MOVE,
@@ -3546,6 +3259,11 @@ struct Anim
 			f32 duration;
 			f32 offset;
 		} idle;
+		struct {
+			f32 offset;
+			f32 duration;
+			v2  second_sprite_coords;
+		} tile_liquid;
 		struct {
 			v4_u8 color;
 		} water_edge;
@@ -3626,7 +3344,7 @@ struct Anim
 			f32 start_time;
 			f32 duration;
 			u32 buffer_id;
-			Map_Cache_Bool *fov;
+			Field_Of_Vision* fov;
 		} field_of_vision;
 	};
 	v2 sprite_coords;
@@ -3639,6 +3357,7 @@ u8 anim_is_active(Anim* anim)
 {
 	switch (anim->type) {
 	case ANIM_TILE_STATIC:             return 0;
+	case ANIM_TILE_LIQUID:             return 0;
 	case ANIM_WATER_EDGE:              return 0;
 	case ANIM_CREATURE_IDLE:           return 0;
 	case ANIM_MOVE:                    return 1;
@@ -4076,11 +3795,17 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 		}
 		if (appearance_is_liquid(app)) {
 			Anim ta = {};
-			ta.type = ANIM_TILE_STATIC;
+			ta.type = ANIM_TILE_LIQUID;
 			ta.sprite_coords = appearance_get_liquid_sprite_coords(app);
 			ta.world_coords = { (f32)pos.x, (f32)pos.y };
 			ta.entity_id = e->id;
 			ta.depth_offset = constants.z_offsets.floor;
+
+			f32 d = uniform_f32(1.2f, 1.8f);
+			ta.tile_liquid.offset = uniform_f32(0.0f, d);
+			ta.tile_liquid.duration = d;
+			ta.tile_liquid.second_sprite_coords = ta.sprite_coords + v2(0.0f, 1.0f);
+
 			world_anim->anims.append(ta);
 		}
 		if (appearance_is_item(app)) {
@@ -4158,13 +3883,21 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			}
 			case TILE_WATER: {
 				v2 sprite_coords = appearance_get_liquid_sprite_coords(c.appearance);
+
 				Anim anim = {};
-				anim.type = ANIM_TILE_STATIC;
+				anim.type = ANIM_TILE_LIQUID;
 				anim.sprite_coords = sprite_coords;
 				anim.world_coords = (v2)p;
 				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
 				anim.depth_offset = constants.z_offsets.floor;
+
+				f32 d = uniform_f32(0.8f, 1.2f);
+				anim.tile_liquid.offset = uniform_f32(0.0f, d);
+				anim.tile_liquid.duration = d;
+				anim.tile_liquid.second_sprite_coords = sprite_coords + v2(0.0f, 1.0f);
+
 				world_anim->anims.append(anim);
+
 
 				Tile_Type t = c.type;
 				u8 mask = 0;
@@ -4205,8 +3938,10 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 	}
 }
 
-void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sound_player, f32 time)
+void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, Sound_Player* sound_player, f32 time)
 {
+	auto r = &render->render_job_buffer;
+
 	// reset draw state
 	sprite_sheet_instances_reset(&draw->tiles);
 	sprite_sheet_instances_reset(&draw->creatures);
@@ -4479,7 +4214,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 	for (u32 i = 0; i < anims.len; ++i) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
-			case ANIM_TILE_STATIC: {
+		case ANIM_TILE_STATIC: {
 			Sprite_Sheet_Instance ti = {};
 			ti.sprite_pos = anim->sprite_coords;
 			ti.world_pos = anim->world_coords;
@@ -4487,6 +4222,24 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 			ti.depth_offset = anim->depth_offset;
 			ti.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
 			sprite_sheet_instances_add(&draw->tiles, ti);
+			break;
+		}
+		case ANIM_TILE_LIQUID: {
+			Sprite_Sheet_Instance ti = {};
+
+			f32 dt = time + anim->tile_liquid.offset;
+			dt = fmodf(dt, anim->tile_liquid.duration) / anim->tile_liquid.duration;
+			if (dt > 0.5f) {
+				ti.sprite_pos = anim->sprite_coords;
+			} else {
+				ti.sprite_pos = anim->tile_liquid.second_sprite_coords;
+			}
+			ti.world_pos = anim->world_coords;
+			ti.sprite_id = anim->entity_id;
+			ti.depth_offset = anim->depth_offset;
+			ti.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+			sprite_sheet_instances_add(&draw->tiles, ti);
+
 			break;
 		}
 		case ANIM_CREATURE_IDLE: {
@@ -4748,6 +4501,76 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Sound_Player* sou
 		v2 v = m * v2(camera_offset_mag, 0.0f);
 		world_anim->camera_offset = v;
 	}
+
+	// Do render job with new abstracted renderer
+	{
+		begin(r, RENDER_EVENT_WORLD);
+
+		clear_uint(r, TARGET_TEXTURE_SPRITE_ID);
+		clear_rtv(r, TARGET_TEXTURE_WORLD_STATIC,  v4(0.0f, 0.0f, 0.0f, 0.0f));
+		clear_rtv(r, TARGET_TEXTURE_WORLD_DYNAMIC, v4(0.0f, 0.0f, 0.0f, 0.0f));
+		clear_depth(r, TARGET_TEXTURE_SPRITE_DEPTH, 0.0f);
+
+		Render_Push_World_Sprites_Desc desc = {};
+		desc.output_sprite_id_tex_id = TARGET_TEXTURE_SPRITE_ID;
+		desc.depth_tex_id = TARGET_TEXTURE_SPRITE_DEPTH;
+		desc.constants.screen_size = v2(256.0f*24.0f, 256.0f*24.0f);
+		desc.constants.sprite_size = v2(24.0f, 24.0f);
+		desc.constants.world_tile_size = v2(24.0f, 24.0f);
+		desc.constants.tex_size = v2(1.0f, 1.0f);
+
+		begin(r, RENDER_EVENT_WORLD_STATIC);
+
+		desc.output_tex_id = TARGET_TEXTURE_WORLD_STATIC;
+		desc.sprite_tex_id = SOURCE_TEXTURE_TILES;
+		desc.instances = draw->tiles.instances;
+		push_world_sprites(r, &desc);
+
+		desc.sprite_tex_id = SOURCE_TEXTURE_EDGES;
+		desc.instances = draw->water_edges.instances;
+		push_world_sprites(r, &desc);
+
+		end(r, RENDER_EVENT_WORLD_STATIC);
+		begin(r, RENDER_EVENT_WORLD_DYNAMIC);
+
+		desc.output_tex_id = TARGET_TEXTURE_WORLD_DYNAMIC;
+		desc.sprite_tex_id = SOURCE_TEXTURE_CREATURES;
+		desc.instances = draw->creatures.instances;
+		push_world_sprites(r, &desc);
+
+		desc.sprite_tex_id = SOURCE_TEXTURE_EFFECTS_24;
+		desc.instances = draw->effects_24.instances;
+		push_world_sprites(r, &desc);
+
+		desc.constants.sprite_size = v2(32.0f, 32.0f);
+		desc.sprite_tex_id = SOURCE_TEXTURE_EFFECTS_32;
+		desc.instances = draw->effects_32.instances;
+		push_world_sprites(r, &desc);
+		desc.constants.sprite_size = v2(24.0f, 24.0f);
+
+		Render_Push_World_Particles_Desc particles_desc = {};
+		particles_desc.output_tex_id = TARGET_TEXTURE_WORLD_DYNAMIC;
+		particles_desc.world_size = v2(256.0f, 256.0f);
+		particles_desc.tile_size = v2(24.0f, 24.0f);
+		particles_desc.time = time;
+		particles_desc.instances = draw->renderer.particles.particles;
+		push_world_particles(r, &particles_desc);
+
+		Render_Push_World_Font_Desc font_desc = {};
+		font_desc.output_tex_id = TARGET_TEXTURE_WORLD_DYNAMIC;
+		font_desc.font_tex_id = SOURCE_TEXTURE_BOXY_BOLD;
+		font_desc.constants.screen_size = v2(256.0f*24.0f, 256.0f*24.0f);
+		font_desc.constants.sprite_size = v2(24.0f, 24.0f);
+		font_desc.constants.world_tile_size = v2(24.0f, 24.0f);
+		font_desc.constants.tex_size = v2(1.0f, 1.0f);
+		font_desc.instances = draw->boxy_bold.instances;
+		push_world_font(r, &font_desc);
+
+		end(r, RENDER_EVENT_WORLD_DYNAMIC);
+		end(r, RENDER_EVENT_WORLD);
+	}
+
+	// sprite_sheet_font_instances_reset(&draw->boxy_bold);
 }
 
 
@@ -6231,6 +6054,11 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	set_global_state(program);
 	// log_reset(debug_log);
 
+	// render
+	// XXX -- put this here for now - later we'll gather rendering into one
+	// place
+	reset(&program->render->render_job_buffer);
+
 	program->draw->debug_draw_world.reset();
 
 	program->screen_size = (v2)screen_size;
@@ -6273,7 +6101,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	f32 time = (f32)program->frame_number / 60.0f;
 	program->draw->renderer.time = time;
-	world_anim_draw(&program->world_anim, program->draw, &program->sound, time);
+	world_anim_draw(&program->world_anim, program->draw, program->render, &program->sound, time);
 	program->draw->camera.offset = program->world_anim.camera_offset;
 
 	if (program->program_input_state_stack.peek() == GIS_ANIMATING
@@ -6698,6 +6526,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			ASSERT(c->type == CONTROLLER_PLAYER);
 			c->player.action = program->action_being_built;
 			Event_Buffer event_buffer;
+			event_buffer.reset();
 			// game_do_turn(&program->game, &event_buffer);
 			game_simulate_actions(&program->game,
 			                      slice_one(&program->action_being_built),
@@ -6718,6 +6547,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	// do sprite tooltip
 	if (sprite_id && sprite_id < MAX_ENTITIES) {
+		// XXX
+		program->draw->boxy_bold.instances.reset();
+
 		Entity *e = game_get_entity_by_id(&program->game, sprite_id);
 		if (e) {
 			char *buffer = fmt("%d/%d", e->hit_points, e->max_hit_points);
@@ -6744,6 +6576,16 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				instance.world_offset.x += (f32)glyph.dimensions.w - 1.0f;
 			}
 		}
+
+		Render_Push_World_Font_Desc desc = {};
+		desc.output_tex_id = TARGET_TEXTURE_WORLD_DYNAMIC;
+		desc.font_tex_id = SOURCE_TEXTURE_BOXY_BOLD;
+		desc.constants.screen_size = v2(256.0f*24.0f, 256.0f*24.0f);
+		desc.constants.sprite_size = v2(24.0f, 24.0f);
+		desc.constants.world_tile_size = v2(24.0f, 24.0f);
+		desc.constants.tex_size = v2(1.0f, 1.0f);
+		desc.instances = program->draw->boxy_bold.instances;
+		push_world_font(&program->render->render_job_buffer, &desc);
 	}
 
 	// imgui
@@ -6825,16 +6667,30 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		imgui_tree_end(ic);
 	}
 
-	// render
-	reset(&program->render->render_job_buffer);
+	// render world
+	render(&program->game.field_of_vision, program->render);
+	if (sprite_id) {
+		highlight_sprite_id(&program->render->render_job_buffer,
+		                    TARGET_TEXTURE_WORLD_COMPOSITE,
+		                    TARGET_TEXTURE_SPRITE_ID,
+		                    sprite_id,
+		                    v4(1.0f, 0.0f, 0.0f, 1.0f));
+	}
 
+	// XXX
+	{
+		Render_Job job = {};
+		job.type = RENDER_JOB_XXX_FLUSH_OLD_RENDERER;
+
+		push(&program->render->render_job_buffer, job);
+	}
+
+	// render user interface
 	if (program->display_debug_ui) {
 		render(ic, program->render);
 	}
-	{
-		if (program->is_console_visible) {
-			render(&program->console, program->render, time);
-		}
+	if (program->is_console_visible) {
+		render(&program->console, program->render, time);
 	}
 }
 

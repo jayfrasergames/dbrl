@@ -294,7 +294,7 @@ void render(IMGUI_Context* context, Render* renderer)
 	Sprite_Constants constants = {};
 	constants.tile_input_size = v2(9.0f, 16.0f);
 	constants.tile_output_size = 2.0f * constants.tile_input_size;
-	begin_sprites(r, get_texture_id(renderer, "Codepage-437.png"), constants);
+	begin_sprites(r, SOURCE_TEXTURE_CODEPAGE437, constants);
 
 	for (u32 i = 0; i < context->text_index; ++i) {
 		auto glyph = &context->text_buffer[i];

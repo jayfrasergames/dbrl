@@ -6,26 +6,20 @@ cbuffer blitter_constants : register(b0)
 	Field_Of_Vision_Render_Constant_Buffer constants;
 };
 
-struct VS_Square_Vertex
-{
-	float2 pos;
-};
+static const float2 SQUARE_VERTICES[] = {
+	float2(0.0f,  0.0f),
+	float2(0.0f,  1.0f),
+	float2(1.0f,  0.0f),
 
-static const VS_Square_Vertex SQUARE_VERTICES[] = {
-	{  0.0f,  0.0f },
-	{  0.0f,  1.0f },
-	{  1.0f,  0.0f },
-
-	{  1.0f,  0.0f },
-	{  0.0f,  1.0f },
-	{  1.0f,  1.0f },
+	float2(1.0f,  0.0f),
+	float2(0.0f,  1.0f),
+	float2(1.0f,  1.0f),
 };
 
 // =============================================================================
 // Edge
 
-StructuredBuffer<Field_Of_Vision_Edge_Instance> edge_instances : register(t0);
-Texture2D<float>                                edges          : register(t0);
+Texture2D<float4> edges : register(t0);
 
 struct VS_Edge_Output
 {
@@ -40,19 +34,18 @@ struct PS_Edge_Input
 
 struct PS_Edge_Output
 {
-	float4 color : SV_Target0;
+	uint color : SV_Target0;
 };
 
-VS_Edge_Output vs_edge(uint vid : SV_VertexID, uint iid : SV_InstanceID)
+VS_Edge_Output vs_edge(uint vid : SV_VertexID, Field_Of_Vision_Edge_Instance instance)
 {
 	VS_Edge_Output output;
 
-	VS_Square_Vertex vertex = SQUARE_VERTICES[vid];
-	Field_Of_Vision_Edge_Instance instance = edge_instances[iid];
+	float2 vertex = SQUARE_VERTICES[vid];
 
-	float2 pos = (instance.world_coords + vertex.pos) / constants.grid_size;
+	float2 pos = (instance.world_coords + vertex) / constants.grid_size;
 	output.pos = float4(pos * float2(2.0f, -2.0f) - float2(1.0f, -1.0f), 0.0f, 1.0f);
-	output.tex_coord = (instance.sprite_coords + vertex.pos) * constants.sprite_size / constants.edge_tex_size;
+	output.tex_coord = (instance.sprite_coords + vertex) * constants.sprite_size / constants.edge_tex_size;
 
 	return output;
 }
@@ -62,15 +55,16 @@ PS_Edge_Output ps_edge(PS_Edge_Input input)
 	PS_Edge_Output output;
 
 	uint2 coord = floor(input.tex_coord * constants.edge_tex_size);
-	output.color = 1.0f - edges[coord];
+	output.color = uint(1.0f - edges[coord].r) * constants.output_val;
+	if (output.color == 0) {
+		discard;
+	}
 
 	return output;
 }
 
 // =============================================================================
 // Fill
-
-StructuredBuffer<Field_Of_Vision_Fill_Instance> fill_instances : register(t0);
 
 struct VS_Fill_Output
 {
@@ -79,17 +73,16 @@ struct VS_Fill_Output
 
 struct PS_Fill_Output
 {
-	float4 color : SV_Target0;
+	uint color : SV_Target0;
 };
 
-VS_Fill_Output vs_fill(uint vid : SV_VertexID, uint iid : SV_InstanceID)
+VS_Fill_Output vs_fill(uint vid : SV_VertexID, Field_Of_Vision_Fill_Instance instance)
 {
 	VS_Fill_Output output;
 
-	VS_Square_Vertex vertex = SQUARE_VERTICES[vid];
-	Field_Of_Vision_Fill_Instance instance = fill_instances[iid];
+	float2 vertex = SQUARE_VERTICES[vid];
 
-	float2 pos = (instance.world_coords + vertex.pos) / constants.grid_size;
+	float2 pos = (instance.world_coords + vertex) / constants.grid_size;
 	output.pos = float4(pos * float2(2.0f, -2.0f) - float2(1.0f, -1.0f), 0.0f, 1.0f);
 
 	return output;
@@ -97,8 +90,8 @@ VS_Fill_Output vs_fill(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 
 PS_Fill_Output ps_fill()
 {
-	PS_Edge_Output output;
-	output.color = 1.0f;
+	PS_Fill_Output output;
+	output.color = constants.output_val;
 	return output;
 }
 
@@ -125,13 +118,40 @@ void cs_shadow_blend(uint2 tid : SV_DispatchThreadID)
 // =============================================================================
 // Composite
 
-Texture2D<unorm float>    fov       : register(t0);
-RWTexture2D<unorm float4> composite : register(u0);
+Texture2D<uint>           fov           : register(t0);
+Texture2D<unorm float4>   world_static  : register(t1);
+Texture2D<unorm float4>   world_dynamic : register(t2);
+RWTexture2D<unorm float4> world         : register(u0);
 
 [numthreads(FOV_COMPOSITE_WIDTH, FOV_COMPOSITE_HEIGHT, 1)]
 void cs_composite(uint2 tid : SV_DispatchThreadID)
 {
-	float alpha = fov[tid];
-	float4 color = composite[tid];
-	composite[tid] = color * (1.0f + alpha) / 2.0f;
+	uint fov_val = fov[tid];
+
+	switch (fov_val) {
+	case 0: // NEVER SEEN
+		world[tid] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+		break;
+	case 1: // PREVIOUSLY SEEN
+		world[tid] = 0.75f * world_static[tid];
+		break;
+	case 2: { // VISIBLE
+		float4 dyn = world_dynamic[tid];
+
+		world[tid] = world_static[tid] * (1.0f - dyn.a) + dyn * dyn.a;
+		break;
+	}
+
+	}
+}
+
+// =============================================================================
+// Clear
+
+RWTexture2D<uint> clear_target : register(u0);
+
+[numthreads(FOV_CLEAR_WIDTH, FOV_CLEAR_HEIGHT, 1)]
+void cs_clear(uint2 tid : SV_DispatchThreadID)
+{
+	clear_target[tid] = 0;
 }

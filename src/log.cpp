@@ -9,10 +9,6 @@ void init(Log* l, char* buffer, size_t buffer_size, Render* render)
 	memset(l, 0, sizeof(*l));
 	l->buffer = buffer;
 	l->buffer_size = buffer_size;
-	l->font_tex_id = get_texture_id(render, "Codepage-437.png");
-	if (l->font_tex_id == INVALID_TEXTURE_ID) {
-		// error handling
-	}
 	reset(l);
 }
 
@@ -95,7 +91,7 @@ void render(Log* l, Render* render)
 	Sprite_Constants sprite_constants = {};
 	sprite_constants.tile_input_size = glyph_size;
 	sprite_constants.tile_output_size = glyph_size;
-	begin_sprites(r, l->font_tex_id, sprite_constants);
+	begin_sprites(r, SOURCE_TEXTURE_CODEPAGE437, sprite_constants);
 
 	Sprite_Instance instance = {};
 	instance.color = v4(1.0f, 1.0f, 1.0f, 1.0f);

@@ -5,7 +5,7 @@
 #define RENDER_JOB_BUFFER_SIZE 1024*1024
 
 Instance_Buffer_Metadata INSTANCE_BUFFER_METADATA[] = {
-#define INSTANCE_BUFFER(_name, type, max_elems) { sizeof(type) * max_elems, sizeof(type), max_elems },
+#define INSTANCE_BUFFER(name, type, max_elems) { #name, sizeof(type) * max_elems, sizeof(type), max_elems },
 	INSTANCE_BUFFERS
 #undef INSTANCE_BUFFER
 };
@@ -14,6 +14,18 @@ Instance_Buffer_Input_Elem_Metadata INSTANCE_BUFFER_INPUT_ELEM_METADATA[] = {
 #define INPUT_ELEM(instance_buffer_id, semantic_name, format) { INSTANCE_BUFFER_##instance_buffer_id, semantic_name, format },
 	INSTANCE_BUFFER_INPUT_ELEMS
 #undef INPUT_ELEM
+};
+
+Target_Texture_Metadata TARGET_TEXTURE_METADATA[] = {
+#define TARGET_TEXTURE(name, width, height, format, bind_flags) { "TARGET_" #name, v2_u32(width, height), format, (Texture_Bind_Flags)(bind_flags) },
+	TARGET_TEXTURES
+#undef TARGET_TEXTURE
+};
+
+const char *SOURCE_TEXTURE_FILENAMES[] = {
+#define TEXTURE(name, filename) filename,
+	SOURCE_TEXTURES
+#undef TEXTURE
 };
 
 JFG_Error init(Render* render)
@@ -26,6 +38,7 @@ JFG_Error init(Render* render)
 void reset(Render_Job_Buffer* buffer)
 {
 	buffer->jobs.reset();
+	buffer->event_stack.reset();
 	for (u32 i = 0; i < ARRAY_SIZE(buffer->instance_buffers); ++i) {
 		auto ib = &buffer->instance_buffers[i];
 		ib->buffer_head = ib->base;
@@ -41,6 +54,17 @@ static inline void instance_buffer_push(Render_Job_Buffer* buffer, Instance_Buff
 	memcpy(ib->buffer_head, &instance, sizeof(instance));
 	ib->buffer_head = (void*)((uptr)ib->buffer_head + sizeof(instance));
 	++ib->cur_pos;
+}
+
+template <typename T>
+static inline void instance_buffer_push_slice(Render_Job_Buffer* buffer, Instance_Buffer_ID ib_id, Slice<T> instances)
+{
+	auto ib = &buffer->instance_buffers[ib_id];
+	ASSERT(ib->cur_pos + instances.len <= INSTANCE_BUFFER_METADATA[ib_id].max_elems);
+	size_t size = instances.len * sizeof(instances[0]);
+	memcpy(ib->buffer_head, instances.base, size);
+	ib->buffer_head = (void*)((uptr)ib->buffer_head + size);
+	ib->cur_pos += instances.len;
 }
 
 static inline Render_Job* cur_job(Render_Job_Buffer* buffer)
@@ -64,7 +88,7 @@ void push_triangle(Render_Job_Buffer* buffer, Triangle_Instance instance)
 	++job->triangles.count;
 }
 
-void begin_sprites(Render_Job_Buffer* buffer, Texture_ID texture_id, Sprite_Constants constants)
+void begin_sprites(Render_Job_Buffer* buffer, Source_Texture_ID texture_id, Sprite_Constants constants)
 {
 	Render_Job job = {};
 	job.type = RENDER_JOB_SPRITES;
@@ -83,36 +107,173 @@ void push_sprite(Render_Job_Buffer* buffer, Sprite_Instance instance)
 	++job->sprites.count;
 }
 
-Texture_ID get_texture_id(Render* render, const char* filename)
+void begin_fov(Render_Job_Buffer* buffer, Target_Texture_ID output_tex_id, Field_Of_Vision_Render_Constant_Buffer constants)
 {
-	for (u32 i = 0; i < render->textures.len; ++i) {
-		if (strcmp(filename, render->textures[i].filename) == 0) {
-			return i;
-		}
-	}
-
-	if (!has_space(render->textures)) {
-		return INVALID_TEXTURE_ID;
-	}
-	Texture_ID tex_id = render->textures.len++;
-	auto *new_tex = &render->textures.items[tex_id];
-	strncpy(new_tex->filename, filename, ARRAY_SIZE(new_tex->filename));
-	new_tex->texture = NULL;
-
-	return tex_id;
+	auto job = buffer->jobs.append();
+	job->type = RENDER_JOB_FOV;
+	job->fov.output_tex_id = output_tex_id;
+	job->fov.constants = constants;
+	job->fov.edge_start = buffer->instance_buffers[INSTANCE_BUFFER_FOV_EDGE].cur_pos;
+	job->fov.edge_count = 0;
+	job->fov.fill_start = buffer->instance_buffers[INSTANCE_BUFFER_FOV_FILL].cur_pos;
+	job->fov.fill_count = 0;
 }
+
+void push_fov_fill(Render_Job_Buffer* buffer, Field_Of_Vision_Fill_Instance instance)
+{
+	auto job = cur_job(buffer);
+	ASSERT(job && job->type == RENDER_JOB_FOV);
+	instance_buffer_push(buffer, INSTANCE_BUFFER_FOV_FILL, instance);
+	++job->fov.fill_count;
+}
+
+void push_fov_edge(Render_Job_Buffer* buffer, Field_Of_Vision_Edge_Instance instance)
+{
+	auto job = cur_job(buffer);
+	ASSERT(job && job->type == RENDER_JOB_FOV);
+	instance_buffer_push(buffer, INSTANCE_BUFFER_FOV_EDGE, instance);
+	++job->fov.edge_count;
+}
+
+void clear_uint(Render_Job_Buffer* buffer, Target_Texture_ID tex_id)
+{
+	auto job = buffer->jobs.append();
+
+	job->type = RENDER_JOB_CLEAR_UINT;
+	job->clear_uint.tex_id = tex_id;
+}
+
+void clear_depth(Render_Job_Buffer* buffer, Target_Texture_ID tex_id, f32 value)
+{
+	auto job = buffer->jobs.append();
+
+	job->type = RENDER_JOB_CLEAR_DEPTH;
+	job->clear_depth.tex_id = tex_id;
+	job->clear_depth.value = value;
+}
+
+void push_world_sprites(Render_Job_Buffer* buffer, Render_Push_World_Sprites_Desc* desc)
+{
+	if (desc->instances.len == 0) {
+		return;
+	}
+
+	auto job = buffer->jobs.append();
+
+	job->type = RENDER_JOB_WORLD_SPRITE;
+	job->world_sprite.output_tex_id = desc->output_tex_id;
+	job->world_sprite.output_sprite_id_tex_id = desc->output_sprite_id_tex_id;
+	job->world_sprite.depth_tex_id = desc->depth_tex_id;
+	job->world_sprite.sprite_tex_id = desc->sprite_tex_id;
+	job->world_sprite.constants = desc->constants;
+
+	job->world_sprite.start = buffer->instance_buffers[INSTANCE_BUFFER_WORLD_SPRITE].cur_pos;
+	job->world_sprite.count = desc->instances.len;
+
+	instance_buffer_push_slice(buffer, INSTANCE_BUFFER_WORLD_SPRITE, desc->instances);
+}
+
+void push_world_font(Render_Job_Buffer* buffer, Render_Push_World_Font_Desc* desc)
+{
+	if (desc->instances.len == 0) {
+		return;
+	}
+
+	auto job = buffer->jobs.append();
+	
+	job->type = RENDER_JOB_WORLD_FONT;
+	job->world_font.output_tex_id = desc->output_tex_id;
+	job->world_font.font_tex_id = desc->font_tex_id;
+	job->world_font.constants = desc->constants;
+
+	job->world_font.start = buffer->instance_buffers[INSTANCE_BUFFER_WORLD_FONT].cur_pos;
+	job->world_font.count = desc->instances.len;
+
+	instance_buffer_push_slice(buffer, INSTANCE_BUFFER_WORLD_FONT, desc->instances);
+}
+
+void push_world_particles(Render_Job_Buffer* buffer, Render_Push_World_Particles_Desc* desc)
+{
+	if (desc->instances.len == 0) {
+		return;
+	}
+
+	auto job = buffer->jobs.append();
+
+	job->type = RENDER_JOB_WORLD_PARTICLES;
+	job->world_particles.output_tex_id = desc->output_tex_id;
+	job->world_particles.constants.time = desc->time;
+	job->world_particles.constants.world_size = desc->world_size;
+	job->world_particles.constants.tile_size = desc->tile_size;
+
+	job->world_particles.start = buffer->instance_buffers[INSTANCE_BUFFER_PARTICLES].cur_pos;
+	job->world_particles.count = desc->instances.len;
+
+	instance_buffer_push_slice(buffer, INSTANCE_BUFFER_PARTICLES, desc->instances);
+}
+
+void clear_rtv(Render_Job_Buffer* buffer, Target_Texture_ID tex_id, v4 clear_value)
+{
+	auto job = buffer->jobs.append();
+
+	job->type = RENDER_JOB_CLEAR_RTV;
+	job->clear_rtv.tex_id      = tex_id;
+	job->clear_rtv.clear_value = clear_value;
+}
+
+void begin(Render_Job_Buffer* buffer, Render_Event event)
+{
+	buffer->event_stack.push(event);
+
+	auto job = buffer->jobs.append();
+
+	job->type = RENDER_JOB_BEGIN_EVENT;
+	job->begin_event.event = event;
+}
+
+void end(Render_Job_Buffer* buffer, Render_Event event)
+{
+	auto old_event = buffer->event_stack.pop();
+	ASSERT(event == old_event);
+
+	auto job = buffer->jobs.append();
+
+	job->type = RENDER_JOB_END_EVENT;
+	job->end_event.event = event;
+}
+
+void push(Render_Job_Buffer* buffer, Render_Job job)
+{
+	buffer->jobs.append(job);
+}
+
+void highlight_sprite_id(Render_Job_Buffer* buffer, Target_Texture_ID output_tex_id, Target_Texture_ID sprite_id_tex_id, Entity_ID sprite_id, v4 color)
+{
+	auto job = buffer->jobs.append();
+
+	job->type = RENDER_JOB_WORLD_HIGHLIGHT_SPRITE_ID;
+	job->world_highlight.output_tex_id = output_tex_id;
+	job->world_highlight.sprite_id_tex_id = sprite_id_tex_id;
+	job->world_highlight.sprite_id = sprite_id;
+	job->world_highlight.color = color;
+}
+
 
 JFG_Error load_textures(Render* render, Platform_Functions* platform_functions)
 {
-	for (u32 i = 0; i < render->textures.len; ++i) {
-		auto texture = &render->textures[i];
-		if (!texture->texture) {
-			texture->texture = load_texture(texture->filename, platform_functions);
-			if (!texture->texture) {
-				jfg_set_error("Failed to load texture \"%s\"!", texture->filename);
+	for (u32 i = 0; i < NUM_SOURCE_TEXTURES; ++i) {
+		auto filename = SOURCE_TEXTURE_FILENAMES[i];
+
+		// TODO -- make this reload friendly
+		auto texture = render->textures[i];
+		if (!texture) {
+			texture = load_texture(filename, platform_functions);
+			if (!texture) {
+				jfg_set_error("Failed to load texture \"%s\"!", filename);
 				return JFG_ERROR;
 			}
 		}
+		render->textures[i] = texture;
 	}
 
 	return JFG_SUCCESS;

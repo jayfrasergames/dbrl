@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 #include "jfg_d3d11.h"
+#include <d3d11_1.h>
 #include "draw.h"
 #include "shader_global_constants.h"
 
@@ -20,6 +21,12 @@ D3D_COMPILE_FUNCS
 
 #define CONSTANT_BUFFER_SIZE 1024
 
+const wchar_t *RENDER_EVENT_NAMES[] = {
+#define EVENT(name) L#name,
+	RENDER_EVENTS
+#undef EVENT
+};
+
 static HMODULE d3d_compiler_library = NULL;
 const char* D3D_COMPILER_DLL_NAME = "D3DCompiler_47.dll";
 const char* SHADER_DIR = "..\\assets\\shaders";
@@ -27,8 +34,13 @@ const char* SHADER_DIR = "..\\assets\\shaders";
 static DX11_Vertex_Shader vertex_shader_for_instance_buffer(Instance_Buffer_ID instance_buffer_id)
 {
 	switch (instance_buffer_id) {
-	case INSTANCE_BUFFER_SPRITE:   return DX11_VS_SPRITE;
-	case INSTANCE_BUFFER_TRIANGLE: return DX11_VS_TRIANGLE;
+	case INSTANCE_BUFFER_SPRITE:       return DX11_VS_SPRITE;
+	case INSTANCE_BUFFER_TRIANGLE:     return DX11_VS_TRIANGLE;
+	case INSTANCE_BUFFER_FOV_EDGE:     return DX11_VS_FOV_EDGE;
+	case INSTANCE_BUFFER_FOV_FILL:     return DX11_VS_FOV_FILL;
+	case INSTANCE_BUFFER_WORLD_SPRITE: return DX11_VS_SPRITE_SHEET_RENDER;
+	case INSTANCE_BUFFER_WORLD_FONT:   return DX11_VS_SPRITE_SHEET_FONT;
+	case INSTANCE_BUFFER_PARTICLES:    return DX11_VS_PARTICLES;
 	}
 	ASSERT(0);
 	return (DX11_Vertex_Shader)-1;
@@ -37,8 +49,13 @@ static DX11_Vertex_Shader vertex_shader_for_instance_buffer(Instance_Buffer_ID i
 static DXGI_FORMAT get_dxgi_format(Format format)
 {
 	switch (format) {
-	case FORMAT_R32G32_F32:       return DXGI_FORMAT_R32G32_FLOAT;
-	case FORMAT_R32G32B32A32_F32: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+	case FORMAT_R32_F:          return DXGI_FORMAT_R32_FLOAT;
+	case FORMAT_R32G32_F:       return DXGI_FORMAT_R32G32_FLOAT;
+	case FORMAT_R32G32B32A32_F: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+	case FORMAT_R8G8B8A8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM;
+	case FORMAT_R8_U:           return DXGI_FORMAT_R8_UINT;
+	case FORMAT_R32_U:          return DXGI_FORMAT_R32_UINT;
+	case FORMAT_D16_UNORM:      return DXGI_FORMAT_D16_UNORM;
 	}
 	ASSERT(0);
 	return DXGI_FORMAT_UNKNOWN;
@@ -73,10 +90,16 @@ const Shader_Metadata SHADER_METADATA[] = {
 #undef DX11_CS
 };
 
-static void set_name(ID3D11DeviceChild* object, const char* name)
+static void set_name(ID3D11DeviceChild* object, const char* fmtstr, ...)
 {
-	size_t len = strlen(name);
-	object->SetPrivateData(WKPDID_D3DDebugObjectName, len, name);
+	char buffer[4096] = {};
+	va_list args;
+	va_start(args, fmtstr);
+	vsnprintf(buffer, ARRAY_SIZE(buffer), fmtstr, args);
+	va_end(args);
+
+	size_t len = strlen(buffer);
+	object->SetPrivateData(WKPDID_D3DDebugObjectName, len, buffer);
 }
 
 bool reload_shaders(DX11_Renderer* renderer)
@@ -169,20 +192,17 @@ bool reload_shaders(DX11_Renderer* renderer)
 
 bool reload_textures(DX11_Renderer* dx11_render, Render* render)
 {
-	for (u32 i = 0; i < dx11_render->tex.len; ++i) {
-		if (dx11_render->tex[i]) {
-			dx11_render->tex[i]->Release();
-		}
+	for (u32 i = 0; i < NUM_SOURCE_TEXTURES; ++i) {
+		SAFE_RELEASE(dx11_render->tex[i]);
+		SAFE_RELEASE(dx11_render->srvs[i]);
 	}
 
-	dx11_render->tex.reset();
-
-	for (u32 i = 0; i < render->textures.len; ++i) {
-		auto tex = &render->textures[i];
+	for (u32 i = 0; i < NUM_SOURCE_TEXTURES; ++i) {
+		auto tex = render->textures[i];
 
 		D3D11_TEXTURE2D_DESC tex_desc = {};
-		tex_desc.Width = tex->texture->size.w;
-		tex_desc.Height = tex->texture->size.h;
+		tex_desc.Width = tex->size.w;
+		tex_desc.Height = tex->size.h;
 		tex_desc.MipLevels = 1;
 		tex_desc.ArraySize = 1;
 		tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -194,8 +214,8 @@ bool reload_textures(DX11_Renderer* dx11_render, Render* render)
 		tex_desc.MiscFlags = 0;
 
 		D3D11_SUBRESOURCE_DATA data_desc = {};
-		data_desc.pSysMem = tex->texture->data;
-		data_desc.SysMemPitch = tex->texture->size.w * sizeof(u32);
+		data_desc.pSysMem = tex->data;
+		data_desc.SysMemPitch = tex->size.w * sizeof(u32);
 		data_desc.SysMemSlicePitch = 0;
 
 		ID3D11Texture2D *out_tex = NULL;
@@ -206,26 +226,19 @@ bool reload_textures(DX11_Renderer* dx11_render, Render* render)
 			return false;
 		}
 
-		set_name(out_tex, fmt("TEXTURE(%s)", render->textures[i].filename));
-
-		dx11_render->tex.append(out_tex);
+		set_name(out_tex, "TEXTURE(%s)", SOURCE_TEXTURE_FILENAMES[i]);
 
 		ID3D11ShaderResourceView *srv = NULL;
 
-		D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
-		srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		srv_desc.Texture2D.MipLevels = 1;
-		srv_desc.Texture2D.MostDetailedMip = 0;
-
-		hr = dx11_render->device->CreateShaderResourceView(out_tex, &srv_desc, &srv);
+		hr = dx11_render->device->CreateShaderResourceView(out_tex, NULL, &srv);
 		if (FAILED(hr)) {
 			return false;
 		}
 
-		set_name(srv, fmt("SRV(%s)", render->textures[i].filename));
+		set_name(srv, "SRV(%s)", SOURCE_TEXTURE_FILENAMES[i]);
 
-		dx11_render->srvs.append(srv);
+		dx11_render->tex[i] = out_tex;
+		dx11_render->srvs[i] = srv;
 	}
 
 	return true;
@@ -282,6 +295,12 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 
 	ID3D11DeviceContext *dc = renderer->device_context;
 
+	ID3DUserDefinedAnnotation *uda = renderer->user_defined_annotation;
+
+	uda->BeginEvent(L"Frame");
+
+	uda->BeginEvent(L"Old Renderer (discared)");
+
 	dc->RSSetViewports(1, &viewport);
 
 	f32 clear_color[] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -304,36 +323,6 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 	                           dc,
 	                           draw->renderer.d3d11.output_uav,
 	                           draw->renderer.size);
-
-	v2 world_tl = screen_pos_to_world_pos(&draw->camera,
-	                                      screen_size,
-	                                      { 0, 0 });
-	v2 world_br = screen_pos_to_world_pos(&draw->camera,
-	                                      screen_size,
-	                                      screen_size);
-	v2 input_size = world_br - world_tl;
-	pixel_art_upsampler_d3d11_draw(&renderer->pixel_art_upsampler,
-	                               dc,
-	                               draw->renderer.d3d11.output_srv,
-	                               renderer->output_uav,
-	                               input_size,
-	                               world_tl,
-	                               (v2)screen_size,
-	                               v2(0.0f, 0.0f));
-
-	card_render_d3d11_draw(&draw->card_render,
-	                       dc,
-	                       screen_size,
-	                       renderer->output_rtv);
-	// debug_line_d3d11_draw(&draw->card_debug_line, dc, renderer->output_rtv);
-
-	v2 debug_zoom = (v2)(world_br - world_tl) / 24.0f;
-	debug_draw_world_d3d11_draw(&draw->debug_draw_world,
-	                            dc,
-	                            renderer->output_rtv,
-	                            draw->camera.world_center + draw->camera.offset,
-	                            debug_zoom);
-
 	HRESULT hr;
 	u32 cur_cb = 0;
 	ID3D11Buffer        **cbs = renderer->cbs;
@@ -342,7 +331,12 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 	ID3D11PixelShader   **ps  = renderer->ps;
 	ID3D11ComputeShader **cs  = renderer->cs;
 	// ID3D11Texture2D     **tex = renderer->tex.items;
-	ID3D11ShaderResourceView **srvs = renderer->srvs.items;
+	ID3D11ShaderResourceView **srvs = renderer->srvs;
+
+	ID3D11ShaderResourceView  **target_srvs = renderer->target_texture_srvs;
+	ID3D11UnorderedAccessView **target_uavs = renderer->target_texture_uavs;
+	ID3D11RenderTargetView    **target_rtvs = renderer->target_texture_rtvs;
+	ID3D11DepthStencilView    **target_dsvs = renderer->target_texture_dsvs;
 
 	// create "global" constant buffer
 	ID3D11Buffer *global_cb = NULL;
@@ -358,17 +352,25 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 		dc->Unmap(global_cb, 0);
 	}
 
+	uda->EndEvent(); // Old renderer (discarded)
+
 	for (u32 i = 0; i < ARRAY_SIZE(renderer->instance_buffers); ++i) {
 		dc->Unmap(renderer->instance_buffers[i], 0);
 	}
+
+	uda->BeginEvent(L"Abstracted Renderer");
+
+	ASSERT(render_jobs->event_stack.top == 0);
 
 	for (u32 i = 0; i < render_jobs->jobs.len; ++i) {
 		auto job = &render_jobs->jobs[i];
 		dc->ClearState();
 		switch (job->type) {
+
 		case RENDER_JOB_NONE:
 			ASSERT(0);
 			break;
+
 		case RENDER_JOB_TRIANGLES: {
 			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_TRIANGLE]);
@@ -427,11 +429,339 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			break;
 		}
 
+		case RENDER_JOB_CLEAR_UINT : {
+			// XXX
+			v2_u32 target_size = v2_u32(256*24, 256*24);
+
+			dc->CSSetShader(cs[DX11_CS_FOV_CLEAR], NULL, 0);
+			dc->CSSetUnorderedAccessViews(0, 1, &target_uavs[job->clear_uint.tex_id], NULL);
+			dc->Dispatch(target_size.w / 8, target_size.h / 8, 1);
+
+			break;
+		}
+
+		case RENDER_JOB_FOV: {
+
+			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_FOV_FILL]);
+			u32 stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_FOV_FILL].element_size;
+			u32 offset = 0;
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_FOV_FILL], &stride, &offset);
+		
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &job->fov.constants, sizeof(job->fov.constants));
+			dc->Unmap(cb, 0);
+
+			ID3D11Buffer *cbs[] = { cb };
+			dc->VSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->VSSetShader(vs[DX11_VS_FOV_FILL], NULL, 0);
+
+			// XXX
+			D3D11_VIEWPORT fov_viewport = {};
+			fov_viewport.TopLeftX = 0;
+			fov_viewport.TopLeftY = 0;
+			fov_viewport.Width = 256*24;
+			fov_viewport.Height = 256*24;
+			fov_viewport.MinDepth = 0.0f;
+			fov_viewport.MaxDepth = 1.0f;
+
+			dc->RSSetViewports(1, &fov_viewport);
+			dc->RSSetState(renderer->rasterizer_state);
+
+			dc->PSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->PSSetShader(ps[DX11_PS_FOV_FILL], NULL, 0);
+
+			ID3D11RenderTargetView *rtvs = { renderer->target_texture_rtvs[job->fov.output_tex_id] };
+			dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), &rtvs, NULL);
+			dc->OMSetBlendState(NULL, NULL, 0xFFFFFFFF);
+
+			dc->DrawInstanced(6, job->fov.fill_count, 0, job->fov.fill_start);
+
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_FOV_EDGE]);
+			stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_FOV_EDGE].element_size;
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_FOV_EDGE], &stride, &offset);
+
+			dc->VSSetShader(vs[DX11_VS_FOV_EDGE], NULL, 0);
+
+			dc->PSSetShaderResources(0, 1, &srvs[SOURCE_TEXTURE_EDGES]);
+			dc->PSSetShader(ps[DX11_PS_FOV_EDGE], NULL, 0);
+
+			dc->DrawInstanced(6, job->fov.edge_count, 0, job->fov.edge_start);
+
+			break;
+		}
+
+		case RENDER_JOB_WORLD_SPRITE: {
+
+			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_WORLD_SPRITE]);
+			u32 stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_WORLD_SPRITE].element_size;
+			u32 offset = 0;
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_WORLD_SPRITE], &stride, &offset);
+		
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &job->world_sprite.constants, sizeof(job->world_sprite.constants));
+			dc->Unmap(cb, 0);
+
+			ID3D11Buffer *cbs[] = { cb };
+			dc->VSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->VSSetShader(vs[DX11_VS_SPRITE_SHEET_RENDER], NULL, 0);
+
+			// XXX
+			D3D11_VIEWPORT fov_viewport = {};
+			fov_viewport.TopLeftX = 0;
+			fov_viewport.TopLeftY = 0;
+			fov_viewport.Width = 256*24;
+			fov_viewport.Height = 256*24;
+			fov_viewport.MinDepth = 0.0f;
+			fov_viewport.MaxDepth = 1.0f;
+
+			dc->RSSetViewports(1, &fov_viewport);
+			dc->RSSetState(renderer->rasterizer_state);
+
+			dc->PSSetShaderResources(0, 1, &srvs[job->world_sprite.sprite_tex_id]);
+			dc->PSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->PSSetShader(ps[DX11_PS_SPRITE_SHEET_RENDER], NULL, 0);
+
+			ID3D11RenderTargetView *rtvs[] = {
+				target_rtvs[job->world_sprite.output_tex_id],
+				target_rtvs[job->world_sprite.output_sprite_id_tex_id],
+			};
+			dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, target_dsvs[job->world_sprite.depth_tex_id]);
+			dc->OMSetBlendState(NULL, NULL, 0xFFFFFFFF);
+			dc->OMSetDepthStencilState(renderer->depth_stencil_state, 0);
+
+			dc->DrawInstanced(6, job->world_sprite.count, 0, job->world_sprite.start);
+
+			break;
+		}
+
+		case RENDER_JOB_WORLD_FONT: {
+
+			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_WORLD_FONT]);
+			u32 stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_WORLD_FONT].element_size;
+			u32 offset = 0;
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_WORLD_FONT], &stride, &offset);
+		
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &job->world_font.constants, sizeof(job->world_font.constants));
+			dc->Unmap(cb, 0);
+
+			ID3D11Buffer *cbs[] = { cb };
+			dc->VSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->VSSetShader(vs[DX11_VS_SPRITE_SHEET_FONT], NULL, 0);
+
+			// XXX
+			D3D11_VIEWPORT fov_viewport = {};
+			fov_viewport.TopLeftX = 0;
+			fov_viewport.TopLeftY = 0;
+			fov_viewport.Width = 256*24;
+			fov_viewport.Height = 256*24;
+			fov_viewport.MinDepth = 0.0f;
+			fov_viewport.MaxDepth = 1.0f;
+
+			dc->RSSetViewports(1, &fov_viewport);
+			dc->RSSetState(renderer->rasterizer_state);
+
+			dc->PSSetShaderResources(0, 1, &srvs[job->world_font.font_tex_id]);
+			dc->PSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->PSSetShader(ps[DX11_PS_SPRITE_SHEET_FONT], NULL, 0);
+
+			ID3D11RenderTargetView *rtvs[] = {
+				target_rtvs[job->world_font.output_tex_id],
+			};
+			dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, NULL);
+			dc->OMSetBlendState(NULL, NULL, 0xFFFFFFFF);
+
+			dc->DrawInstanced(6, job->world_font.count, 0, job->world_font.start);
+
+			break;
+		}
+
+		case RENDER_JOB_WORLD_PARTICLES: {
+
+			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_PARTICLES]);
+			u32 stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_PARTICLES].element_size;
+			u32 offset = 0;
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_PARTICLES], &stride, &offset);
+		
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &job->world_particles.constants, sizeof(job->world_particles.constants));
+			dc->Unmap(cb, 0);
+
+			ID3D11Buffer *cbs[] = { cb };
+			dc->VSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->VSSetShader(vs[DX11_VS_PARTICLES], NULL, 0);
+
+			// XXX
+			D3D11_VIEWPORT fov_viewport = {};
+			fov_viewport.TopLeftX = 0;
+			fov_viewport.TopLeftY = 0;
+			fov_viewport.Width = 256*24;
+			fov_viewport.Height = 256*24;
+			fov_viewport.MinDepth = 0.0f;
+			fov_viewport.MaxDepth = 1.0f;
+
+			dc->RSSetViewports(1, &fov_viewport);
+			dc->RSSetState(renderer->rasterizer_state);
+
+			dc->PSSetConstantBuffers(0, ARRAY_SIZE(cbs), cbs);
+			dc->PSSetShader(ps[DX11_PS_PARTICLES], NULL, 0);
+
+			ID3D11RenderTargetView *rtvs[] = {
+				target_rtvs[job->world_particles.output_tex_id],
+			};
+			dc->OMSetRenderTargets(ARRAY_SIZE(rtvs), rtvs, NULL);
+			dc->OMSetBlendState(NULL, NULL, 0xFFFFFFFF);
+
+			dc->DrawInstanced(1, job->world_particles.count, 0, job->world_particles.start);
+
+			break;
+		}
+
+		case RENDER_JOB_CLEAR_RTV: {
+
+			v4 c = job->clear_rtv.clear_value;
+			FLOAT clear_value[] = { c.r, c.g, c.b, c.a };
+			dc->ClearRenderTargetView(renderer->target_texture_rtvs[job->clear_rtv.tex_id], clear_value);
+
+			break;
+		}
+
+		case RENDER_JOB_CLEAR_DEPTH: {
+
+			dc->ClearDepthStencilView(target_dsvs[job->clear_depth.tex_id], D3D11_CLEAR_DEPTH, job->clear_depth.value, 0);
+
+			break;
+		}
+
+		case RENDER_JOB_BEGIN_EVENT: {
+			uda->BeginEvent(RENDER_EVENT_NAMES[job->begin_event.event]);
+			break;
+		}
+
+		case RENDER_JOB_END_EVENT: {
+			uda->EndEvent();
+			break;
+		}
+
+		case RENDER_JOB_FOV_COMPOSITE: {
+
+			dc->CSSetShader(cs[DX11_CS_FOV_COMPOSITE], NULL, 0);
+
+			ID3D11ShaderResourceView *srvs[] = {
+				target_srvs[job->fov_composite.fov_id],
+				target_srvs[job->fov_composite.world_static_id],
+				target_srvs[job->fov_composite.world_dynamic_id],
+			};
+			dc->CSSetShaderResources(0, ARRAY_SIZE(srvs), srvs);
+			ID3D11UnorderedAccessView *uavs[] = {
+				target_uavs[job->fov_composite.output_tex_id],
+			};
+			dc->CSSetUnorderedAccessViews(0, ARRAY_SIZE(uavs), uavs, NULL);
+
+			dc->Dispatch(256*24 / 8, 256*24 / 8, 1);
+
+			break;
+		}
+
+		case RENDER_JOB_WORLD_HIGHLIGHT_SPRITE_ID: {
+
+			Sprite_Sheet_Highlight_Constant_Buffer constants = {};
+			constants.sprite_id = job->world_highlight.sprite_id;
+			constants.highlight_color = job->world_highlight.color;
+	
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &constants, sizeof(constants));
+			dc->Unmap(cb, 0);
+
+			dc->CSSetShader(cs[DX11_CS_SPRITE_SHEET_HIGHLIGHT], NULL, 0);
+
+			dc->CSSetConstantBuffers(0, 1, &cb);
+			dc->CSSetShaderResources(0, 1, &target_srvs[job->world_highlight.sprite_id_tex_id]);
+			dc->CSSetUnorderedAccessViews(0, 1, &target_uavs[job->world_highlight.output_tex_id], NULL);
+
+			dc->Dispatch(256*24 / 8, 256*24 / 8, 1);
+
+			break;
+		}
+
+		case RENDER_JOB_XXX_FLUSH_OLD_RENDERER: {
+			uda->BeginEvent(L"Old renderer (compositing)");
+
+			v2 world_tl = screen_pos_to_world_pos(&draw->camera,
+							screen_size,
+							{ 0, 0 });
+			v2 world_br = screen_pos_to_world_pos(&draw->camera,
+							screen_size,
+							screen_size);
+			v2 input_size = world_br - world_tl;
+			pixel_art_upsampler_d3d11_draw(&renderer->pixel_art_upsampler,
+						dc,
+						target_srvs[TARGET_TEXTURE_WORLD_COMPOSITE],
+						renderer->output_uav,
+						input_size,
+						world_tl,
+						(v2)screen_size,
+						v2(0.0f, 0.0f));
+
+			card_render_d3d11_draw(&draw->card_render,
+					dc,
+					screen_size,
+					renderer->output_rtv);
+			// debug_line_d3d11_draw(&draw->card_debug_line, dc, renderer->output_rtv);
+
+			v2 debug_zoom = (v2)(world_br - world_tl) / 24.0f;
+			debug_draw_world_d3d11_draw(&draw->debug_draw_world,
+						dc,
+						renderer->output_rtv,
+						draw->camera.world_center + draw->camera.offset,
+						debug_zoom);
+
+
+			dc->ClearState();
+
+			uda->EndEvent(); // Old renderer (compositing)
+
+			break;
+		}
+
+		default:
+			ASSERT(0);
+			break;
+
 		}
 	}
 
 	dc->ClearState();
 
+	uda->EndEvent(); // Abstracted renderer
 	dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	dc->RSSetViewports(1, &viewport);
@@ -441,6 +771,8 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 	dc->OMSetRenderTargets(1, &renderer->back_buffer_rtv, NULL);
 	dc->PSSetShaderResources(0, 1, &renderer->output_srv);
 	dc->Draw(6, 0);
+
+	uda->EndEvent(); // Frame
 
 	renderer->swap_chain->Present(1, 0);
 }
@@ -521,45 +853,49 @@ error_init_sprite_sheet_renderer:
 static bool create_output_texture(DX11_Renderer* renderer, v2_u32 size)
 {
 	HRESULT hr;
-	ID3D11Texture2D *output_texture;
-	{
-		D3D11_TEXTURE2D_DESC desc = {};
-		desc.Width = size.w;
-		desc.Height = size.h;
-		desc.MipLevels = 1;
-		desc.ArraySize = 1;
-		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		desc.SampleDesc.Count = 1;
-		desc.SampleDesc.Quality = 0;
-		desc.Usage = D3D11_USAGE_DEFAULT;
-		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET
-		                                            | D3D11_BIND_UNORDERED_ACCESS;
-		desc.CPUAccessFlags = 0;
-		desc.MiscFlags = 0;
 
-		hr = renderer->device->CreateTexture2D(&desc, NULL, &output_texture);
-	}
+	ID3D11Texture2D *output_texture;
+
+	D3D11_TEXTURE2D_DESC desc = {};
+	desc.Width = size.w;
+	desc.Height = size.h;
+	desc.MipLevels = 1;
+	desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.SampleDesc.Quality = 0;
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET
+	                                            | D3D11_BIND_UNORDERED_ACCESS;
+	desc.CPUAccessFlags = 0;
+	desc.MiscFlags = 0;
+
+	hr = renderer->device->CreateTexture2D(&desc, NULL, &output_texture);
 	if (FAILED(hr)) {
 		goto error_init_output_texture;
 	}
+	set_name(output_texture, "OUTPUT_TEXTURE");
 
 	ID3D11UnorderedAccessView *output_uav;
 	hr = renderer->device->CreateUnorderedAccessView(output_texture, NULL, &output_uav);
 	if (FAILED(hr)) {
 		goto error_init_output_uav;
 	}
+	set_name(output_uav, "OUTPUT_TEXTURE_UAV");
 
 	ID3D11RenderTargetView *output_rtv;
 	hr = renderer->device->CreateRenderTargetView(output_texture, NULL, &output_rtv);
 	if (FAILED(hr)) {
 		goto error_init_output_rtv;
 	}
+	set_name(output_rtv, "OUTPUT_TEXTURE_RTV");
 
 	ID3D11ShaderResourceView *output_srv;
 	hr = renderer->device->CreateShaderResourceView(output_texture, NULL, &output_srv);
 	if (FAILED(hr)) {
 		goto error_init_output_srv;
 	}
+	set_name(output_srv, "OUTPUT_TEXTURE_SRV");
 
 	SAFE_RELEASE(renderer->output_uav);
 	SAFE_RELEASE(renderer->output_rtv);
@@ -571,6 +907,7 @@ static bool create_output_texture(DX11_Renderer* renderer, v2_u32 size)
 	renderer->output_rtv = output_rtv;
 	renderer->output_srv = output_srv;
 	renderer->output_texture = output_texture;
+
 	return true;
 
 	output_srv->Release();
@@ -832,6 +1169,7 @@ JFG_Error init(DX11_Renderer* renderer, Render* abstract_renderer, Log* log, Dra
 			jfg_set_error("Failed to create sprite instance buffer!");
 			return JFG_ERROR;
 		}
+		set_name(instance_buffer, ib_metadata->name);
 
 		renderer->instance_buffers[i] = instance_buffer;
 	}
@@ -872,8 +1210,121 @@ JFG_Error init(DX11_Renderer* renderer, Render* abstract_renderer, Log* log, Dra
 			jfg_set_error("Failed to create input layout!");
 			return JFG_ERROR;
 		}
+		set_name(input_layout, ib_metadata->name);
 
 		renderer->input_layouts[i] = input_layout;
+	}
+
+	// create target textures
+	for (u32 i = 0; i < NUM_TARGET_TEXTURES; ++i) {
+		ID3D11Texture2D           *tex = NULL;
+		ID3D11ShaderResourceView  *srv = NULL;
+		ID3D11UnorderedAccessView *uav = NULL;
+		ID3D11RenderTargetView    *rtv = NULL;
+		ID3D11DepthStencilView    *dsv = NULL;
+
+		auto tex_metadata = &TARGET_TEXTURE_METADATA[i];
+
+		UINT bind_flags = 0;
+		if (tex_metadata->bind_flags & BIND_SRV) { bind_flags |= D3D11_BIND_SHADER_RESOURCE; }
+		if (tex_metadata->bind_flags & BIND_UAV) { bind_flags |= D3D11_BIND_UNORDERED_ACCESS; }
+		if (tex_metadata->bind_flags & BIND_RTV) { bind_flags |= D3D11_BIND_RENDER_TARGET; }
+		if (tex_metadata->bind_flags & BIND_DSV) { bind_flags |= D3D11_BIND_DEPTH_STENCIL; }
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width  = tex_metadata->size.w;
+		desc.Height = tex_metadata->size.h;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = get_dxgi_format(tex_metadata->format);
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = bind_flags;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
+
+		hr = device->CreateTexture2D(&desc, NULL, &tex);
+		if (FAILED(hr)) {
+			jfg_set_error("Failed to create target texture!");
+			return JFG_ERROR;
+		}
+		set_name(tex, tex_metadata->name);
+
+		if (tex_metadata->bind_flags & BIND_SRV) {
+			hr = device->CreateShaderResourceView(tex, NULL, &srv);
+			if (FAILED(hr)) {
+				jfg_set_error("Failed to create SRV!");
+				return JFG_ERROR;
+			}
+			set_name(srv, "%s_SRV", tex_metadata->name);
+		}
+
+		if (tex_metadata->bind_flags & BIND_UAV) {
+			hr = device->CreateUnorderedAccessView(tex, NULL, &uav);
+			if (FAILED(hr)) {
+				jfg_set_error("Failed to create UAV!");
+				return JFG_ERROR;
+			set_name(uav, "%s_UAV", tex_metadata->name);
+			}
+		}
+
+		if (tex_metadata->bind_flags & BIND_RTV) {
+			hr = device->CreateRenderTargetView(tex, NULL, &rtv);
+			if (FAILED(hr)) {
+				jfg_set_error("Failed to create RTV!");
+				return JFG_ERROR;
+			}
+			set_name(rtv, "%s_RTV", tex_metadata->name);
+		}
+
+		if (tex_metadata->bind_flags & BIND_DSV) {
+			hr = device->CreateDepthStencilView(tex, NULL, &dsv);
+			if (FAILED(hr)) {
+				jfg_set_error("Failed to create DSV!");
+				return JFG_ERROR;
+			}
+			set_name(dsv, "%s_DSV", tex_metadata->name);
+		}
+
+		renderer->target_textures[i] = tex;
+		renderer->target_texture_srvs[i] = srv;
+		renderer->target_texture_uavs[i] = uav;
+		renderer->target_texture_rtvs[i] = rtv;
+		renderer->target_texture_dsvs[i] = dsv;
+	}
+
+	// depth stencil state
+	{
+		ID3D11DepthStencilState *depth_stencil_state = NULL;
+
+		D3D11_DEPTH_STENCIL_DESC desc = {};
+		desc.DepthEnable = TRUE;
+		desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+		desc.DepthFunc = D3D11_COMPARISON_GREATER;
+		desc.StencilEnable = FALSE;
+
+		hr = device->CreateDepthStencilState(&desc, &depth_stencil_state);
+		if (FAILED(hr)) {
+			jfg_set_error("Failed to create depth stencil state!");
+			return JFG_ERROR;
+		}
+
+		renderer->depth_stencil_state = depth_stencil_state;
+	}
+
+	// init user defined annotations
+	{
+		ID3DUserDefinedAnnotation *uda = NULL;
+
+		auto dc = renderer->device_context;
+		dc->QueryInterface(IID_PPV_ARGS(&uda));
+
+		if (uda == NULL) {
+			jfg_set_error("Failed to create user defined annotations interface!");
+			return JFG_ERROR;
+		}
+
+		renderer->user_defined_annotation = uda;
 	}
 
 	return JFG_SUCCESS;

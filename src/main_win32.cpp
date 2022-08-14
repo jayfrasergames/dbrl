@@ -29,7 +29,7 @@ u32 win32_try_read_file(char* filename, void* dest, u32 max_size)
 	                                OPEN_EXISTING,
 	                                FILE_ATTRIBUTE_NORMAL,
 	                                NULL);
-	if (!file_handle) {
+	if (file_handle == INVALID_HANDLE_VALUE) {
 		return 0;
 	}
 	DWORD file_size = GetFileSize(file_handle, NULL);
@@ -425,20 +425,16 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		process_frame(program, input_front_buffer, screen_size);
 
-		imgui_begin(&imgui, input_front_buffer);
-		imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
-		char buffer[1024];
-		snprintf(buffer, ARRAY_SIZE(buffer), "Frame: %u", frame_number);
-		imgui_text(&imgui, buffer);
-		snprintf(buffer, ARRAY_SIZE(buffer), "Screen size: %u x %u",
-			screen_size.w, screen_size.h);
-		imgui_text(&imgui, buffer);
-
 		program_dsound_play(program);
 
 		bool new_errors = check_errors(&dx11_renderer, frame_number);
 		draw_debug_info |= new_errors;
 		if (draw_debug_info) {
+			imgui_begin(&imgui, input_front_buffer);
+			imgui_set_text_cursor(&imgui, { 0.9f, 0.9f, 0.1f, 1.0f }, { 0.0f, 0.0f });
+			imgui_text(&imgui, "Frame: %u", frame_number);
+			imgui_text(&imgui, "Screen size: %u x %u", screen_size.w, screen_size.h);
+			render(&imgui, &renderer);
 			render(&d3d11_log, &renderer);
 		}
 

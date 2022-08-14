@@ -6,6 +6,7 @@
 
 #include "draw.h"
 #include "jfg_d3d11.h"
+#include <d3d11_1.h>
 #include <dxgi1_2.h>
 
 #include "pixel_art_upsampler.h"
@@ -24,7 +25,8 @@
 	DX11_PS(DDW_TRIANGLE,        "debug_draw_world.hlsl",       "ps_triangle") \
 	DX11_PS(DDW_LINE,            "debug_draw_world.hlsl",       "ps_line") \
 	DX11_PS(FOV_EDGE,            "field_of_vision_render.hlsl", "ps_edge") \
-	DX11_PS(FOV_FILL,            "field_of_vision_render.hlsl", "ps_fill")
+	DX11_PS(FOV_FILL,            "field_of_vision_render.hlsl", "ps_fill") \
+	DX11_PS(PARTICLES,           "particles.hlsl",              "ps_particles")
 
 #define DX11_VERTEX_SHADERS \
 	DX11_VS(TRIANGLE,            "triangle.hlsl",               "vs_triangle") \
@@ -36,15 +38,16 @@
 	DX11_VS(DDW_TRIANGLE,        "debug_draw_world.hlsl",       "vs_triangle") \
 	DX11_VS(DDW_LINE,            "debug_draw_world.hlsl",       "vs_line") \
 	DX11_VS(FOV_EDGE,            "field_of_vision_render.hlsl", "vs_edge") \
-	DX11_VS(FOV_FILL,            "field_of_vision_render.hlsl", "vs_fill")
+	DX11_VS(FOV_FILL,            "field_of_vision_render.hlsl", "vs_fill") \
+	DX11_VS(PARTICLES,           "particles.hlsl",              "vs_particles")
 
 #define DX11_COMPUTE_SHADERS \
 	DX11_CS(SPRITE_SHEET_CLEAR_SPRITE_ID, "sprite_sheet.hlsl",           "cs_clear_sprite_id") \
 	DX11_CS(SPRITE_SHEET_HIGHLIGHT,       "sprite_sheet.hlsl",           "cs_highlight_sprite") \
 	DX11_CS(PIXEL_ART_UPSAMPLER,          "pixel_art_upsampler.hlsl",    "cs_pixel_art_upsampler") \
-	DX11_CS(PARTICLES,                    "particles.hlsl",              "cs_particles") \
 	DX11_CS(FOV_BLEND,                    "field_of_vision_render.hlsl", "cs_shadow_blend") \
-	DX11_CS(FOV_COMPOSITE,                "field_of_vision_render.hlsl", "cs_composite")
+	DX11_CS(FOV_COMPOSITE,                "field_of_vision_render.hlsl", "cs_composite") \
+	DX11_CS(FOV_CLEAR,                    "field_of_vision_render.hlsl", "cs_clear")
 
 enum DX11_Pixel_Shader
 {
@@ -85,6 +88,8 @@ struct DX11_Renderer
 	ID3D11DeviceContext       *device_context;
 	ID3D11InfoQueue           *info_queue;
 
+	ID3DUserDefinedAnnotation *user_defined_annotation;
+
 	IDXGISwapChain            *swap_chain;
 	ID3D11Texture2D           *back_buffer;
 	ID3D11RenderTargetView    *back_buffer_rtv;
@@ -97,14 +102,16 @@ struct DX11_Renderer
 	ID3D11Buffer              *cbs[MAX_CONSTANT_BUFFERS];
 	ID3D11Buffer              *dispatch_cbs[MAX_CONSTANT_BUFFERS];
 
-	ID3D11InputLayout         *sprite_input_layout;
-	ID3D11Buffer              *sprite_instance_buffer;
+	ID3D11Texture2D           *target_textures[NUM_TARGET_TEXTURES];
+	ID3D11ShaderResourceView  *target_texture_srvs[NUM_TARGET_TEXTURES];
+	ID3D11UnorderedAccessView *target_texture_uavs[NUM_TARGET_TEXTURES];
+	ID3D11RenderTargetView    *target_texture_rtvs[NUM_TARGET_TEXTURES];
+	ID3D11DepthStencilView    *target_texture_dsvs[NUM_TARGET_TEXTURES];
+
+	ID3D11DepthStencilState   *depth_stencil_state; 
 
 	ID3D11InputLayout         *input_layouts[NUM_INSTANCE_BUFFERS];
 	ID3D11Buffer              *instance_buffers[NUM_INSTANCE_BUFFERS];
-
-	ID3D11ShaderResourceView  *instance_buffer_srv;
-	ID3D11Buffer              *instance_buffer;
 
 	ID3D11RasterizerState     *rasterizer_state;
 	ID3D11BlendState          *blend_state;
@@ -115,8 +122,8 @@ struct DX11_Renderer
 
 	ID3DBlob                  *vs_code[NUM_DX11_VERTEX_SHADERS];
 
-	Max_Length_Array<ID3D11ShaderResourceView*, MAX_TEXTURES> srvs;
-	Max_Length_Array<ID3D11Texture2D*, MAX_TEXTURES>          tex;
+	ID3D11ShaderResourceView  *srvs[NUM_SOURCE_TEXTURES];
+	ID3D11Texture2D           *tex[NUM_SOURCE_TEXTURES];
 
 	Pixel_Art_Upsampler        pixel_art_upsampler;
 

@@ -31,6 +31,10 @@
     * flesh to stone
     * disease (card can't be discarded)
 
+  * rendering
+    * animate water
+    * add shadows over water
+
   * editor
     * editor mode
     * entity picking/tile editing
@@ -63,8 +67,15 @@
       * move to using adstracted renderer
 
     * cleanup renderer
+      * merge all texture types (target/source) into a single abstract texture type
+      * load shaders from text files at run time
+        * should be able to start up if we only compile a subset of all shaders(???)
+        * output shader compile errors to a log, display log on screen
+        * attempt shader reloads, don't reload shaders if they previously had 
+          a working version but now don't
+        * add texture targets for writing debug output which can be viewed at runtime
+
       * port shaders to cleaned up renderer (reverse order they are rendered in dbrl.cpp)
-        * imgui
         * card_render
         * debug_draw_world
         * debug_line_draw
@@ -80,11 +91,6 @@
         * effects_32
         * boxy_bold
       * load PNG assets at runtime
-      * load shaders from text files at run time
-        * should be able to start up if we only compile a subset of all shaders
-        * output shader compile errors to a log
-        * attempt shader reloads, don't reload shaders if they previously had 
-          a working version but now don't
 
     * asset reloading at runtime
       * load asset through asset manager?

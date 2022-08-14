@@ -69,13 +69,9 @@ static int l_print(lua_State* lua_state)
 	return 0;
 }
 
-bool init(Console* console, v2_u32 size, lua_State* lua_state, Render* render, Platform_Functions* platform_functions)
+JFG_Error init(Console* console, v2_u32 size, lua_State* lua_state, Render* render, Platform_Functions* platform_functions)
 {
 	memset(console, 0, sizeof(*console));
-	console->font_tex_id = get_texture_id(render, "Codepage-437.png");
-	if (console->font_tex_id == INVALID_TEXTURE_ID) {
-		return false;
-	}
 	console->size = size;
 	console->scroll_state = SCROLL_STATE_BOTTOM;
 	console->lua_state = lua_state;
@@ -87,11 +83,8 @@ bool init(Console* console, v2_u32 size, lua_State* lua_state, Render* render, P
 	lua_pushlightuserdata(lua_state, console);
 	lua_pushcclosure(lua_state, l_print, 1);
 	lua_setglobal(lua_state, "print");
-	// lua_
-	// lua_register(lua_state, "hello", lua_hello);
 
-
-	return true;
+	return JFG_SUCCESS;
 }
 
 bool handle_input(Console* console, Input* input)
@@ -193,7 +186,7 @@ void render(Console* console, Render* render, f32 time)
 	Sprite_Constants sprite_constants = {};
 	sprite_constants.tile_input_size = glyph_size;
 	sprite_constants.tile_output_size = glyph_size;
-	begin_sprites(r, console->font_tex_id, sprite_constants);
+	begin_sprites(r, SOURCE_TEXTURE_CODEPAGE437, sprite_constants);
 
 	Sprite_Instance instance = {};
 	instance.color = v4(1.0f, 1.0f, 1.0f, 1.0f);

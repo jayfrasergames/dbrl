@@ -5,6 +5,8 @@
 #include "containers.hpp"
 #include "types.h"
 
+#include "fov.h"
+
 #include "field_of_vision_render_gpu_data_types.h"
 
 // XXX - need these definitions here
@@ -49,8 +51,8 @@ struct Field_Of_Vision_Render_D3D11
 
 struct Field_Of_Vision_Draw
 {
-	Map_Cache_Bool *fov;
-	u32             id;
+	Field_Of_Vision *fov;
+	u32              id;
 };
 
 struct Field_Of_Vision_Entry
@@ -77,7 +79,7 @@ struct Field_Of_Vision_Render
 
 void fov_render_init(Field_Of_Vision_Render* render, v2_u32 grid_size);
 void fov_render_reset(Field_Of_Vision_Render* render);
-u32 fov_render_add_fov(Field_Of_Vision_Render* render, Map_Cache_Bool* fov);
+u32 fov_render_add_fov(Field_Of_Vision_Render* render, Field_Of_Vision* fov);
 void fov_render_release_buffer(Field_Of_Vision_Render* render, u32 buffer_id);
 void fov_render_set_alpha(Field_Of_Vision_Render* render, u32 buffer_id, f32 alpha);
 

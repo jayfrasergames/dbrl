@@ -22,7 +22,7 @@ u32 sprite_sheet_renderer_id_in_pos(Sprite_Sheet_Renderer* renderer, v2_u32 pos)
 	f32 best_depth = 0.0f;
 	for (u32 i = 0; i < renderer->num_instance_buffers; ++i) {
 		Sprite_Sheet_Instances* instances = &renderer->instance_buffers[i];
-		u32 num_instances  = instances->num_instances;
+		u32 num_instances  = instances->instances.len;
 		u32 tex_width      = instances->data.size.w;
 		v2_u32 sprite_size = instances->data.sprite_size;
 		for (u32 j = 0; j < num_instances; ++j) {
@@ -63,13 +63,12 @@ void sprite_sheet_renderer_highlight_sprite(Sprite_Sheet_Renderer* renderer, u32
 
 void sprite_sheet_instances_reset(Sprite_Sheet_Instances* instances)
 {
-	instances->num_instances = 0;
+	instances->instances.reset();
 }
 
 void sprite_sheet_instances_add(Sprite_Sheet_Instances* instances, Sprite_Sheet_Instance instance)
 {
-	ASSERT(instances->num_instances < SPRITE_SHEET_MAX_INSTANCES);
-	instances->instances[instances->num_instances++] = instance;
+	instances->instances.append(instance);
 }
 
 void sprite_sheet_font_instances_reset(Sprite_Sheet_Font_Instances* instances)
@@ -756,8 +755,8 @@ void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Renderer* renderer,
 	hr = dc->Map(instances->d3d11.instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_buffer);
 	ASSERT(SUCCEEDED(hr));
 	memcpy(mapped_buffer.pData,
-	       &instances->instances,
-	       sizeof(Sprite_Sheet_Instance) * instances->num_instances);
+	       instances->instances.items,
+	       sizeof(Sprite_Sheet_Instance) * instances->instances.len);
 	dc->Unmap(instances->d3d11.instance_buffer, 0);
 
 	hr = dc->Map(instances->d3d11.constant_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0,
@@ -771,7 +770,7 @@ void sprite_sheet_instances_d3d11_draw(Sprite_Sheet_Renderer* renderer,
 	dc->VSSetShaderResources(0, 1, &instances->d3d11.instance_buffer_srv);
 	dc->VSSetConstantBuffers(0, 1, &instances->d3d11.constant_buffer);
 
-	dc->DrawInstanced(6, instances->num_instances, 0, 0);
+	dc->DrawInstanced(6, instances->instances.len, 0, 0);
 }
 
 void sprite_sheet_renderer_d3d11_begin_font(Sprite_Sheet_Renderer*  renderer,

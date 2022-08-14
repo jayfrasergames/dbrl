@@ -9,13 +9,17 @@
 #define FOV_COMPOSITE_WIDTH  8
 #define FOV_COMPOSITE_HEIGHT 8
 
+#define FOV_CLEAR_WIDTH  8
+#define FOV_CLEAR_HEIGHT 8
+
 struct Field_Of_Vision_Render_Constant_Buffer
 {
 	F2 grid_size;
 	F2 sprite_size;
 
 	F2 edge_tex_size;
-	F2 _dummy;
+	U1 output_val;
+	F1 _dummy;
 };
 
 struct Field_Of_Vision_Render_Blend_Constant_Buffer
@@ -26,13 +30,13 @@ struct Field_Of_Vision_Render_Blend_Constant_Buffer
 
 struct Field_Of_Vision_Edge_Instance
 {
-	F2 world_coords;
-	F2 sprite_coords;
+	F2 world_coords  SEMANTIC_NAME(WORLD_COORDS);
+	F2 sprite_coords SEMANTIC_NAME(SPRITE_COORDS);
 };
 
 struct Field_Of_Vision_Fill_Instance
 {
-	F2 world_coords;
+	F2 world_coords SEMANTIC_NAME(WORLD_COORDS);
 };
 
 #endif
