@@ -308,7 +308,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	}
 
 	Log d3d11_log = {};
-	init(&d3d11_log, d3d11_log_buffer, ARRAY_SIZE(d3d11_log_buffer), &renderer);
+	init(&d3d11_log, d3d11_log_buffer, ARRAY_SIZE(d3d11_log_buffer));
 	d3d11_log.grid_size = v2_u32(80, 40);
 
 	ASSERT(((uintptr_t)program & (program_size.alignment - 1)) == 0);

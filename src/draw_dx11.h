@@ -9,8 +9,6 @@
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
 
-#include "pixel_art_upsampler.h"
-
 #include "log.h"
 #include "render.h"
 
@@ -124,8 +122,6 @@ struct DX11_Renderer
 
 	ID3D11ShaderResourceView  *srvs[NUM_SOURCE_TEXTURES];
 	ID3D11Texture2D           *tex[NUM_SOURCE_TEXTURES];
-
-	Pixel_Art_Upsampler        pixel_art_upsampler;
 
 	v2_u32 max_screen_size;
 	v2_u32 screen_size;

@@ -102,8 +102,10 @@ static void set_name(ID3D11DeviceChild* object, const char* fmtstr, ...)
 	object->SetPrivateData(WKPDID_D3DDebugObjectName, len, buffer);
 }
 
-bool reload_shaders(DX11_Renderer* renderer)
+JFG_Error reload_shaders(DX11_Renderer* renderer, Log* error_log)
 {
+	JFG_Error error_code = JFG_SUCCESS;
+
 	ID3D11Device *device = renderer->device;
 
 	for (u32 i = 0; i < ARRAY_SIZE(SHADER_METADATA); ++i) {
@@ -126,11 +128,11 @@ bool reload_shaders(DX11_Renderer* renderer)
 
 		if (FAILED(hr)) {
 			// XXX -- check if error_messages == NULL and if so make an error message based on the HRESULT
-			MessageBox(NULL, (char*)error_messages->GetBufferPointer(), "dbrl", MB_OK);
-			printf("Failed to compile shader \"%s\"!\nErrors:\n%s\n",
-			       metadata->name,
-			       (char*)error_messages->GetBufferPointer());
-			return false;
+			logf(error_log, "Failed to compile shader \"%s\".\nErrors:", metadata->name);
+			log(error_log, (char*)error_messages->GetBufferPointer());
+			error_messages->Release();
+			error_code = JFG_ERROR;
+			continue;
 		}
 
 		switch (metadata->type) {
@@ -141,11 +143,13 @@ bool reload_shaders(DX11_Renderer* renderer)
 			                               NULL,
 			                               &ps);
 			if (FAILED(hr)) {
-				return false;
+				error_code = JFG_ERROR;
+				logf(error_log, "Failed call to CreatePixelShader for shader \"%s\"", metadata->name);
+				code->Release();
+				continue;
 			}
-			if (renderer->ps[metadata->index]) {
-				renderer->ps[metadata->index]->Release();
-			}
+			SAFE_RELEASE(renderer->ps[metadata->index]);
+			SAFE_RELEASE(code);
 			renderer->ps[metadata->index] = ps;
 			set_name(ps, metadata->name);
 			break;
@@ -157,14 +161,16 @@ bool reload_shaders(DX11_Renderer* renderer)
 			                                NULL,
 			                                &vs);
 			if (FAILED(hr)) {
-				return false;
+				error_code = JFG_ERROR;
+				logf(error_log, "Failed call to CreateVertexShader for shader \"%s\"", metadata->name);
+				code->Release();
+				continue;
 			}
-			if (renderer->vs[metadata->index]) {
-				renderer->vs[metadata->index]->Release();
-			}
+			SAFE_RELEASE(renderer->vs[metadata->index]);
+			SAFE_RELEASE(renderer->vs_code[metadata->index]);
 			renderer->vs[metadata->index] = vs;
-			set_name(vs, metadata->name);
 			renderer->vs_code[metadata->index] = code;
+			set_name(vs, metadata->name);
 			break;
 		}
 		case COMPUTE_SHADER: {
@@ -174,11 +180,13 @@ bool reload_shaders(DX11_Renderer* renderer)
 			                                 NULL,
 			                                 &cs);
 			if (FAILED(hr)) {
-				return false;
+				error_code = JFG_ERROR;
+				logf(error_log, "Failed call to CreateComputeShader for shader \"%s\"", metadata->name);
+				code->Release();
+				continue;
 			}
-			if (renderer->cs[metadata->index]) {
-				renderer->cs[metadata->index]->Release();
-			}
+			SAFE_RELEASE(renderer->cs[metadata->index]);
+			SAFE_RELEASE(code);
 			renderer->cs[metadata->index] = cs;
 			set_name(cs, metadata->name);
 			break;
@@ -187,7 +195,7 @@ bool reload_shaders(DX11_Renderer* renderer)
 
 	}
 
-	return true;
+	return error_code;
 }
 
 bool reload_textures(DX11_Renderer* dx11_render, Render* render)
@@ -343,6 +351,12 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 
 		case RENDER_JOB_NONE:
 			ASSERT(0);
+			break;
+
+		case RENDER_JOB_RELOAD_SHADERS:
+
+			reload_shaders(renderer, job->reload_shaders.log);
+
 			break;
 
 		case RENDER_JOB_TRIANGLES: {
@@ -686,6 +700,28 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			break;
 		}
 
+		case RENDER_JOB_PIXEL_ART_UPSAMPLE: {
+	
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &job->upsample_pixel_art.constants, sizeof(job->upsample_pixel_art.constants));
+			dc->Unmap(cb, 0);
+
+			dc->CSSetShader(cs[DX11_CS_PIXEL_ART_UPSAMPLER], NULL, 0);
+			dc->CSSetConstantBuffers(0, 1, &cb);
+			dc->CSSetShaderResources(0, 1, &target_srvs[job->upsample_pixel_art.input_tex_id]);
+			dc->CSSetUnorderedAccessViews(0, 1, &renderer->output_uav, NULL);
+
+			dc->Dispatch((screen_size.w + PIXEL_ART_UPSAMPLER_WIDTH - 1) / PIXEL_ART_UPSAMPLER_WIDTH,
+			             (screen_size.h + PIXEL_ART_UPSAMPLER_HEIGHT - 1) / PIXEL_ART_UPSAMPLER_HEIGHT,
+			             1);
+
+			break;
+		}
+
 		case RENDER_JOB_XXX_FLUSH_OLD_RENDERER: {
 			uda->BeginEvent(L"Old renderer (compositing)");
 
@@ -695,15 +731,6 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			v2 world_br = screen_pos_to_world_pos(&draw->camera,
 							screen_size,
 							screen_size);
-			v2 input_size = world_br - world_tl;
-			pixel_art_upsampler_d3d11_draw(&renderer->pixel_art_upsampler,
-						dc,
-						target_srvs[TARGET_TEXTURE_WORLD_COMPOSITE],
-						renderer->output_uav,
-						input_size,
-						world_tl,
-						(v2)screen_size,
-						v2(0.0f, 0.0f));
 
 			card_render_d3d11_draw(&draw->card_render,
 					dc,
@@ -888,7 +915,7 @@ JFG_Error init(DX11_Renderer* renderer, Render* abstract_renderer, Log* log, Dra
 
 	ID3D11Device *device = renderer->device;
 
-	if (!reload_shaders(renderer)) {
+	if (reload_shaders(renderer, log) != JFG_SUCCESS) {
 		return JFG_ERROR;
 	}
 
@@ -983,10 +1010,6 @@ JFG_Error init(DX11_Renderer* renderer, Render* abstract_renderer, Log* log, Dra
 	renderer->screen_size = screen_size;
 
 	if (!program_d3d11_init(draw, renderer->device)) {
-		return JFG_ERROR;
-	}
-
-	if (!pixel_art_upsampler_d3d11_init(&renderer->pixel_art_upsampler, renderer->device)) {
 		return JFG_ERROR;
 	}
 

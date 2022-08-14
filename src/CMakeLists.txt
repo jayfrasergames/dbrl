@@ -21,7 +21,6 @@ set(headers
 	mem.h
 	particles.h
 	physics.h
-	pixel_art_upsampler.h
 	platform_functions.h
 	prelude.h
 	random.h
@@ -49,7 +48,6 @@ set(object_sources
 	dbrl.cpp
 	format.cpp
 	particles.cpp
-	pixel_art_upsampler.cpp
 	platform_functions.cpp
 	draw_dx11.cpp
 	jfg_d3d11.cpp

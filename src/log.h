@@ -2,7 +2,7 @@
 
 #include "prelude.h"
 #include "jfg_error.h"
-#include "render.h"
+#include "types.h"
 
 enum Log_Scroll
 {
@@ -30,7 +30,7 @@ struct Log
 	Log_Scroll_State scroll_state;
 };
 
-void init(Log* l, char* buffer, size_t buffer_size, Render* render);
+void init(Log* l, char* buffer, size_t buffer_size);
 void reset(Log* l);
 void log(Log* l, const char* str);
 void logf(Log* l, const char* format_string, ...);

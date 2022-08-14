@@ -2,9 +2,11 @@
 
 #include "stdafx.h"
 
+#include "render.h"
+
 const char ESCAPE = 0x1B;
 
-void init(Log* l, char* buffer, size_t buffer_size, Render* render)
+void init(Log* l, char* buffer, size_t buffer_size)
 {
 	memset(l, 0, sizeof(*l));
 	l->buffer = buffer;

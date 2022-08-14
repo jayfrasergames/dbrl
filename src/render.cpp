@@ -278,3 +278,28 @@ JFG_Error load_textures(Render* render, Platform_Functions* platform_functions)
 
 	return JFG_SUCCESS;
 }
+
+static int l_reload_shaders(lua_State* lua_state)
+{
+	i32 num_args = lua_gettop(lua_state);
+	if (num_args != 0) {
+		return luaL_error(lua_state, "Lua function 'reload_shaders' expected 0 arguments, got %d!", num_args);
+	}
+	auto render = (Render*)lua_touserdata(lua_state, lua_upvalueindex(1));
+	auto log = (Log*)lua_touserdata(lua_state, lua_upvalueindex(2));
+	auto buffer = &render->render_job_buffer;
+
+	auto job = buffer->jobs.append();
+	job->type = RENDER_JOB_RELOAD_SHADERS;
+	job->reload_shaders.log = log;
+
+	return 0;
+}
+
+void register_lua_functions(Render* render, Log* log, lua_State* lua_state)
+{
+	lua_pushlightuserdata(lua_state, render);
+	lua_pushlightuserdata(lua_state, log);
+	lua_pushcclosure(lua_state, l_reload_shaders, 2);
+	lua_setglobal(lua_state, "reload_shaders");
+}

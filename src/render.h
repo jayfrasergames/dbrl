@@ -12,6 +12,7 @@
 #include "field_of_vision_render_gpu_data_types.h"
 #include "sprite_sheet_gpu_data_types.h"
 #include "particles_gpu_data_types.h"
+#include "pixel_art_upsampler_gpu_data_types.h"
 
 #define MAX_EVENT_DEPTH 32
 // EVENT(name)
@@ -118,6 +119,9 @@ enum Render_Job_Type
 	RENDER_JOB_WORLD_PARTICLES,
 	RENDER_JOB_BEGIN_EVENT,
 	RENDER_JOB_END_EVENT,
+	RENDER_JOB_PIXEL_ART_UPSAMPLE,
+
+	RENDER_JOB_RELOAD_SHADERS,
 
 	RENDER_JOB_XXX_FLUSH_OLD_RENDERER,
 };
@@ -126,6 +130,9 @@ struct Render_Job
 {
 	Render_Job_Type type;
 	union {
+		struct {
+			Log* log;
+		} reload_shaders;
 		struct {
 			u32 start;
 			u32 count;
@@ -195,6 +202,11 @@ struct Render_Job
 			Target_Texture_ID world_dynamic_id;
 			Target_Texture_ID output_tex_id;
 		} fov_composite;
+		struct {
+			Target_Texture_ID                   input_tex_id;
+			Target_Texture_ID                   output_tex_id;
+			Pixel_Art_Upsampler_Constant_Buffer constants;
+		} upsample_pixel_art;
 	};
 };
 
@@ -362,3 +374,5 @@ void end(Render_Job_Buffer* buffer, Render_Event event);
 void push(Render_Job_Buffer* buffer, Render_Job job);
 
 void highlight_sprite_id(Render_Job_Buffer* buffer, Target_Texture_ID output_tex_id, Target_Texture_ID sprite_id_tex_id, Entity_ID sprite_id, v4 color);
+
+void register_lua_functions(Render* render, Log* log, lua_State* lua_state);

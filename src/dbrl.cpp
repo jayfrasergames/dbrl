@@ -5956,7 +5956,10 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 	program->draw = draw;
 
 	program->lua_state = luaL_newstate();
-	init(&program->console, v2_u32(80, 25), program->lua_state, render, &program->platform_functions);
+
+	init(&program->console, v2_u32(80, 25), program->lua_state);
+	register_lua_functions(render, &program->console.log, program->lua_state);
+
 	print(&program->console, "Hello, world!");
 	print(&program->console, "Hello, sailor!");
 	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
@@ -6672,6 +6675,24 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		                    TARGET_TEXTURE_SPRITE_ID,
 		                    sprite_id,
 		                    v4(1.0f, 0.0f, 0.0f, 1.0f));
+	}
+
+	// pixel art upsample
+	{
+		v2 world_tl = screen_pos_to_world_pos(&program->draw->camera, screen_size, { 0, 0 });
+		v2 world_br = screen_pos_to_world_pos(&program->draw->camera, screen_size, screen_size);
+		v2 input_size = world_br - world_tl;
+
+		Render_Job job = {};
+		job.type = RENDER_JOB_PIXEL_ART_UPSAMPLE;
+		job.upsample_pixel_art.input_tex_id = TARGET_TEXTURE_WORLD_COMPOSITE;
+		// job.upsample_pixel_art.output_tex_id = ...
+		job.upsample_pixel_art.constants.input_size = input_size;
+		job.upsample_pixel_art.constants.output_size = (v2)screen_size;
+		job.upsample_pixel_art.constants.input_offset = world_tl;
+		job.upsample_pixel_art.constants.output_offset = v2(0.0f, 0.0f);
+
+		push(&program->render->render_job_buffer, job);
 	}
 
 	// XXX

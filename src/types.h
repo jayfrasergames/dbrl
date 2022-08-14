@@ -1,5 +1,4 @@
-#ifndef TYPES_H
-#define TYPES_H
+#pragma once
 
 typedef v2_u8 Pos;
 
@@ -33,4 +32,7 @@ struct Map_Cache_Bool
 
 typedef u16 Entity_ID;
 
-#endif
+// Forward declarations
+
+struct Render;
+struct Log;

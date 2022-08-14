@@ -2,6 +2,9 @@
 
 #include "stdafx.h"
 
+#include "render.h"
+#include "log.h"
+
 const f32 CURSOR_BLINK_DURATION = 0.4f;
 const char ESCAPE = 0x1B;
 
@@ -69,11 +72,12 @@ static int l_print(lua_State* lua_state)
 	return 0;
 }
 
-JFG_Error init(Console* console, v2_u32 size, lua_State* lua_state, Render* render, Platform_Functions* platform_functions)
+void init(Console* console, v2_u32 size, lua_State* lua_state)
 {
 	memset(console, 0, sizeof(*console));
-	console->size = size;
-	console->scroll_state = SCROLL_STATE_BOTTOM;
+	init(&console->log, console->history_buffer, ARRAY_SIZE(console->history_buffer));
+
+	console->log.grid_size = v2_u32(size.w, size.h - 1);
 	console->lua_state = lua_state;
 
 	lua_pushlightuserdata(lua_state, console);
@@ -83,17 +87,15 @@ JFG_Error init(Console* console, v2_u32 size, lua_State* lua_state, Render* rend
 	lua_pushlightuserdata(lua_state, console);
 	lua_pushcclosure(lua_state, l_print, 1);
 	lua_setglobal(lua_state, "print");
-
-	return JFG_SUCCESS;
 }
 
 bool handle_input(Console* console, Input* input)
 {
 	if (input_get_num_down_transitions(input, INPUT_BUTTON_DOWN)) {
-		scroll(console, SCROLL_DOWN_ONE);
+		scroll(&console->log, LOG_SCROLL_DOWN_ONE);
 	}
 	if (input_get_num_down_transitions(input, INPUT_BUTTON_UP)) {
-		scroll(console, SCROLL_UP_ONE);
+		scroll(&console->log, LOG_SCROLL_UP_ONE);
 	}
 
 	if (!input->text_input) {
@@ -136,41 +138,25 @@ bool handle_input(Console* console, Input* input)
 
 void print(Console* console, const char* text)
 {
-	u32 buffer_pos = console->end_pos;
-	for (const char *p = text; *p; ++p) {
-		console->history_buffer[buffer_pos % ARRAY_SIZE(console->history_buffer)] = *p;
-		++buffer_pos;
-	}
-	console->history_buffer[buffer_pos % ARRAY_SIZE(console->history_buffer)] = '\n';
-	console->end_pos = ++buffer_pos;
-
-	if (console->history_buffer[buffer_pos % ARRAY_SIZE(console->history_buffer)]) {
-		while (console->history_buffer[buffer_pos % ARRAY_SIZE(console->history_buffer)] != '\n') {
-			console->history_buffer[buffer_pos % ARRAY_SIZE(console->history_buffer)] = 0;
-			++buffer_pos;
-		}
-		console->history_buffer[buffer_pos % ARRAY_SIZE(console->history_buffer)] = 0;
-		console->start_pos = ++buffer_pos;
-	}
-	if (console->scroll_state == SCROLL_STATE_BOTTOM) {
-		scroll(console, SCROLL_BOTTOM);
-	}
+	log(&console->log, text);
 }
 
-void render(Console* console, Render* render, f32 time)
+void render(Console* console, Render* renderer, f32 time)
 {
-	auto r = &render->render_job_buffer;
+	auto r = &renderer->render_job_buffer;
 
 	v2 glyph_size = v2(9.0f, 16.0f);
 
-	v2_u32 size = console->size;
+	render(&console->log, renderer);
+
+	v2_u32 size = console->log.grid_size + v2_u32(0, 1);
 
 	v2 console_offset = v2(5.0f, 2.0f);
 	v2 console_border = v2 (1.0f, 1.0f);
 	v2 console_size   = (v2)size;
 
-	v2 top_left = glyph_size * console_offset;
-	v2 bottom_right = top_left + glyph_size * (console_size + 2.0f * console_border);
+	v2 top_left = glyph_size * (console_offset + v2(0.0f, console_size.h));
+	v2 bottom_right = top_left + glyph_size * (v2(console_size.w, 1.0f) + 2.0f * console_border);
 	v2 top_right = v2(bottom_right.x, top_left.y);
 	v2 bottom_left = v2(top_left.x, bottom_right.y);
 
@@ -193,36 +179,7 @@ void render(Console* console, Render* render, f32 time)
 	v2_u32 cursor_pos = v2_u32(0, 0);
 	v2 console_top_left = console_offset + console_border;
 
-	for (u32 pos = console->read_pos % ARRAY_SIZE(console->history_buffer); console->history_buffer[pos]; pos = (pos + 1) % ARRAY_SIZE(console->history_buffer)) {
-		u8 c = console->history_buffer[pos];
-		switch (c) {
-		case '\n':
-		case '\r':
-			++cursor_pos.y;
-			cursor_pos.x = 0;
-			break;
-		case '\t':
-			cursor_pos.x += 8;
-			cursor_pos.x &= ~7;
-			break;
-		default:
-			instance.glyph_coords = v2(c % 32, c / 32);
-			instance.output_coords = (v2)cursor_pos + console_top_left;
-			push_sprite(r, instance);
-			++cursor_pos.x;
-			break;
-		}
-		if (cursor_pos.x >= size.w) {
-			++cursor_pos.y;
-			cursor_pos.x = 0;
-		}
-		if (cursor_pos.y >= size.h - 1) {
-			break;
-		}
-	}
-end_history_buffer_print:
-
-	cursor_pos = v2_u32(0, size.h - 1);
+	cursor_pos = v2_u32(0, size.h);
 	u8 prompt = '>';
 	instance.glyph_coords = v2(prompt % 32, prompt / 32);
 	instance.output_coords = (v2)cursor_pos + console_top_left;
@@ -245,87 +202,5 @@ end_history_buffer_print:
 		instance.glyph_coords = v2(27.0f, 6.0f);
 		instance.output_coords = (v2)cursor_pos + console_top_left;
 		push_sprite(r, instance);
-	}
-}
-
-static u32 get_next_line_start(Console* console, u32 pos)
-{
-	u32 width = console->size.w;
-	u32 end_pos = console->end_pos;
-	if (pos == end_pos) {
-		return pos;
-	}
-	u32 col_pos = 0;
-	for ( ; pos < end_pos; ++pos) {
-		u8 c = console->history_buffer[pos];
-		switch (c) {
-		case '\n':
-		case '\r':
-			return pos + 1;
-		case '\t':
-			if (col_pos >= width) {
-				return pos;
-			}
-			col_pos += 8;
-			col_pos &= ~7;
-			break;
-		default:
-			if (col_pos >= width) {
-				return pos;
-			}
-			++col_pos;
-			break;
-		}
-	}
-	return pos;
-}
-
-static u32 get_prev_line_start(Console* console, u32 pos)
-{
-	u32 start_pos = console->start_pos;
-	if (pos == start_pos) {
-		return start_pos;
-	}
-	u32 prev_newline_pos = pos - 1;
-	while (1) {
-		char c = console->history_buffer[(prev_newline_pos - 1) % ARRAY_SIZE(console->history_buffer)];
-		if (c == '\n' || c == 0) {
-			break;
-		}
-		--prev_newline_pos;
-	}
-	u32 result = prev_newline_pos;
-	u32 cur_pos = result;
-	while (cur_pos < pos) {
-		result = cur_pos;
-		cur_pos = get_next_line_start(console, cur_pos);
-	}
-	return result;
-}
-
-void scroll(Console* console, Console_Scroll scroll)
-{
-	switch (scroll) {
-	case SCROLL_TOP:
-		console->read_pos = console->start_pos;
-		console->scroll_state = SCROLL_STATE_TOP;
-		break;
-	case SCROLL_UP_ONE:
-		console->read_pos = get_prev_line_start(console, console->read_pos);
-		console->scroll_state = SCROLL_STATE_MIDDLE;
-		break;
-	case SCROLL_DOWN_ONE:
-		console->read_pos = get_next_line_start(console, console->read_pos);
-		console->scroll_state = SCROLL_STATE_MIDDLE;
-		break;
-	case SCROLL_BOTTOM: {
-		u32 pos = console->end_pos;
-		for (u32 i = 0; i < console->size.h - 1; ++i) {
-			pos = get_prev_line_start(console, pos);
-		}
-		console->read_pos = pos;
-		console->scroll_state = SCROLL_STATE_BOTTOM;
-		break;
-	}
 	}
 }

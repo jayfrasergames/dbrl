@@ -1,13 +1,11 @@
 * tasks:
-
+  * renderer unify texture types (source texture/target texture)
 
 * scenarios:
-  * field of vision
-    * visible
-    * previously seen (show tiles but not creatures)
-    * never seen (don't show tiles)
   * doors
     * open/close field of vision
+  * field of vision
+    * transition between fovs
   * fireball hits barrels, chain reaction
   * invisible wall
   * enemies
@@ -32,8 +30,10 @@
     * disease (card can't be discarded)
 
   * rendering
-    * animate water
     * add shadows over water
+
+  * card user interface
+    * card discarding
 
   * editor
     * editor mode
@@ -70,27 +70,19 @@
       * merge all texture types (target/source) into a single abstract texture type
       * load shaders from text files at run time
         * should be able to start up if we only compile a subset of all shaders(???)
-        * output shader compile errors to a log, display log on screen
-        * attempt shader reloads, don't reload shaders if they previously had 
-          a working version but now don't
         * add texture targets for writing debug output which can be viewed at runtime
 
       * port shaders to cleaned up renderer (reverse order they are rendered in dbrl.cpp)
         * card_render
         * debug_draw_world
         * debug_line_draw
-        * field_of_vision
-        * particles
-        * pass_through_output
         * pixel_art_upsampler
-        * sprite_sheet
       * port textures to be loaded from PNG
         * creatures
         * tiles
         * effects_24
         * effects_32
         * boxy_bold
-      * load PNG assets at runtime
 
     * asset reloading at runtime
       * load asset through asset manager?
@@ -126,8 +118,6 @@
     * global context
     * debug imgui global context
     * member functions
-  * card user interface
-    * card discarding
   * hide mouse/use custom mouse cursor
   * hold tab to view entity health
   * transaction processing
@@ -141,13 +131,8 @@
     * strings
   * debug draw transparency
 
-* cleanup
-  * "stateless" DX11 usage
-  * use precompiled header?
-
 * bugs
   * "release" mode compile
-  * don't try code reloading during debug pause
   * events not sent if mouse leaves window - need to turn off map dragging mode when re-entering the
     window
   * card renderer to do proper anti aliasing/alpha transparency (also mip mapping)
