@@ -97,20 +97,30 @@ struct Start_Thread_Aux_Args
 {
 	Thread_Function   thread_function;
 	void             *thread_args;
+	wchar_t           name[256];
 };
 
 DWORD __stdcall start_thread_aux(void* uncast_args)
 {
 	Start_Thread_Aux_Args *args = (Start_Thread_Aux_Args*)uncast_args;
+
+	HRESULT hr = SetThreadDescription(GetCurrentThread(), args->name);
+	if (FAILED(hr)) {
+		u32 i = 1;
+	}
+
 	args->thread_function(args->thread_args);
 	free(uncast_args);
 	ExitThread(1);
 	return 1;
 }
 
-void win32_start_thread(Thread_Function thread_function, void* thread_args)
+void win32_start_thread(Thread_Function thread_function, const char* name, void* thread_args)
 {
 	Start_Thread_Aux_Args *args = (Start_Thread_Aux_Args*)malloc(sizeof(Start_Thread_Aux_Args));
+
+	mbstowcs(args->name, name, ARRAY_SIZE(args->name));
+
 	args->thread_function = thread_function;
 	args->thread_args = thread_args;
 	HANDLE thread = CreateThread(
@@ -285,7 +295,8 @@ char d3d11_log_buffer[8096] = {};
 Draw draw_data = {};
 Render renderer = {};
 
-DWORD __stdcall game_loop(void *uncast_args)
+// DWORD __stdcall game_loop(void *uncast_args)
+void game_loop(void *uncast_args)
 {
 	Game_Loop_Args *args = (Game_Loop_Args*)uncast_args;
 
@@ -304,7 +315,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 	if (init(&renderer)) {
 		MessageBox(window, jfg_get_error(), "DBRL", MB_OK);
-		return 0;
+		return;
 	}
 
 	Log d3d11_log = {};
@@ -334,7 +345,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 	DX11_Renderer dx11_renderer = {};	
 	// TODO -- should probably post a quit message along with exiting!!!
 	if (init(&dx11_renderer, &renderer, &d3d11_log, &draw_data, window) != JFG_SUCCESS) {
-		return 0;
+		return;
 	}
 
 	load_textures(&renderer, &platform_functions);
@@ -343,14 +354,14 @@ DWORD __stdcall game_loop(void *uncast_args)
 	v2_u32 mouse_pos = { 0, 0 }, prev_mouse_pos = { 0, 0 };
 
 	if (!dsound_try_load()) {
-		return 0;
+		return;
 	}
 
 	// TODO -- enumerate devices/give a choice of sound devices
 	IDirectSound *dsound = NULL;
 	HRESULT hr = DirectSoundCreate(NULL, &dsound, NULL);
 	if (FAILED(hr)) {
-		return 0;
+		return;
 	}
 
 	hr = dsound->SetCooperativeLevel(window, DSSCL_PRIORITY);
@@ -369,7 +380,7 @@ DWORD __stdcall game_loop(void *uncast_args)
 		hr = dsound->CreateSoundBuffer(&desc, &ds_primary_buffer, NULL);
 	}
 	if (FAILED(hr)) {
-		return 0;
+		return;
 	}
 
 	WAVEFORMATEX waveformat = {};
@@ -440,7 +451,6 @@ DWORD __stdcall game_loop(void *uncast_args)
 
 		draw(&dx11_renderer, &draw_data, &renderer);
 	}
-	return 1;
 }
 
 INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, INT cmd_show)
@@ -523,6 +533,7 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 	input_front_buffer = &input_buffers[0];
 	input_back_buffer  = &input_buffers[1];
 
+	/*
 	HANDLE game_thread = CreateThread(
 		NULL,
 		10 * 1024 * 1024,
@@ -530,6 +541,8 @@ INT WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, PSTR cmd_line, I
 		&game_loop_args,
 		0,
 		NULL);
+	*/
+	win32_start_thread(game_loop, "game_loop", &game_loop_args);
 
 	// windows message loop
 	while (running) {

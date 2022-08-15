@@ -11,7 +11,6 @@
 #include "types.h"
 
 #include "fov.h"
-#include "field_of_vision_render.h"
 #include "assets.h"
 #include "constants.h"
 #include "debug_draw_world.h"
@@ -48,19 +47,6 @@ void debug_pause();
 // =============================================================================
 // game
 
-#define MAX_CHOICES 32
-
-enum Choice_Type
-{
-	CHOICE_START_TURN,
-};
-
-struct Choice
-{
-	Choice_Type type;
-	Entity_ID   entity_id;
-};
-
 enum Action_Type
 {
 	ACTION_NONE,
@@ -73,6 +59,8 @@ enum Action_Type
 	ACTION_POISON,
 	ACTION_HEAL,
 	ACTION_LIGHTNING,
+	ACTION_OPEN_DOOR,
+	ACTION_CLOSE_DOOR,
 };
 
 struct Action
@@ -115,6 +103,10 @@ struct Action
 			Pos start;
 			Pos end;
 		} lightning;
+		struct {
+			Entity_ID entity_id;
+			Entity_ID door_id;
+		} open_door;
 	};
 
 	operator bool() { return type; }
@@ -130,6 +122,7 @@ enum Event_Type
 	EVENT_NONE,
 	EVENT_MOVE,
 	EVENT_MOVE_BLOCKED,
+	EVENT_OPEN_DOOR,
 	EVENT_DROP_TILE,
 	EVENT_FIREBALL_HIT,
 	EVENT_FIREBALL_SHOT,
@@ -159,6 +152,10 @@ struct Event
 			Entity_ID entity_id;
 			Pos start, end;
 		} move;
+		struct {
+			Entity_ID  door_id;
+			Appearance new_appearance;
+		} open_door;
 		struct {
 			Entity_ID entity_id;
 			Pos pos;
@@ -248,6 +245,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_NONE: return 0;
 	case EVENT_MOVE: return 0;
 	case EVENT_MOVE_BLOCKED: return 0;
+	case EVENT_OPEN_DOOR: return 0;
 	case EVENT_DROP_TILE: return 0;
 	case EVENT_FIREBALL_HIT: return 0;
 	case EVENT_FIREBALL_SHOT: return 0;
@@ -287,7 +285,8 @@ struct Entity
 	Appearance    appearance;
 	i32           hit_points;
 	i32           max_hit_points;
-	u8            blocks_vision;
+	bool          blocks_vision;
+	Action_Type   default_action;
 };
 
 enum Controller_Type
@@ -1087,6 +1086,7 @@ enum Transaction_Type
 	TRANSACTION_MOVE_EXIT,
 	TRANSACTION_MOVE_PRE_ENTER,
 	TRANSACTION_MOVE_ENTER,
+	TRANSACTION_OPEN_DOOR,
 	TRANSACTION_DROP_TILE,
 	TRANSACTION_FIREBALL_SHOT,
 	TRANSACTION_FIREBALL_HIT,
@@ -1157,6 +1157,10 @@ struct Transaction
 			Pos start;
 			Pos end;
 		} lightning;
+		struct {
+			Entity_ID entity_id;
+			Entity_ID door_id;
+		} open_door;
 	};
 };
 
@@ -1579,6 +1583,15 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			t.move.entity_id = action.move.entity_id;
 			t.move.start = action.move.start;
 			t.move.end = action.move.end;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_OPEN_DOOR: {
+			Transaction t = {};
+			t.type = TRANSACTION_OPEN_DOOR;
+			t.start_time = 0.0f;
+			t.open_door.entity_id = action.open_door.entity_id;
+			t.open_door.door_id = action.open_door.door_id;
 			transactions.append(t);
 			break;
 		}
@@ -2207,6 +2220,28 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				circle.pos = (v2)t->move.end;
 				circle.radius = constants.physics.entity_radius;
 				physics.static_circles.append(circle);
+
+				break;
+			}
+			case TRANSACTION_OPEN_DOOR: {
+				t->type = TRANSACTION_REMOVE;
+
+				Entity_ID door_id = t->open_door.door_id;
+				Entity *door = game_get_entity_by_id(game, door_id);
+				if (!door) {
+					break;
+				}
+
+				Event event = {};
+				event.type = EVENT_OPEN_DOOR;
+				event.time = time;
+				event.open_door.door_id = door_id;
+				event.open_door.new_appearance = APPEARANCE_DOOR_WOODEN_OPEN;
+				events.append(event);
+				door->appearance = APPEARANCE_DOOR_WOODEN_OPEN;
+				door->blocks_vision = false;
+				door->block_mask = 0;
+				door->default_action = ACTION_NONE;
 
 				break;
 			}
@@ -3187,6 +3222,24 @@ void game_build_from_string(Game* game, char* str)
 			tiles[cur_pos].appearance = APPEARANCE_LIQUID_WATER;
 			break;
 		}
+		case '+': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			Entity e = {};
+			e.hit_points = 5;
+			e.max_hit_points = 5;
+			e.id = e_id++;
+			e.pos = cur_pos;
+			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+			e.appearance = APPEARANCE_DOOR_WOODEN_PLAIN;
+			e.blocks_vision = true;
+			e.default_action = ACTION_OPEN_DOOR;
+			game->entities.append(e);
+
+			break;
+		}
+
 		}
 		++cur_pos.x;
 	}
@@ -3487,6 +3540,16 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 				}
 			}
 			break;
+		case EVENT_OPEN_DOOR:
+			for (u32 i = 0; i < anims.len; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->open_door.door_id) {
+					ASSERT(anim->type == ANIM_TILE_STATIC);
+					ASSERT(appearance_is_door(event->open_door.new_appearance));
+					anim->sprite_coords = appearance_get_door_sprite_coords(event->open_door.new_appearance);
+				}
+			}
+			break;
 		case EVENT_DROP_TILE: {
 			u32 tile_id = MAX_ENTITIES + pos_to_u16(event->drop_tile.pos);
 			for (u32 i = 0; i < anims.len; ++i) {
@@ -3778,9 +3841,8 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ca.idle.duration = 0.8f + 0.4f * rand_f32();
 			ca.idle.offset = 0.0f;
 			world_anim->anims.append(ca);
-			continue;
-		}
-		if (appearance_is_floor(app)) {
+
+		} else if (appearance_is_floor(app)) {
 			Anim ta = {};
 			ta.type = ANIM_TILE_STATIC;
 			ta.sprite_coords = appearance_get_floor_sprite_coords(app);
@@ -3788,9 +3850,8 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ta.entity_id = e->id;
 			ta.depth_offset = constants.z_offsets.floor;
 			world_anim->anims.append(ta);
-			continue;
-		}
-		if (appearance_is_liquid(app)) {
+
+		} else if (appearance_is_liquid(app)) {
 			Anim ta = {};
 			ta.type = ANIM_TILE_LIQUID;
 			ta.sprite_coords = appearance_get_liquid_sprite_coords(app);
@@ -3804,8 +3865,8 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ta.tile_liquid.second_sprite_coords = ta.sprite_coords + v2(0.0f, 1.0f);
 
 			world_anim->anims.append(ta);
-		}
-		if (appearance_is_item(app)) {
+
+		} else if (appearance_is_item(app)) {
 			Anim ia = {};
 			ia.type = ANIM_TILE_STATIC;
 			ia.sprite_coords = appearance_get_item_sprite_coords(app);
@@ -3813,7 +3874,15 @@ void world_anim_init(World_Anim_State* world_anim, Game* game)
 			ia.entity_id = e->id;
 			ia.depth_offset = constants.z_offsets.item;
 			world_anim->anims.append(ia);
-			continue;
+
+		} else if (appearance_is_door(app)) {
+			Anim da = {};
+			da.type = ANIM_TILE_STATIC;
+			da.sprite_coords = appearance_get_door_sprite_coords(app);
+			da.world_coords = (v2)pos;
+			da.entity_id = e->id;
+			da.depth_offset = constants.z_offsets.door;
+			world_anim->anims.append(da);
 		}
 	}
 
@@ -4174,16 +4243,22 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 			if (anim->field_of_vision.buffer_id
 			 && anim->field_of_vision.start_time
 			  + anim->field_of_vision.duration <= dyn_time) {
+				/*
 				fov_render_set_alpha(&draw->fov_render,
 				                     anim->field_of_vision.buffer_id,
 				                     1.0f);
+				*/
 				anims.remove(i);
 				continue;
 			} else if (!anim->field_of_vision.buffer_id
 			        && anim->field_of_vision.start_time <= dyn_time) {
+				/*
 				u32 buffer_id = fov_render_add_fov(&draw->fov_render,
 				                                   anim->field_of_vision.fov);
-				anim->field_of_vision.buffer_id = buffer_id;
+				*/
+				// XXX -- TODO, change this properly
+				anim->field_of_vision.buffer_id = 1;
+				// anim->field_of_vision.buffer_id = buffer_id;
 			}
 			break;
 		}
@@ -4484,9 +4559,11 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 			f32 start_time = anim->field_of_vision.start_time;
 			f32 duration = anim->field_of_vision.duration;
 			f32 dt = (dyn_time - start_time) / duration;
+			/*
 			if (buffer_id && 0 < dt && dt <= 1.0f) {
 				fov_render_set_alpha(&draw->fov_render, buffer_id, dt);
 			}
+			*/
 			break;
 		}
 		}
@@ -5730,10 +5807,10 @@ void build_level_default(Program* program)
 		"#.........b...#b#........................#\n"
 		"#......#.bwb..#b#........................#\n"
 		"#.....###.b...#b#.......###..............#\n"
-		"#....#####....#b#.......#x#.......d......#\n"
+		"#....#####....#b#.......#x#..............#\n"
 		"#...##.#.##...#b#.....###x#.#............#\n"
-		"#..##..#..##..#b#.....#xxxxx#.......d....#\n"
-		"#...b..#......#b#.....###x###.....d......#\n"
+		"#..##..#..##..#b#.....#xxxxx#............#\n"
+		"#...b..#......#b#.....###x###............#\n"
 		"#b.bwb.#......#w#.......#x#..............#\n"
 		"#wb.b..#...b..@.........###..............#\n"
 		"#b.....#..bwb.#..........................#\n"
@@ -5748,7 +5825,7 @@ void build_level_default(Program* program)
 		"#.............#......##.##...............#\n"
 		"#.............#.......##.................#\n"
 		"#.............#........#.................#\n"
-		"#........................~~..............#\n"
+		"#.............+..........~~..............#\n"
 		"#.............#.........~~~~~............#\n"
 		"#.............#.........~...~~~..........#\n"
 		"#.............#.........~~.~~.~..........#\n"
@@ -5987,7 +6064,7 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 	sprite_sheet_renderer_init(&program->draw->renderer,
 	                           &program->draw->tiles, 4,
 	                           { 1600, 900 });
-	fov_render_init(&program->draw->fov_render, { 256, 256 });
+	// fov_render_init(&program->draw->fov_render, { 256, 256 });
 
 
 	program->draw->tiles.data         = SPRITE_SHEET_TILES;
@@ -6013,7 +6090,7 @@ u8 program_dsound_init(Program* program, IDirectSound* dsound)
 		return 0;
 	}
 	// load_assets(program);
-	start_thread(load_assets, program);
+	start_thread(load_assets, "load_assets", program);
 	return 1;
 }
 
@@ -6390,22 +6467,48 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			Controller *c = &program->game.controllers.items[0];
 			ASSERT(c->type == CONTROLLER_PLAYER);
 			Entity *player = game_get_entity_by_id(&program->game, c->player.entity_id);
+			Action_Type action = ACTION_MOVE;
 			Pos start = player->pos;
+			Entity *e = NULL;
 			Pos end;
 			if (sprite_id < MAX_ENTITIES) {
-				Entity *e = game_get_entity_by_id(&program->game, sprite_id);
+				e = game_get_entity_by_id(&program->game, sprite_id);
+				ASSERT(e);
 				end = e->pos;
+				if (e->default_action) {
+					action = e->default_action;
+				}
 			} else {
 				end = u16_to_pos(sprite_id - MAX_ENTITIES);
 			}
-			v2 dir = (v2)end - (v2)start;
-			dir = dir * dir;
-			u8 test = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
-			if (game_is_passable(&program->game, end, player->movement_type) && test) {
-				player_action.type = ACTION_MOVE;
-				player_action.move.entity_id = player->id;
-				player_action.move.start = start;
-				player_action.move.end = end;
+
+			switch (action) {
+			case ACTION_MOVE: {
+				v2 dir = (v2)end - (v2)start;
+				dir = dir * dir;
+				bool test = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
+				if (game_is_passable(&program->game, end, player->movement_type) && test) {
+					player_action.type = ACTION_MOVE;
+					player_action.move.entity_id = player->id;
+					player_action.move.start = start;
+					player_action.move.end = end;
+				}
+				break;
+			}
+			case ACTION_OPEN_DOOR: {
+				v2 dir = (v2)end - (v2)start;
+				dir = dir * dir;
+				bool test = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
+
+				if (test) {
+					player_action.type = ACTION_OPEN_DOOR;
+					player_action.open_door.entity_id = player->id;
+					player_action.open_door.door_id = e->id;
+				}
+				
+				break;
+			}
+
 			}
 		}
 
@@ -6736,7 +6839,7 @@ void process_frame(Program* program, Input* input, v2_u32 screen_size)
 	case PROGRAM_STATE_NORMAL: {
 		program->cur_input       = input;
 		program->cur_screen_size = screen_size;
-		start_thread(process_frame_aux_thread, program);
+		start_thread(process_frame_aux_thread, "process_frame_aux", program);
 		while (!interlocked_compare_exchange(&program->process_frame_signal, 0, 1)) {
 			sleep(0);
 		}

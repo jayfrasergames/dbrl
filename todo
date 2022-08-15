@@ -1,13 +1,24 @@
 * tasks:
-  * renderer unify texture types (source texture/target texture)
-
-* scenarios:
-  * doors
-    * open/close field of vision
   * field of vision
     * transition between fovs
+  * doors
+    * open/close field of vision
+  * renderer unify texture types (source texture/target texture)
+
+  * invisible wall (interrupt transaction pre-enter/rebound for movement)
+    * test scenario: walk into invisible wall whilst standing on a drop tile
+  * 
+
+  * level generation!
+    * room generators (generate a spider room - webs around the edges, invisible trap
+      that summons more webs and more spiders :-D!)
+  * path finding
+  * move queueing/click path
+  * variable move duration depending on user input frequency
+    * animation "speeding up" when moves made rapidly
+
+* scenarios:
   * fireball hits barrels, chain reaction
-  * invisible wall
   * enemies
     * spiders (traps)
     * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
@@ -112,8 +123,6 @@
     * physics system
       * debug/create unit tests
 
-  * variable move duration depending on user input frequency
-    * animation "speeding up" when moves made rapidly
   * improve imgui
     * global context
     * debug imgui global context
