@@ -110,10 +110,10 @@ void calculate_fov(Map_Cache_Bool* fov, Map_Cache_Bool* visibility_grid, Pos vis
 			}
 			u8 center = is_wall;
 
-			u8 above  = visibility_grid->get(Pos(    x, y - 1));
-			u8 left   = visibility_grid->get(Pos(x - 1,     y));
-			u8 right  = visibility_grid->get(Pos(x + 1,     y));
-			u8 bottom = visibility_grid->get(Pos(    x, y + 1));
+			u64 above  = visibility_grid->get(Pos(    x, y - 1));
+			u64 left   = visibility_grid->get(Pos(x - 1,     y));
+			u64 right  = visibility_grid->get(Pos(x + 1,     y));
+			u64 bottom = visibility_grid->get(Pos(    x, y + 1));
 
 			if (!above  && !left)  { center |= bevel_top_left;     }
 			if (!above  && !right) { center |= bevel_top_right;    }

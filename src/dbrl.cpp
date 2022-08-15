@@ -44,6 +44,13 @@ struct Program;
 thread_local Program *global_program;
 void debug_pause();
 
+static bool positions_are_adjacent(Pos a, Pos b)
+{
+	v2_i32 d = (v2_i32)a - (v2_i32)b;
+	d *= d;
+	return d.x <= 1 && d.y <= 1;
+}
+
 // =============================================================================
 // game
 
@@ -52,6 +59,7 @@ enum Action_Type
 	ACTION_NONE,
 	ACTION_MOVE,
 	ACTION_WAIT,
+	ACTION_BUMP_ATTACK,
 	ACTION_FIREBALL,
 	ACTION_FIRE_BOLT,
 	ACTION_EXCHANGE,
@@ -71,6 +79,10 @@ struct Action
 			Entity_ID entity_id;
 			Pos start, end;
 		} move;
+		struct {
+			Entity_ID attacker_id;
+			Entity_ID target_id;
+		} bump_attack;
 		struct {
 			Pos start;
 			Pos end;
@@ -122,6 +134,7 @@ enum Event_Type
 	EVENT_NONE,
 	EVENT_MOVE,
 	EVENT_MOVE_BLOCKED,
+	EVENT_BUMP_ATTACK,
 	EVENT_OPEN_DOOR,
 	EVENT_DROP_TILE,
 	EVENT_FIREBALL_HIT,
@@ -152,6 +165,10 @@ struct Event
 			Entity_ID entity_id;
 			Pos start, end;
 		} move;
+		struct {
+			Entity_ID attacker_id;
+			Pos start, end;
+		} bump_attack;
 		struct {
 			Entity_ID  door_id;
 			Appearance new_appearance;
@@ -245,6 +262,7 @@ u8 event_type_is_blocking(Event_Type type)
 	case EVENT_NONE: return 0;
 	case EVENT_MOVE: return 0;
 	case EVENT_MOVE_BLOCKED: return 0;
+	case EVENT_BUMP_ATTACK: return 0;
 	case EVENT_OPEN_DOOR: return 0;
 	case EVENT_DROP_TILE: return 0;
 	case EVENT_FIREBALL_HIT: return 0;
@@ -600,7 +618,7 @@ break_loop: ;
 	}
 }
 
-Pos game_get_player_pos(Game* game)
+Entity_ID game_get_player_id(Game* game)
 {
 	auto& controllers = game->controllers;
 	Entity_ID player_id = 0;
@@ -611,6 +629,12 @@ Pos game_get_player_pos(Game* game)
 		}
 	}
 	ASSERT(player_id);
+	return player_id;
+}
+
+Pos game_get_player_pos(Game* game)
+{
+	Entity_ID player_id = game_get_player_id(game);
 	for (u32 i = 0; i < game->entities.len; ++i) {
 		Entity *e = &game->entities[i];
 		if (e->id == player_id) {
@@ -618,7 +642,7 @@ Pos game_get_player_pos(Game* game)
 		}
 	}
 	ASSERT(0);
-	return { 0, 0 };
+	return Pos(0, 0);
 }
 
 Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
@@ -1086,6 +1110,8 @@ enum Transaction_Type
 	TRANSACTION_MOVE_EXIT,
 	TRANSACTION_MOVE_PRE_ENTER,
 	TRANSACTION_MOVE_ENTER,
+	TRANSACTION_BUMP_ATTACK,
+	TRANSACTION_BUMP_ATTACK_CONNECT,
 	TRANSACTION_OPEN_DOOR,
 	TRANSACTION_DROP_TILE,
 	TRANSACTION_FIREBALL_SHOT,
@@ -1118,6 +1144,12 @@ struct Transaction
 			Pos start;
 			Pos end;
 		} move;
+		struct {
+			Entity_ID attacker_id;
+			Entity_ID target_id;
+			Pos start;
+			Pos end;
+		} bump_attack;
 		struct {
 			Pos pos;
 		} drop_tile;
@@ -1567,6 +1599,17 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 	// 1. create transaction buffer
 
+	f32 bump_attack_delay = 0.0f;
+
+	for (u32 i = 0; i < actions.len; ++i) {
+		Action action = actions[i];
+		switch (action.type) {
+		case ACTION_BUMP_ATTACK:
+			bump_attack_delay = constants.anims.bump_attack.duration / 2.0f;
+			break;
+		}
+	}
+
 	Transaction_Buffer transactions;
 	transactions.reset();
 
@@ -1579,17 +1622,26 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		case ACTION_MOVE: {
 			Transaction t = {};
 			t.type = TRANSACTION_MOVE_EXIT;
-			t.start_time = 0.0f;
+			t.start_time = bump_attack_delay;
 			t.move.entity_id = action.move.entity_id;
 			t.move.start = action.move.start;
 			t.move.end = action.move.end;
 			transactions.append(t);
 			break;
 		}
+		case ACTION_BUMP_ATTACK: {
+			Transaction t = {};
+			t.type = TRANSACTION_BUMP_ATTACK;
+			t.start_time = 0.0f;
+			t.bump_attack.attacker_id = action.bump_attack.attacker_id;
+			t.bump_attack.target_id = action.bump_attack.target_id;
+			transactions.append(t);
+			break;
+		}
 		case ACTION_OPEN_DOOR: {
 			Transaction t = {};
 			t.type = TRANSACTION_OPEN_DOOR;
-			t.start_time = 0.0f;
+			t.start_time = bump_attack_delay;
 			t.open_door.entity_id = action.open_door.entity_id;
 			t.open_door.door_id = action.open_door.door_id;
 			transactions.append(t);
@@ -1598,7 +1650,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		case ACTION_FIREBALL: {
 			Transaction t = {};
 			t.type = TRANSACTION_FIREBALL_SHOT;
-			t.start_time = 0.0f;
+			t.start_time = bump_attack_delay;
 			t.fireball_shot.start = action.fireball.start;
 			t.fireball_shot.end = action.fireball.end;
 			transactions.append(t);
@@ -1607,7 +1659,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		case ACTION_EXCHANGE: {
 			Transaction t = {};
 			t.type = TRANSACTION_EXCHANGE_CAST;
-			t.start_time = 0.0f;
+			t.start_time = bump_attack_delay;
 			t.exchange.a = action.exchange.a;
 			t.exchange.b = action.exchange.b;
 			transactions.append(t);
@@ -1616,7 +1668,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		case ACTION_BLINK: {
 			Transaction t = {};
 			t.type = TRANSACTION_BLINK_CAST;
-			t.start_time = 0.0f;
+			t.start_time = bump_attack_delay;
 			t.blink.caster_id = action.blink.caster;
 			t.blink.target = action.blink.target;
 			transactions.append(t);
@@ -1633,7 +1685,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		case ACTION_FIRE_BOLT: {
 			Transaction t = {};
 			t.type = TRANSACTION_FIRE_BOLT_CAST;
-			t.start_time = 0.0f;
+			t.start_time = bump_attack_delay;
 			t.fire_bolt.caster_id = action.fire_bolt.caster_id;
 			t.fire_bolt.target_id = action.fire_bolt.target_id;
 			transactions.append(t);
@@ -1642,6 +1694,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		case ACTION_HEAL: {
 			Transaction t = {};
 			t.type = TRANSACTION_HEAL_CAST;
+			t.start_time = bump_attack_delay;
 			t.heal.caster_id = action.heal.caster_id;
 			t.heal.target_id = action.heal.target_id;
 			t.heal.amount = action.heal.amount;
@@ -1651,6 +1704,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		case ACTION_LIGHTNING: {
 			Transaction t = {};
 			t.type = TRANSACTION_LIGHTNING_CAST;
+			t.start_time = bump_attack_delay;
 			t.lightning.caster_id = action.lightning.caster_id;
 			t.lightning.start = action.lightning.start;
 			t.lightning.end = action.lightning.end;
@@ -2223,6 +2277,53 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 				break;
 			}
+
+			case TRANSACTION_BUMP_ATTACK: {
+				// TODO -- move_pre_exit message
+				//         move_post_exit message
+
+				Entity *attacker = game_get_entity_by_id(game, t->bump_attack.attacker_id);
+				Entity *target = game_get_entity_by_id(game, t->bump_attack.target_id);
+				if (!attacker || !target) {
+					t->type = TRANSACTION_REMOVE;
+					break;
+				}
+
+				t->type = TRANSACTION_BUMP_ATTACK_CONNECT;
+				t->start_time += constants.anims.bump_attack.duration / 2.0f;
+				t->bump_attack.start = attacker->pos;
+				t->bump_attack.end = target->pos;
+
+				break;
+			}
+
+			case TRANSACTION_BUMP_ATTACK_CONNECT: {
+				// TODO -- move_pre_enter message
+				//         move_post_enter message
+				t->type = TRANSACTION_REMOVE;
+
+				Entity *attacker = game_get_entity_by_id(game, t->bump_attack.attacker_id);
+				Entity *target = game_get_entity_by_id(game, t->bump_attack.target_id);
+				if (!attacker || !target) {
+					break;
+				}
+
+				Entity_Damage damage = {};
+				damage.entity_id = t->bump_attack.target_id;
+				damage.damage = 1;
+				damage.pos = (v2)t->bump_attack.end;
+				entity_damage.append(damage);
+
+				Event event = {};
+				event.type = EVENT_BUMP_ATTACK;
+				event.bump_attack.attacker_id = t->bump_attack.attacker_id;
+				event.bump_attack.start = t->bump_attack.start;
+				event.bump_attack.end = t->bump_attack.end;
+				events.append(event);
+
+				break;
+			}
+
 			case TRANSACTION_OPEN_DOOR: {
 				t->type = TRANSACTION_REMOVE;
 
@@ -2700,8 +2801,62 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 	// =====================================================================
 	// create chosen actions
 
+	// TODO -- safe function which checks for one action being
+	// registered per entity
+
 	Max_Length_Array<Action, MAX_ENTITIES> actions;
 	actions.reset();
+
+	// Entity_ID player_id = game_get_play
+	Entity_ID player_id = game_get_player_id(game);
+	Pos player_pos = game_get_player_pos(game);
+	u32 num_controllers = game->controllers.len;
+
+	bool entity_has_acted[MAX_ENTITIES] = {};
+
+	// 0. create bump attacks
+
+	for (u32 i = 0; i < num_controllers; ++i) {
+		Controller *c = &game->controllers[i];
+		switch (c->type) {
+		case CONTROLLER_PLAYER:
+			if (c->player.action.type == ACTION_BUMP_ATTACK) {
+				actions.append(c->player.action);
+				entity_has_acted[player_id] = true;
+			}
+			break;
+		case CONTROLLER_SLIME: {
+			Entity *slime = game_get_entity_by_id(game, c->slime.entity_id);
+			if (positions_are_adjacent(player_pos, slime->pos)) {
+				Action bump = {};
+				bump.type = ACTION_BUMP_ATTACK;
+				bump.bump_attack.attacker_id = slime->id;
+				bump.bump_attack.target_id = player_id;
+				actions.append(bump);
+				entity_has_acted[slime->id] = true;
+			}
+			break;
+		}
+		case CONTROLLER_LICH: {
+			u32 num_skeletons = c->lich.skeleton_ids.len;
+			for (u32 i = 0; i < num_skeletons; ++i) {
+				Entity *skeleton = game_get_entity_by_id(game, c->lich.skeleton_ids[i]);
+				if (positions_are_adjacent(player_pos, skeleton->pos)) {
+					Action bump = {};
+					bump.type = ACTION_BUMP_ATTACK;
+					bump.bump_attack.attacker_id = skeleton->id;
+					bump.bump_attack.target_id = player_id;
+					actions.append(bump);
+					entity_has_acted[skeleton->id] = true;
+				}
+			}
+			break;
+		}
+		case CONTROLLER_RANDOM_MOVE:
+		case CONTROLLER_DRAGON:
+			break;
+		}
+	}
 
 	// 1. choose moves
 
@@ -2718,11 +2873,8 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 	Map_Cache_Bool occupied;
 	occupied.reset();
 
-	Pos player_pos = game_get_player_pos(game);
-
 	auto& tiles = game->tiles;
 
-	u32 num_controllers = game->controllers.len;
 	for (u32 i = 0; i < num_controllers; ++i) {
 		Controller *c = &game->controllers[i];
 		switch (c->type) {
@@ -2900,15 +3052,19 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 		debug_pause();
 #endif
 
-		Action chosen_move = {};
-		chosen_move.type = ACTION_MOVE;
-		chosen_move.move.entity_id = pm.entity_id;
-		chosen_move.move.start = pm.start;
-		chosen_move.move.end = pm.end;
-		actions.append(chosen_move);
+		if (!entity_has_acted[pm.entity_id]) {
+			Action chosen_move = {};
+			chosen_move.type = ACTION_MOVE;
+			chosen_move.move.entity_id = pm.entity_id;
+			chosen_move.move.start = pm.start;
+			chosen_move.move.end = pm.end;
+			actions.append(chosen_move);
 
-		occupied.unset(pm.start);
-		occupied.set(pm.end);
+			occupied.unset(pm.start);
+			occupied.set(pm.end);
+
+			entity_has_acted[pm.entity_id] = true;
+		}
 
 		u32 push_back = 0;
 		for (u32 i = 0; i < potential_moves.len; ++i) {
@@ -2940,7 +3096,8 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 		Controller *c = &game->controllers[i];
 		switch (c->type) {
 		case CONTROLLER_PLAYER:
-			if (c->player.action.type != ACTION_MOVE) {
+			// if (c->player.action.type != ACTION_MOVE) {
+			if (!entity_has_acted[player_id]) {
 				actions.append(c->player.action);
 			}
 			break;
@@ -3206,6 +3363,7 @@ void game_build_from_string(Game* game, char* str)
 			e.movement_type = BLOCK_FLY;
 			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e.appearance = APPEARANCE_CREATURE_RED_BAT;
+			e.default_action = ACTION_BUMP_ATTACK;
 			game->entities.append(e);
 
 			Controller c = {};
@@ -3540,7 +3698,7 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 				}
 			}
 			break;
-		case EVENT_OPEN_DOOR:
+		case EVENT_OPEN_DOOR: {
 			for (u32 i = 0; i < anims.len; ++i) {
 				Anim *anim = &world_anim->anims[i];
 				if (anim->entity_id == event->open_door.door_id) {
@@ -3549,7 +3707,33 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 					anim->sprite_coords = appearance_get_door_sprite_coords(event->open_door.new_appearance);
 				}
 			}
+			Anim open_sound = {};
+			open_sound.type = ANIM_SOUND;
+			open_sound.sound.start_time = event->time;
+			open_sound.sound.sound_id = SOUND_FANTASY_GAME_DOOR_OPEN;
+			anims.append(open_sound);
 			break;
+		}
+		case EVENT_BUMP_ATTACK: {
+			for (u32 i = 0; i < anims.len; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->bump_attack.attacker_id) {
+					anim->type = ANIM_MOVE_BLOCKED;
+					anim->move.duration = constants.anims.bump_attack.duration;
+					anim->move.start_time = event->time;
+					anim->move.start = (v2)event->bump_attack.start;
+					anim->move.end   = (v2)event->bump_attack.end;
+				}
+			}
+			Anim bump_sound = {};
+			bump_sound.type = ANIM_SOUND;
+			bump_sound.sound.start_time = event->time;
+			Sound_ID sounds[] = { SOUND_PUNCH_1_1, SOUND_PUNCH_1_2, SOUND_PUNCH_2_1, SOUND_PUNCH_2_2 };
+			u32 idx = rand_u32() % ARRAY_SIZE(sounds);
+			bump_sound.sound.sound_id = sounds[idx];
+			anims.append(bump_sound);
+			break;
+		}
 		case EVENT_DROP_TILE: {
 			u32 tile_id = MAX_ENTITIES + pos_to_u16(event->drop_tile.pos);
 			for (u32 i = 0; i < anims.len; ++i) {
@@ -4358,6 +4542,9 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 		}
 		case ANIM_MOVE: {
 			f32 dt = (dyn_time - anim->move.start_time) / anim->move.duration;
+			if (dt < 0.0f) {
+				dt = 0.0f;
+			}
 			v2 start = anim->move.start;
 			v2 end = anim->move.end;
 			v2 world_pos = {};
@@ -6506,6 +6693,18 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 					player_action.open_door.door_id = e->id;
 				}
 				
+				break;
+			}
+			case ACTION_BUMP_ATTACK: {
+				v2 dir = (v2)end - (v2)start;
+				dir = dir * dir;
+				bool test = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
+
+				if (test) {
+					player_action.type = ACTION_BUMP_ATTACK;
+					player_action.bump_attack.attacker_id = player->id;
+					player_action.bump_attack.target_id = e->id;
+				}
 				break;
 			}
 

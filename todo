@@ -2,16 +2,27 @@
   * field of vision
     * transition between fovs
   * doors
-    * open/close field of vision
+    * close
+    * field of vision
+    * trapped
+    * locked
+    * opens but gets stuck/doesn't close
+    * opens but breaks
+    * opens but becomes portal
   * renderer unify texture types (source texture/target texture)
 
   * invisible wall (interrupt transaction pre-enter/rebound for movement)
     * test scenario: walk into invisible wall whilst standing on a drop tile
-  * 
 
   * level generation!
     * room generators (generate a spider room - webs around the edges, invisible trap
       that summons more webs and more spiders :-D!)
+        * spiders:
+          * normal spider
+          * web spider (chance to make a web when it attacks)
+          * poison spider (chance to deal poison cards)
+          * shadow spider (turns invisible before attacking)
+
   * path finding
   * move queueing/click path
   * variable move duration depending on user input frequency
