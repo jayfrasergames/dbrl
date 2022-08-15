@@ -14,6 +14,9 @@
   * invisible wall (interrupt transaction pre-enter/rebound for movement)
     * test scenario: walk into invisible wall whilst standing on a drop tile
 
+  * anim system
+    * split out static/dynamic animations
+
   * level generation!
     * room generators (generate a spider room - webs around the edges, invisible trap
       that summons more webs and more spiders :-D!)
