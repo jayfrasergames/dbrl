@@ -218,8 +218,8 @@ extern const char *SOURCE_TEXTURE_FILENAMES[NUM_SOURCE_TEXTURES];
 	INSTANCE_BUFFER(WORLD_SPRITE, Sprite_Sheet_Instance,         8192) \
 	INSTANCE_BUFFER(WORLD_FONT,   Sprite_Sheet_Font_Instance,    8192) \
 	INSTANCE_BUFFER(TRIANGLE,     Triangle_Instance,             2048) \
-	INSTANCE_BUFFER(FOV_EDGE,     Field_Of_Vision_Edge_Instance, 256*256) \
-	INSTANCE_BUFFER(FOV_FILL,     Field_Of_Vision_Fill_Instance, 256*256) \
+	INSTANCE_BUFFER(FOV_EDGE,     Field_Of_Vision_Edge_Instance, 2*256*256) \
+	INSTANCE_BUFFER(FOV_FILL,     Field_Of_Vision_Fill_Instance, 2*256*256) \
 	INSTANCE_BUFFER(PARTICLES,    Particle_Instance,             4096)
 
 // TODO -- offset?

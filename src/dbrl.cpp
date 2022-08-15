@@ -36,10 +36,13 @@
 #include "texture.h"
 #include "render.h"
 
+#include "game.h"
 #include "level_gen.h"
 
 // =============================================================================
 // type definitions/constants
+
+#define CARD_STATE_MAX_EVENTS 1024
 
 
 struct Program;
@@ -55,77 +58,6 @@ static bool positions_are_adjacent(Pos a, Pos b)
 
 // =============================================================================
 // game
-
-enum Action_Type
-{
-	ACTION_NONE,
-	ACTION_MOVE,
-	ACTION_WAIT,
-	ACTION_BUMP_ATTACK,
-	ACTION_FIREBALL,
-	ACTION_FIRE_BOLT,
-	ACTION_EXCHANGE,
-	ACTION_BLINK,
-	ACTION_POISON,
-	ACTION_HEAL,
-	ACTION_LIGHTNING,
-	ACTION_OPEN_DOOR,
-	ACTION_CLOSE_DOOR,
-};
-
-struct Action
-{
-	Action_Type type;
-	union {
-		struct {
-			Entity_ID entity_id;
-			Pos start, end;
-		} move;
-		struct {
-			Entity_ID attacker_id;
-			Entity_ID target_id;
-		} bump_attack;
-		struct {
-			Pos start;
-			Pos end;
-		} fireball;
-		struct {
-			// Entity_ID caster;
-			Entity_ID a;
-			Entity_ID b;
-		} exchange;
-		struct {
-			Entity_ID caster;
-			Pos       target;
-		} blink;
-		struct {
-			Entity_ID target;
-		} poison;
-		struct {
-			Entity_ID caster_id;
-			Entity_ID target_id;
-			// Pos start;
-			// Pos end;
-		} fire_bolt;
-		struct {
-			Entity_ID caster_id;
-			Entity_ID target_id;
-			i32 amount;
-		} heal;
-		struct {
-			Entity_ID caster_id;
-			Pos start;
-			Pos end;
-		} lightning;
-		struct {
-			Entity_ID entity_id;
-			Entity_ID door_id;
-		} open_door;
-	};
-
-	operator bool() { return type; }
-};
-
 #define GAME_MAX_ACTIONS 1024
 typedef Max_Length_Array<Action, GAME_MAX_ACTIONS> Action_Buffer;
 
@@ -161,7 +93,6 @@ struct Event
 {
 	Event_Type type;
 	f32 time;
-	u32 block_id;
 	union {
 		struct {
 			Entity_ID entity_id;
@@ -258,76 +189,8 @@ struct Event
 #define MAX_EVENTS 10240
 typedef Max_Length_Array<Event, MAX_EVENTS> Event_Buffer;
 
-enum Block_Flag
-{
-	BLOCK_WALK = 1 << 0,
-	BLOCK_SWIM = 1 << 1,
-	BLOCK_FLY  = 1 << 2,
-};
-
-
-struct Entity
-{
-	Entity_ID     id;
-	u16           movement_type;
-	u16           block_mask;
-	Pos           pos;
-	Appearance    appearance;
-	i32           hit_points;
-	i32           max_hit_points;
-	bool          blocks_vision;
-	Action_Type   default_action;
-};
-
-enum Controller_Type
-{
-	CONTROLLER_PLAYER,
-	CONTROLLER_RANDOM_MOVE,
-	CONTROLLER_DRAGON,
-	CONTROLLER_SLIME,
-	CONTROLLER_LICH,
-
-	NUM_CONTROLLERS,
-};
-
-#define CONTROLLER_LICH_MAX_SKELETONS 16
-
-typedef u32 Controller_ID;
-struct Controller
-{
-	Controller_Type type;
-	Controller_ID   id;
-	union {
-		struct {
-			Entity_ID entity_id;
-			Action    action;
-		} player;
-		struct {
-			Entity_ID entity_id;
-		} random_move;
-		struct {
-			Entity_ID entity_id;
-		} dragon;
-		struct {
-			Entity_ID entity_id;
-			u32       split_cooldown;
-		} slime;
-		struct {
-			Entity_ID lich_id;
-			Max_Length_Array<Entity_ID, CONTROLLER_LICH_MAX_SKELETONS> skeleton_ids;
-			u32 heal_cooldown;
-		} lich;
-	};
-};
-
 // =============================================================================
 // cards
-
-struct Card
-{
-	u32             id;
-	Card_Appearance appearance;
-};
 
 enum Card_Event_Type
 {
@@ -362,158 +225,10 @@ struct Card_Event
 	};
 };
 
-#define CARD_STATE_MAX_CARDS  1024
-#define CARD_STATE_MAX_EVENTS 1024
-struct Card_State
-{
-	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        deck;
-	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        discard;
-	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        hand;
-	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        in_play;
-	Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> events;
-};
-
-enum Tile_Type
-{
-	TILE_EMPTY,
-	TILE_WALL,
-	TILE_FLOOR,
-	TILE_WATER,
-};
-
-struct Tile
-{
-	Tile_Type  type;
-	Appearance appearance;
-};
-
-enum Message_Type : u32
-{
-	MESSAGE_MOVE_PRE_EXIT   = 1 << 0,
-	MESSAGE_MOVE_POST_EXIT  = 1 << 1,
-	MESSAGE_MOVE_PRE_ENTER  = 1 << 2,
-	MESSAGE_MOVE_POST_ENTER = 1 << 3,
-	MESSAGE_DAMAGE          = 1 << 4,
-	MESSAGE_PRE_DEATH       = 1 << 5,
-	MESSAGE_POST_DEATH      = 1 << 6,
-};
-
-struct Message
-{
-	Message_Type type;
-	union {
-		struct {
-			Entity_ID entity_id;
-			Pos       start;
-			Pos       end;
-		} move;
-		struct {
-			Entity_ID entity_id;
-			i32       amount;
-			u8        entity_died;
-		} damage;
-		struct {
-			Entity_ID entity_id;
-		} death;
-	};
-};
-
-enum Message_Handler_Type
-{
-	MESSAGE_HANDLER_PREVENT_EXIT,
-	MESSAGE_HANDLER_PREVENT_ENTER,
-	MESSAGE_HANDLER_DROP_TILE,
-	MESSAGE_HANDLER_TRAP_FIREBALL,
-	MESSAGE_HANDLER_SLIME_SPLIT,
-	MESSAGE_HANDLER_LICH_DEATH,
-};
-
-struct Message_Handler
-{
-	Message_Handler_Type type;
-	u32                  handle_mask;
-	Entity_ID            owner_id;
-	union {
-		struct {
-			Pos pos;
-		} prevent_exit;
-		struct {
-			Pos pos;
-		} prevent_enter;
-		struct {
-			Pos pos;
-		} trap;
-		struct {
-			Controller_ID controller_id;
-		} lich_death;
-	};
-};
-
-#define GAME_MAX_CONTROLLERS 1024
-#define GAME_MAX_MESSAGE_HANDLERS 1024
-
-enum Static_Entity_ID
-{
-	ENTITY_ID_NONE,
-	ENTITY_ID_PLAYER,
-	ENTITY_ID_WALLS,
-	NUM_STATIC_ENTITY_IDS,
-};
-
 // maybe better called "world state"?
-struct Game
-{
-	Entity_ID     next_entity_id;
-	Controller_ID next_controller_id;
-
-	// TODO: keep the player id here in the game struct? - it would make life a lot easier
-	// Entity_ID player_id;
-
-	Max_Length_Array<Entity, MAX_ENTITIES> entities;
-
-	Map_Cache<Tile> tiles;
-
-	Max_Length_Array<Controller, GAME_MAX_CONTROLLERS> controllers;
-
-	Card_State card_state;
-
-	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
-
-	Field_Of_Vision field_of_vision;
-};
-
 Entity_ID game_new_entity_id(Game *game)
 {
 	return game->next_entity_id++;
-}
-
-Entity_ID game_add_slime(Game *game, Pos pos, u32 hit_points)
-{
-	Entity_ID entity_id = game->next_entity_id++;
-
-	Entity e = {};
-	e.hit_points = min(hit_points, 5);
-	e.max_hit_points = 5;
-	e.id = entity_id;
-	e.pos = pos;
-	e.appearance = APPEARANCE_CREATURE_GREEN_SLIME;
-	e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-	e.movement_type = BLOCK_WALK;
-	game->entities.append(e);
-
-	Controller c = {};
-	c.type = CONTROLLER_SLIME;
-	c.slime.entity_id = entity_id;
-	c.slime.split_cooldown = 5;
-	game->controllers.append(c);
-
-	Message_Handler mh = {};
-	mh.type = MESSAGE_HANDLER_SLIME_SPLIT;
-	mh.handle_mask = MESSAGE_DAMAGE;
-	mh.owner_id = entity_id;
-	game->handlers.append(mh);
-
-	return entity_id;
 }
 
 void game_remove_entity(Game* game, Entity_ID entity_id)
@@ -611,62 +326,6 @@ Pos game_get_player_pos(Game* game)
 	}
 	ASSERT(0);
 	return Pos(0, 0);
-}
-
-Entity* game_get_entity_by_id(Game* game, Entity_ID entity_id)
-{
-	for (u32 i = 0; i < game->entities.len; ++i) {
-		if (game->entities[i].id == entity_id) {
-			return &game->entities[i];
-		}
-	}
-	return NULL;
-}
-
-u8 game_is_pos_opaque(Game* game, Pos pos)
-{
-	auto& tiles = game->tiles;
-	switch (tiles[pos].type) {
-	case TILE_EMPTY:
-	case TILE_FLOOR:
-	case TILE_WATER:
-		return 0;
-		break;
-	case TILE_WALL:
-		return 1;
-		break;
-	default:
-		ASSERT(0);
-	}
-	return 0;
-}
-
-void calculate_field_of_vision(Game* game, Entity_ID entity_id, Map_Cache_Bool* fov)
-{
-	Map_Cache_Bool map = {};
-	map.reset();
-
-	auto& tiles = game->tiles;
-	for (u16 y = 0; y < 256; ++y) {
-		for (u16 x = 0; x < 256; ++x) {
-			Pos p = Pos((u8)x, (u8)y);
-			if (game_is_pos_opaque(game, p)) {
-				map.set(p);
-			}
-		}
-	}
-
-	auto& entities = game->entities;
-	for (u32 i = 0; i < entities.len; ++i) {
-		if (entities[i].blocks_vision) {
-			map.set(entities[i].pos);
-		}
-	}
-
-	auto entity = game_get_entity_by_id(game, entity_id);
-	ASSERT(entity);
-
-	calculate_fov(fov, &map, entity->pos);
 }
 
 u8 calculate_line_of_sight(Game *game, Entity_ID vision_entity_id, Pos target)
@@ -829,12 +488,12 @@ u8 calculate_line_of_sight(Game *game, Entity_ID vision_entity_id, Pos target)
 				if (!(0 < cur_pos.y && cur_pos.y < 255)) { goto break_outer_loop; }
 				if (!(0 < cur_pos.x && cur_pos.x < 255)) { x_end = x_iter; }
 				if (game_is_pos_opaque(game, (v2_u8)cur_pos)) {
-					u8 top    = game_is_pos_opaque(game, (v2_u8)(cur_pos + up));
-					u8 bottom = game_is_pos_opaque(game, (v2_u8)(cur_pos - up));
-					u8 left_  = game_is_pos_opaque(game, (v2_u8)(cur_pos + left));
-					u8 right  = game_is_pos_opaque(game, (v2_u8)(cur_pos - left));
-					u8 btl = !top    && !left_;
-					u8 bbr = !bottom && !right;
+					bool top    = game_is_pos_opaque(game, (v2_u8)(cur_pos + up));
+					bool bottom = game_is_pos_opaque(game, (v2_u8)(cur_pos - up));
+					bool left_  = game_is_pos_opaque(game, (v2_u8)(cur_pos + left));
+					bool right  = game_is_pos_opaque(game, (v2_u8)(cur_pos - left));
+					bool btl = !top    && !left_;
+					bool bbr = !bottom && !right;
 					u8 horiz_visible = 0;
 					Rational horiz_left_intersect = Rational::cancel(
 						s.start.numerator * ((i32)y_iter * cell_size
@@ -1007,7 +666,7 @@ u8 game_is_passable(Game* game, Pos pos, u16 move_mask)
 	return result;
 }
 
-void game_draw_cards(Game* game, Action_Buffer* action_buffer, u32 num_to_draw)
+void game_draw_cards(Game* game, Action_Buffer* action_buffer, u32 num_to_draw, Output_Buffer<Card_Event> card_events)
 {
 	Card_State *card_state = &game->card_state;
 	auto& actions = *action_buffer;
@@ -1029,7 +688,7 @@ void game_draw_cards(Game* game, Action_Buffer* action_buffer, u32 num_to_draw)
 		event.type = CARD_EVENT_DRAW;
 		event.draw.card_id    = card.id;
 		event.draw.appearance = card.appearance;
-		card_state->events.append(event);
+		card_events.append(event);
 		switch (card.appearance) {
 		case CARD_APPEARANCE_POISON: {
 			Action action = {};
@@ -1044,7 +703,7 @@ void game_draw_cards(Game* game, Action_Buffer* action_buffer, u32 num_to_draw)
 	}
 }
 
-void game_end_play_cards(Game* game)
+void game_end_play_cards(Game* game, Output_Buffer<Card_Event> card_events)
 {
 	Card_State *card_state = &game->card_state;
 
@@ -1054,7 +713,7 @@ void game_end_play_cards(Game* game)
 		Card_Event event = {};
 		event.type = CARD_EVENT_IN_PLAY_TO_DISCARD;
 		event.in_play_to_discard.card_id = card.id;
-		card_state->events.append(event);
+		card_events.append(event);
 	}
 
 	auto& hand = card_state->hand;
@@ -1064,7 +723,7 @@ void game_end_play_cards(Game* game)
 		Card_Event event = {};
 		event.type = CARD_EVENT_HAND_TO_DISCARD;
 		event.hand_to_discard.card_id = card.id;
-		card_state->events.append(event);
+		card_events.append(event);
 	}
 	hand.len = 0;
 }
@@ -2489,9 +2148,9 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				}
 				if (poss) {
 					Pos end = poss[rand_u32() % poss.len];
-					Entity_ID new_id = game_add_slime(game,
-					                                  end,
-					                                  t->slime_split.hit_points);
+					Entity_ID new_id = add_slime(game,
+					                             end,
+					                             t->slime_split.hit_points);
 					Event event = {};
 					event.type = EVENT_SLIME_SPLIT;
 					event.time = time;
@@ -2749,10 +2408,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 	// XXX - tmp - recalculate FOV
 	{
-		Map_Cache_Bool fov = {};
-		fov.reset();
-		calculate_field_of_vision(game, player_id, &fov);
-		update(&game->field_of_vision, &fov);
+		update_fov(game);
 		Event e = {};
 		e.type = EVENT_FIELD_OF_VISION_CHANGED;
 		e.time = 0.0f; // XXX
@@ -3124,261 +2780,6 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 	game_simulate_actions(game, actions, event_buffer);
 }
-
-void game_build_from_string(Game* game, char* str)
-{
-	memset(game, 0, sizeof(*game));
-
-	Entity_ID e_id = NUM_STATIC_ENTITY_IDS;
-
-	Pos cur_pos = { 1, 1 };
-	Controller_ID c_id = 1;
-
-	Controller *player_controller = game->controllers.items;
-	++game->controllers.len;
-	player_controller->type = CONTROLLER_PLAYER;
-	player_controller->id = c_id++;
-	auto& tiles = game->tiles;
-	auto& handlers = game->handlers;
-	memset(&tiles, 0, sizeof(tiles));
-
-	Controller lich_controller_tmp = {};
-	lich_controller_tmp.type = CONTROLLER_LICH;
-	Controller *lich_controller = &lich_controller_tmp;
-
-	for (char *p = str; *p; ++p) {
-		switch (*p) {
-		case '\n':
-			cur_pos.x = 1;
-			++cur_pos.y;
-			continue;
-		case '#': {
-			tiles[cur_pos].type = TILE_WALL;
-			tiles[cur_pos].appearance = APPEARANCE_WALL_WOOD;
-			break;
-		}
-		case 'x': {
-			tiles[cur_pos].type = TILE_WALL;
-			tiles[cur_pos].appearance = APPEARANCE_WALL_FANCY;
-			break;
-		}
-		case '.': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-			break;
-		}
-		case 'w': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Entity e = {};
-			e.hit_points = 1;
-			e.max_hit_points = 1;
-			e.id = e_id++;
-			e.pos = cur_pos;
-			e.appearance = rand_u32() % 2 ?
-			               APPEARANCE_ITEM_SPIDERWEB_1 : APPEARANCE_ITEM_SPIDERWEB_2;
-			game->entities.append(e);
-
-			Message_Handler mh = {};
-			mh.type = MESSAGE_HANDLER_PREVENT_EXIT;
-			mh.handle_mask = MESSAGE_MOVE_PRE_EXIT;
-			mh.owner_id = e.id;
-			mh.prevent_exit.pos = cur_pos;
-			handlers.append(mh);
-
-			break;
-		}
-		case 's': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			// XXX - ugly hack
-			game->next_entity_id = e_id;
-			game_add_slime(game, cur_pos, 5);
-			e_id = game->next_entity_id;
-
-			break;
-		}
-		case 'L': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Entity e = {};
-			e.hit_points = 10;
-			e.max_hit_points = 10;
-			e.id = e_id++;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_CREATURE_NECROMANCER;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.movement_type = BLOCK_WALK;
-			game->entities.append(e);
-
-			lich_controller->id = c_id++;
-			lich_controller->lich.lich_id = e.id;
-			game->controllers.append(*lich_controller);
-			lich_controller = &game->controllers[game->controllers.len - 1];
-
-			Message_Handler mh = {};
-			mh.type = MESSAGE_HANDLER_LICH_DEATH;
-			mh.handle_mask = MESSAGE_PRE_DEATH;
-			mh.owner_id = e.id;
-			mh.lich_death.controller_id = lich_controller->id;
-			handlers.append(mh);
-
-			break;
-		}
-		case 'S': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Entity e = {};
-			e.hit_points = 10;
-			e.max_hit_points = 10;
-			e.id = e_id++;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_CREATURE_SKELETON;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.movement_type = BLOCK_WALK;
-			game->entities.append(e);
-
-			lich_controller->lich.skeleton_ids.append(e.id);
-			break;
-		}
-		case 'd': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Entity e = {};
-			e.hit_points = 100;
-			e.max_hit_points = 100;
-			e.id = e_id++;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_CREATURE_RED_DRAGON;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.movement_type = BLOCK_WALK;
-			game->entities.append(e);
-
-			Controller c = {};
-			c.id = c_id++;
-			c.type = CONTROLLER_DRAGON;
-			c.dragon.entity_id = e.id;
-
-			game->controllers.append(c);
-
-			break;
-		}
-		case '^': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Entity e = {};
-			e.hit_points = 1;
-			e.max_hit_points = 1;
-			e.id = e_id++;
-			e.pos = cur_pos;
-			e.appearance = APPEARANCE_ITEM_TRAP_HEX;
-			game->entities.append(e);
-
-			Message_Handler mh = {};
-			mh.type = MESSAGE_HANDLER_TRAP_FIREBALL;
-			mh.handle_mask = MESSAGE_MOVE_POST_ENTER;
-			mh.owner_id = e.id;
-			mh.trap.pos = cur_pos;
-			handlers.append(mh);
-
-			break;
-		}
-		case 'v': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Message_Handler mh = {};
-			mh.type = MESSAGE_HANDLER_DROP_TILE;
-			mh.handle_mask = MESSAGE_MOVE_POST_EXIT;
-			mh.trap.pos = cur_pos;
-			handlers.append(mh);
-
-			break;
-		}
-		case '@': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Entity e = {};
-			e.hit_points = 100;
-			e.max_hit_points = 100;
-			e.id = ENTITY_ID_PLAYER;
-			e.pos = cur_pos;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.appearance = APPEARANCE_CREATURE_MALE_BERSERKER;
-			e.movement_type = BLOCK_WALK;
-			game->entities.append(e);
-
-			player_controller->player.entity_id = e.id;
-
-			break;
-		}
-		case 'b': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Entity e = {};
-			e.hit_points = 5;
-			e.max_hit_points = 5;
-			e.id = e_id++;
-			e.pos = cur_pos;
-			e.movement_type = BLOCK_FLY;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.appearance = APPEARANCE_CREATURE_RED_BAT;
-			e.default_action = ACTION_BUMP_ATTACK;
-			game->entities.append(e);
-
-			Controller c = {};
-			c.id = c_id++;
-			c.type = CONTROLLER_RANDOM_MOVE;
-			c.random_move.entity_id = e.id;
-
-			game->controllers.append(c);
-
-			break;
-		}
-		case '~': {
-			tiles[cur_pos].type = TILE_WATER;
-			tiles[cur_pos].appearance = APPEARANCE_LIQUID_WATER;
-			break;
-		}
-		case '+': {
-			tiles[cur_pos].type = TILE_FLOOR;
-			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			Entity e = {};
-			e.hit_points = 5;
-			e.max_hit_points = 5;
-			e.id = e_id++;
-			e.pos = cur_pos;
-			e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-			e.appearance = APPEARANCE_DOOR_WOODEN_PLAIN;
-			e.blocks_vision = true;
-			e.default_action = ACTION_OPEN_DOOR;
-			game->entities.append(e);
-
-			break;
-		}
-
-		}
-		++cur_pos.x;
-	}
-	game->next_entity_id = e_id;
-	game->next_controller_id = c_id;
-
-	memset(&game->field_of_vision, 0, sizeof(game->field_of_vision));
-	Map_Cache_Bool can_see = {};
-	can_see.reset();
-	calculate_field_of_vision(game, player_controller->player.entity_id, &can_see);
-	update(&game->field_of_vision, &can_see);
-}
-
 // =============================================================================
 // turns
 
@@ -5884,6 +5285,8 @@ struct Program
 	lua_State *lua_state;
 
 	bool is_console_visible;
+	bool display_fog_of_war;
+
 	Console console;
 	Platform_Functions platform_functions;
 
@@ -5940,173 +5343,6 @@ void set_global_state(Program* program)
 	program->random_state.set_current();
 	program->draw->debug_draw_world.set_current();
 }
-
-void build_level_default(Program* program)
-{
-	game_build_from_string(&program->game,
-		"##########################################\n"
-		"#.........b...#b#........................#\n"
-		"#......#.bwb..#b#........................#\n"
-		"#.....###.b...#b#.......###..............#\n"
-		"#....#####....#b#.......#x#..............#\n"
-		"#...##.#.##...#b#.....###x#.#............#\n"
-		"#..##..#..##..#b#.....#xxxxx#............#\n"
-		"#...b..#......#b#.....###x###............#\n"
-		"#b.bwb.#......#w#.......#x#..............#\n"
-		"#wb.b..#...b..@.........###..............#\n"
-		"#b.....#..bwb.#..........................#\n"
-		"#......#...b..#vvv.^..^....#.............#\n"
-		"#......#......#vvv.......................#\n"
-		"#~~~...#.....x#vvv.^...^.....#...........#\n"
-		"#~~~~..#.....x#vvv.......................#\n"
-		"#~~~~~~..xxxxx#............#...#.........#\n"
-		"##########x####..........................#\n"
-		"#.............#........#.................#\n"
-		"#.............#.......##.................#\n"
-		"#.............#......##.##...............#\n"
-		"#.............#.......##.................#\n"
-		"#.............#........#.................#\n"
-		"#.............+..........~~..............#\n"
-		"#.............#.........~~~~~............#\n"
-		"#.............#.........~...~~~..........#\n"
-		"#.............#.........~~.~~.~..........#\n"
-		"#.............#............~.~...........#\n"
-		"#.............#...........~~~~...........#\n"
-		"#.............#..........................#\n"
-		"#.............#..........................#\n"
-		"#.............#..........................#\n"
-		"#.............#..........................#\n"
-		"##########################################\n");
-
-	program->draw->camera.zoom = 14.0f;
-	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw->camera.world_center = (v2)player_pos;
-
-	memset(&program->world_anim, 0, sizeof(program->world_anim));
-	world_anim_init(&program->world_anim, &program->game);
-}
-
-void build_level_anim_test(Program* program)
-{
-	game_build_from_string(&program->game,
-		"###########\n"
-		"#b#b#b#b#b#\n"
-		"#.#.#.#.#.#\n"
-		"#^#^#^#^#^#\n"
-		"#.#.#.#.#.#\n"
-		"#....@....#\n"
-		"###########\n");
-
-	program->draw->camera.zoom = 14.0f;
-	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw->camera.world_center = (v2)player_pos;
-
-	memset(&program->world_anim, 0, sizeof(program->world_anim));
-	world_anim_init(&program->world_anim, &program->game);
-}
-
-void build_level_slime_test(Program* program)
-{
-	game_build_from_string(&program->game,
-		"##############################\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#.............s..............#\n"
-		"#............................#\n"
-		"#........s........s..........#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#......s......@......s.......#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#........s.........s.........#\n"
-		"#.............s..............#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"##############################\n");
-
-	program->draw->camera.zoom = 14.0f;
-	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw->camera.world_center = (v2)player_pos;
-
-	memset(&program->world_anim, 0, sizeof(program->world_anim));
-	world_anim_init(&program->world_anim, &program->game);
-}
-
-void build_level_lich(Program *program)
-{
-	game_build_from_string(&program->game,
-		"##############################\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#.............L..............#\n"
-		"#............................#\n"
-		"#........S........S..........#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#......S......@......S.......#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#........S.........S.........#\n"
-		"#.............S..............#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"##############################\n");
-
-	program->draw->camera.zoom = 14.0f;
-	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw->camera.world_center = (v2)player_pos;
-
-	memset(&program->world_anim, 0, sizeof(program->world_anim));
-	world_anim_init(&program->world_anim, &program->game);
-}
-
-void build_field_of_vision_test(Program *program)
-{
-	game_build_from_string(&program->game,
-		"##############################\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#.................#.#.#......#\n"
-		"#............................#\n"
-		"#.............#...#...#...#..#\n"
-		"#............................#\n"
-		"#........#....#...#.#.#.#.#..#\n"
-		"#..................#.........#\n"
-		"#................#..#........#\n"
-		"#......#......@......#.......#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"#........#.........#.........#\n"
-		"#.............#.....#..#.....#\n"
-		"#............................#\n"
-		"#................#...#.#.....#\n"
-		"#............................#\n"
-		"#................#..#........#\n"
-		"#............................#\n"
-		"#............................#\n"
-		"##############################\n");
-
-	program->draw->camera.zoom = 14.0f;
-	Pos player_pos = game_get_player_pos(&program->game);
-	program->draw->camera.world_center = (v2)player_pos;
-
-	memset(&program->world_anim, 0, sizeof(program->world_anim));
-	world_anim_init(&program->world_anim, &program->game);
-}
-
 void build_deck_random_n(Program *program, u32 n)
 {
 	// cards
@@ -6162,6 +5398,49 @@ void load_assets(void* uncast_program)
 	sound_player_load_sounds(&program->sound, &program->assets_header);
 }
 
+void program_init_level(Program* program, Build_Level_Function build, Log* log)
+{
+	build(&program->game, log);
+
+	program->draw->camera.zoom = 14.0f;
+	Pos player_pos = game_get_player_pos(&program->game);
+	program->draw->camera.world_center = (v2)player_pos;
+
+	memset(&program->world_anim, 0, sizeof(program->world_anim));
+	world_anim_init(&program->world_anim, &program->game);
+}
+
+static int l_build_level(lua_State* lua_state)
+{
+	i32 num_args = lua_gettop(lua_state);
+	if (num_args != 0) {
+		return luaL_error(lua_state, "Lua function 'build_level' expected 0 arguments, got %d!", num_args);
+	}
+	auto program = (Program*)lua_touserdata(lua_state, lua_upvalueindex(1));
+	auto func = (Build_Level_Function)lua_touserdata(lua_state, lua_upvalueindex(2));
+
+	program_init_level(program, func, &program->console.log);
+
+	return 0;
+}
+
+static int l_set_fov(lua_State* lua_state)
+{
+	i32 num_args = lua_gettop(lua_state);
+	if (num_args != 1) {
+		return luaL_error(lua_state, "Lua function 'set_fov' expected 1 arguments, got %d!", num_args);
+	}
+	if (!lua_isboolean(lua_state, 1)) {
+		return luaL_error(lua_state, "Lua function \"set_fov\" expects a boolean argument!");
+	}
+	auto fov_enabled = lua_toboolean(lua_state, 1);
+
+	auto program = (Program*)lua_touserdata(lua_state, lua_upvalueindex(1));
+	program->display_fog_of_war = fov_enabled;
+
+	return 0;
+}
+
 void program_init(Program* program, Draw* draw, Render* render, Platform_Functions platform_functions)
 {
 	memset(program, 0, sizeof(*program));
@@ -6173,30 +5452,26 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 	program->render = render;
 	program->draw = draw;
 
-	program->lua_state = luaL_newstate();
+	lua_State *lua_state = luaL_newstate();
+	program->lua_state = lua_state;
 
 	init(&program->console, v2_u32(80, 25), program->lua_state);
 	register_lua_functions(render, &program->console.log, program->lua_state);
 
-	print(&program->console, "Hello, world!");
-	print(&program->console, "Hello, sailor!");
-	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
-	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
-	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
-	print(&program->console, "Hello, sailor!");
-	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
-	print(&program->console, "Hello, sailor!");
-	print(&program->console, "procedure foo(x: int)\nvar\n\ty: int;\nbegin\n\tx = x + y;\nend;");
-	print(&program->console, "Hello, sailor!");
-	print(&program->console, "procedure foo(x: int)\nvar\n\ty: int;\nbegin\n\tx = x + y;\nend;");
-	print(&program->console, "if (foo == bar) {\n\tdo_something();\n}");
-	print(&program->console, "procedure foo(x: int)\nvar\n\ty: int;\nbegin\n\tx = x + y;\nend;");
-	print(&program->console, "when are we going to get off the bottom of the screen???");
-	print(&program->console, "when are we going to get off the bottom of the screen???");
-	print(&program->console, "when are we going to get off the bottom of the screen???");
-	print(&program->console, "Off the bottom!!!");
-	print(&program->console, "Off the bottom!!!");
-	print(&program->console, "Off the bottom!!!");
+	// register program lua functions
+	{
+		lua_pushlightuserdata(lua_state, program);
+		lua_pushcclosure(lua_state, l_set_fov, 1);
+		lua_setglobal(lua_state, "set_fov");
+
+		for (u32 i = 0; i < NUM_LEVEL_GEN_FUNCS; ++i) {
+			auto func_data = &BUILD_LEVEL_FUNCS[i];
+			lua_pushlightuserdata(lua_state, program);
+			lua_pushlightuserdata(lua_state, func_data->func);
+			lua_pushcclosure(lua_state, l_build_level, 2);
+			lua_setglobal(lua_state, func_data->name);
+		}
+	}
 
 	set_global_state(program);
 	program->state = PROGRAM_STATE_NO_PAUSE;
@@ -6205,7 +5480,6 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 	sprite_sheet_renderer_init(&program->draw->renderer,
 	                           &program->draw->tiles, 4,
 	                           { 1600, 900 });
-	// fov_render_init(&program->draw->fov_render, { 256, 256 });
 
 
 	program->draw->tiles.data         = SPRITE_SHEET_TILES;
@@ -6216,7 +5490,8 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 	program->draw->boxy_bold.tex_size = boxy_bold_texture_size;
 	program->draw->boxy_bold.tex_data = boxy_bold_pixel_data;
 
-	build_level_default(program);
+	// build_level_default(program);
+	program_init_level(program, build_level_spider_room, NULL);
 	build_deck_random_n(program, 100);
 
 	program->sound.set_ambience(SOUND_CARD_GAME_AMBIENCE_CAVE);
@@ -6398,7 +5673,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		player_action.type = ACTION_NONE;
 
 		Card_State *card_state = &program->game.card_state;
-		card_state->events.reset();
+		Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> card_events;
+		card_events.reset();
+
 		switch (card_event.type) {
 		case CARD_UI_EVENT_HAND_CLICKED: {
 			u32 card_id = card_event.hand.card_id;
@@ -6418,7 +5695,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Card_Event card_event = {};
 				card_event.type = CARD_EVENT_SELECT;
 				card_event.select.card_id = card_id;
-				card_state->events.append(card_event);
+				card_events.append(card_event);
 
 				Controller *c = &program->game.controllers[0];
 				ASSERT(c->type == CONTROLLER_PLAYER);
@@ -6438,7 +5715,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Card_Event card_event = {};
 				card_event.type = CARD_EVENT_HAND_TO_IN_PLAY;
 				card_event.hand_to_in_play.card_id = card_id;
-				card_state->events.append(card_event);
+				card_events.append(card_event);
 
 				card_state->in_play.append(*card);
 				card_state->hand.remove_preserve_order(hand_index);
@@ -6448,7 +5725,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Card_Event card_event = {};
 				card_event.type = CARD_EVENT_SELECT;
 				card_event.select.card_id = card_id;
-				card_state->events.append(card_event);
+				card_events.append(card_event);
 
 				// card_state->in_play.append(*card);
 				// card_state->hand.remove_preserve_order(hand_index);
@@ -6472,7 +5749,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Card_Event card_event = {};
 				card_event.type = CARD_EVENT_SELECT;
 				card_event.select.card_id = card_id;
-				card_state->events.append(card_event);
+				card_events.append(card_event);
 
 				Entity *player = game_get_entity_by_id(&program->game, ENTITY_ID_PLAYER);
 				ASSERT(player);
@@ -6493,7 +5770,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Card_Event card_event = {};
 				card_event.type = CARD_EVENT_SELECT;
 				card_event.select.card_id = card_id;
-				card_state->events.append(card_event);
+				card_events.append(card_event);
 
 				// card_state->in_play.append(*card);
 				// card_state->hand.remove_preserve_order(hand_index);
@@ -6518,7 +5795,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Card_Event card_event = {};
 				card_event.type = CARD_EVENT_SELECT;
 				card_event.select.card_id = card_id;
-				card_state->events.append(card_event);
+				card_events.append(card_event);
 
 				// card_state->in_play.append(*card);
 				// card_state->hand.remove_preserve_order(hand_index);
@@ -6546,7 +5823,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 
 		if (sprite_id && input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
-			game_end_play_cards(&program->game);
+			game_end_play_cards(&program->game, card_events);
 			Action player_action = {};
 			player_action.type = ACTION_WAIT;
 			Controller *c = &program->game.controllers.items[0];
@@ -6559,7 +5836,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
 
-		card_anim_update_anims(&program->card_anim_state, card_state->events, time);
+		card_anim_update_anims(&program->card_anim_state, card_events, time);
 
 		sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
 
@@ -6570,13 +5847,15 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		player_action.type = ACTION_NONE;
 
 		Card_State *card_state = &program->game.card_state;
-		card_state->events.reset();
+		Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> card_events;
+		card_events.reset();
+
 		switch (card_event.type) {
 		case CARD_UI_EVENT_NONE:
 			break;
 		case CARD_UI_EVENT_DECK_CLICKED: {
 			Action_Buffer actions;
-			game_draw_cards(&program->game, &actions, 5);
+			game_draw_cards(&program->game, &actions, 5, card_events);
 			if (actions) {
 				Event_Buffer events;
 				events.reset();
@@ -6589,7 +5868,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 		case CARD_UI_EVENT_DISCARD_CLICKED: {
 			Action_Buffer actions;
-			game_draw_cards(&program->game, &actions, 5);
+			game_draw_cards(&program->game, &actions, 5, card_events);
 			if (actions) {
 				Event_Buffer events;
 				events.reset();
@@ -6602,7 +5881,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 		}
 
-		card_anim_update_anims(&program->card_anim_state, card_state->events, time);
+		card_anim_update_anims(&program->card_anim_state, card_events, time);
 
 		if (sprite_id && input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
 			Controller *c = &program->game.controllers.items[0];
@@ -6680,6 +5959,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 	case GIS_CARD_PARAMS: {
 		Card_Param *param = program->card_params_stack.peek_ptr();
+		Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> card_events;
+		card_events.reset();
+
 		switch (param->type) {
 		case CARD_PARAM_TARGET:
 			sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
@@ -6744,7 +6026,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			Card_State *card_state = &program->game.card_state;
 			Card_Event event = {};
 			event.type = CARD_EVENT_UNSELECT;
-			card_state->events.append(event);
+			card_events.append(event);
 
 			// XXX
 			u32 card_id = 0;
@@ -6759,7 +6041,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			ASSERT(card_id);
 			event.type = CARD_EVENT_HAND_TO_IN_PLAY;
 			event.hand_to_in_play.card_id = card_id;
-			card_state->events.append(event);
+			card_events.append(event);
 
 			Card *card = NULL;
 			u32 hand_index;
@@ -6775,7 +6057,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			card_state->hand.remove_preserve_order(hand_index);
 
 			// XXX
-			card_anim_update_anims(card_anim_state, card_state->events, time);
+			card_anim_update_anims(card_anim_state, card_events, time);
 
 			// TODO -- cast spell
 			Controller *c = &program->game.controllers.items[0];
@@ -6883,24 +6165,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			}
 			imgui_tree_end(ic);
 		}
-		if (imgui_tree_begin(ic, "levels")) {
-			if (imgui_button(ic, "default")) {
-				build_level_default(program);
-			}
-			if (imgui_button(ic, "anim test")) {
-				build_level_anim_test(program);
-			}
-			if (imgui_button(ic, "slime test")) {
-				build_level_slime_test(program);
-			}
-			if (imgui_button(ic, "lich test")) {
-				build_level_lich(program);
-			}
-			if (imgui_button(ic, "field of vision test")) {
-				build_field_of_vision_test(program);
-			}
-			imgui_tree_end(ic);
-		}
 		if (imgui_tree_begin(ic, "cards")) {
 			if (imgui_button(ic, "random 100")) {
 				build_deck_random_n(program, 100);
@@ -6924,7 +6188,17 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 	// render world
-	render(&program->game.field_of_vision, program->render);
+	if (program->display_fog_of_war) {
+		render(&program->game.field_of_vision, program->render);
+	} else {
+		Field_Of_Vision fov = {};
+		for (u32 y = 1; y < 255; ++y) {
+			for (u32 x = 1; x < 255; ++x) {
+				fov[Pos(x, y)] = FOV_VISIBLE;
+			}
+		}
+		render(&fov, program->render);
+	}
 	if (sprite_id) {
 		highlight_sprite_id(&program->render->render_job_buffer,
 		                    TARGET_TEXTURE_WORLD_COMPOSITE,

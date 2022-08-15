@@ -1,0 +1,317 @@
+#pragma once
+
+#include "prelude.h"
+#include "containers.hpp"
+#include "types.h"
+
+#include "fov.h"
+
+#define JFG_HEADER_ONLY
+#include "gen/appearance.data.h"
+#include "gen/cards.data.h"
+#undef JFG_HEADER_ONLY
+
+// =============================================================================
+// Actions
+// =============================================================================
+
+enum Action_Type
+{
+	ACTION_NONE,
+	ACTION_MOVE,
+	ACTION_WAIT,
+	ACTION_BUMP_ATTACK,
+	ACTION_FIREBALL,
+	ACTION_FIRE_BOLT,
+	ACTION_EXCHANGE,
+	ACTION_BLINK,
+	ACTION_POISON,
+	ACTION_HEAL,
+	ACTION_LIGHTNING,
+	ACTION_OPEN_DOOR,
+	ACTION_CLOSE_DOOR,
+};
+
+struct Action
+{
+	Action_Type type;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Pos start, end;
+		} move;
+		struct {
+			Entity_ID attacker_id;
+			Entity_ID target_id;
+		} bump_attack;
+		struct {
+			Pos start;
+			Pos end;
+		} fireball;
+		struct {
+			// Entity_ID caster;
+			Entity_ID a;
+			Entity_ID b;
+		} exchange;
+		struct {
+			Entity_ID caster;
+			Pos       target;
+		} blink;
+		struct {
+			Entity_ID target;
+		} poison;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			// Pos start;
+			// Pos end;
+		} fire_bolt;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			i32 amount;
+		} heal;
+		struct {
+			Entity_ID caster_id;
+			Pos start;
+			Pos end;
+		} lightning;
+		struct {
+			Entity_ID entity_id;
+			Entity_ID door_id;
+		} open_door;
+	};
+
+	operator bool() { return type; }
+};
+
+// =============================================================================
+// Controllers
+// =============================================================================
+
+typedef u32 Controller_ID;
+
+enum Controller_Type
+{
+	CONTROLLER_PLAYER,
+	CONTROLLER_RANDOM_MOVE,
+	CONTROLLER_DRAGON,
+	CONTROLLER_SLIME,
+	CONTROLLER_LICH,
+
+	NUM_CONTROLLERS,
+};
+
+#define CONTROLLER_LICH_MAX_SKELETONS 16
+
+struct Controller
+{
+	Controller_Type type;
+	Controller_ID   id;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Action    action;
+		} player;
+		struct {
+			Entity_ID entity_id;
+		} random_move;
+		struct {
+			Entity_ID entity_id;
+		} dragon;
+		struct {
+			Entity_ID entity_id;
+			u32       split_cooldown;
+		} slime;
+		struct {
+			Entity_ID lich_id;
+			Max_Length_Array<Entity_ID, CONTROLLER_LICH_MAX_SKELETONS> skeleton_ids;
+			u32 heal_cooldown;
+		} lich;
+	};
+};
+
+// =============================================================================
+// Entities
+// =============================================================================
+
+// XXX - bit ugly, no?
+enum Static_Entity_ID
+{
+	ENTITY_ID_NONE,
+	ENTITY_ID_PLAYER,
+	ENTITY_ID_WALLS,
+	NUM_STATIC_ENTITY_IDS,
+};
+
+enum Block_Flag
+{
+	BLOCK_WALK = 1 << 0,
+	BLOCK_SWIM = 1 << 1,
+	BLOCK_FLY  = 1 << 2,
+};
+
+struct Entity
+{
+	Entity_ID     id;
+	u16           movement_type;
+	u16           block_mask;
+	Pos           pos;
+	Appearance    appearance;
+	i32           hit_points;
+	i32           max_hit_points;
+	bool          blocks_vision;
+	Action_Type   default_action;
+};
+
+// =============================================================================
+// Tiles
+// =============================================================================
+
+enum Tile_Type
+{
+	TILE_EMPTY,
+	TILE_WALL,
+	TILE_FLOOR,
+	TILE_WATER,
+};
+
+struct Tile
+{
+	Tile_Type  type;
+	Appearance appearance;
+};
+
+// =============================================================================
+// Messages
+// =============================================================================
+
+enum Message_Type : u32
+{
+	MESSAGE_MOVE_PRE_EXIT   = 1 << 0,
+	MESSAGE_MOVE_POST_EXIT  = 1 << 1,
+	MESSAGE_MOVE_PRE_ENTER  = 1 << 2,
+	MESSAGE_MOVE_POST_ENTER = 1 << 3,
+	MESSAGE_DAMAGE          = 1 << 4,
+	MESSAGE_PRE_DEATH       = 1 << 5,
+	MESSAGE_POST_DEATH      = 1 << 6,
+};
+
+struct Message
+{
+	Message_Type type;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Pos       start;
+			Pos       end;
+		} move;
+		struct {
+			Entity_ID entity_id;
+			i32       amount;
+			u8        entity_died;
+		} damage;
+		struct {
+			Entity_ID entity_id;
+		} death;
+	};
+};
+
+enum Message_Handler_Type
+{
+	MESSAGE_HANDLER_PREVENT_EXIT,
+	MESSAGE_HANDLER_PREVENT_ENTER,
+	MESSAGE_HANDLER_DROP_TILE,
+	MESSAGE_HANDLER_TRAP_FIREBALL,
+	MESSAGE_HANDLER_SLIME_SPLIT,
+	MESSAGE_HANDLER_LICH_DEATH,
+};
+
+struct Message_Handler
+{
+	Message_Handler_Type type;
+	u32                  handle_mask;
+	Entity_ID            owner_id;
+	union {
+		struct {
+			Pos pos;
+		} prevent_exit;
+		struct {
+			Pos pos;
+		} prevent_enter;
+		struct {
+			Pos pos;
+		} trap;
+		struct {
+			Controller_ID controller_id;
+		} lich_death;
+	};
+};
+
+// =============================================================================
+// Cards
+// =============================================================================
+
+typedef u32 Card_ID;
+
+struct Card
+{
+	Card_ID         id;
+	Card_Appearance appearance;
+};
+
+#define CARD_STATE_MAX_CARDS  1024
+
+struct Card_State
+{
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        deck;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        discard;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        hand;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        in_play;
+};
+
+#define GAME_MAX_CONTROLLERS 1024
+#define GAME_MAX_MESSAGE_HANDLERS 1024
+
+// =============================================================================
+// Game
+// =============================================================================
+
+struct Game
+{
+	Entity_ID     next_entity_id;
+	Controller_ID next_controller_id;
+	Card_ID       next_card_id;
+
+	Entity_ID     player_id;
+
+	Max_Length_Array<Entity, MAX_ENTITIES> entities;
+
+	Map_Cache<Tile> tiles;
+
+	Max_Length_Array<Controller, GAME_MAX_CONTROLLERS> controllers;
+
+	Card_State card_state;
+
+	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
+
+	Field_Of_Vision field_of_vision;
+};
+
+// =============================================================================
+// Functions
+// =============================================================================
+
+void             init(Game* game);
+void             update_fov(Game* game);
+
+Entity*          get_player(Game* game);
+Entity*          add_entity(Game* game);
+Controller*      add_controller(Game* game);
+Message_Handler* add_message_handler(Game* game);
+
+Entity_ID        add_slime(Game* game, Pos pos, u32 hit_points);
+
+// These functions should probably become internal
+Entity*          game_get_entity_by_id(Game* game, Entity_ID entity_id);
+bool             game_is_pos_opaque(Game* game, Pos pos);

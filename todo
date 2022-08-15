@@ -1,4 +1,13 @@
 * tasks:
+  * level generation!
+    * room generators (generate a spider room - webs around the edges, invisible trap
+      that summons more webs and more spiders :-D!)
+        * spiders:
+          * normal spider
+          * web spider (chance to make a web when it attacks)
+          * poison spider (chance to deal poison cards)
+          * shadow spider (turns invisible before attacking)
+
   * field of vision
     * transition between fovs
   * doors
@@ -11,20 +20,21 @@
     * opens but becomes portal
   * renderer unify texture types (source texture/target texture)
 
+    * console
+      * command history
+      * tab completion
+      * scrolling
+      * move output history to generic logging thing
+
+    * deprecate use of assets.bin for non-release candidates
+      * load sounds from wave files at run time
+      * deprecate gigabyte asset buffer *barf*
+
   * invisible wall (interrupt transaction pre-enter/rebound for movement)
     * test scenario: walk into invisible wall whilst standing on a drop tile
 
   * anim system
     * split out static/dynamic animations
-
-  * level generation!
-    * room generators (generate a spider room - webs around the edges, invisible trap
-      that summons more webs and more spiders :-D!)
-        * spiders:
-          * normal spider
-          * web spider (chance to make a web when it attacks)
-          * poison spider (chance to deal poison cards)
-          * shadow spider (turns invisible before attacking)
 
   * path finding
   * move queueing/click path
@@ -78,12 +88,6 @@
       * per frame log - reset it every frame :)
       * export to clipboard
 
-    * console
-      * command history
-      * tab completion
-      * scrolling
-      * move output history to generic logging thing
-
     * global error state/error.h
       * move functions over to using jfg_error.h
       * add an error log (once logging is done)
@@ -116,9 +120,6 @@
     * cleanup
       * prelude.h/stdafx.h
       * draw -> render, folder for renderers
-
-    * deprecate use of assets.bin for non-release candidates
-      * load sounds from wave files at run time
 
     * get stack traces from assertion failures!!!
     * asynchronous sound loading

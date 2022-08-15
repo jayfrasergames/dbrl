@@ -42,6 +42,7 @@ set(object_sources
 	sprite_sheet.cpp
 	field_of_vision_render.cpp
 	fov.cpp
+	game.cpp
 	input.cpp
 	imgui.cpp
 	level_gen.cpp
