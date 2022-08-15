@@ -1,5 +1,7 @@
 #include "dbrl.h"
 
+#include "stdafx.h"
+
 #include "imgui.h"
 #include "jfg_math.h"
 #include "log.h"
@@ -21,8 +23,6 @@
 #include "physics.h"
 #include "console.h"
 
-#include <stdio.h>  // XXX - for snprintf
-
 #include "gen/cards.data.h"
 #include "gen/appearance.data.h"
 #include "gen/sprite_sheet_creatures.data.h"
@@ -35,6 +35,8 @@
 #include "draw.h"
 #include "texture.h"
 #include "render.h"
+
+#include "level_gen.h"
 
 // =============================================================================
 // type definitions/constants
@@ -256,36 +258,6 @@ struct Event
 #define MAX_EVENTS 10240
 typedef Max_Length_Array<Event, MAX_EVENTS> Event_Buffer;
 
-u8 event_type_is_blocking(Event_Type type)
-{
-	switch (type) {
-	case EVENT_NONE: return 0;
-	case EVENT_MOVE: return 0;
-	case EVENT_MOVE_BLOCKED: return 0;
-	case EVENT_BUMP_ATTACK: return 0;
-	case EVENT_OPEN_DOOR: return 0;
-	case EVENT_DROP_TILE: return 0;
-	case EVENT_FIREBALL_HIT: return 0;
-	case EVENT_FIREBALL_SHOT: return 0;
-	case EVENT_FIREBALL_OFFSHOOT: return 0;
-	case EVENT_FIREBALL_OFFSHOOT_2: return 0;
-	case EVENT_STUCK: return 0;
-	case EVENT_DAMAGED: return 0;
-	case EVENT_DEATH: return 0;
-	case EVENT_EXCHANGE: return 0;
-	case EVENT_BLINK: return 0;
-	case EVENT_SLIME_SPLIT: return 0;
-	case EVENT_FIRE_BOLT_SHOT: return 0;
-	case EVENT_POLYMORPH: return 0;
-	case EVENT_HEAL: return 0;
-	case EVENT_FIELD_OF_VISION_CHANGED: return 0;
-	case EVENT_LIGHTNING_BOLT: return 0;
-	case EVENT_LIGHTNING_BOLT_START: return 0;
-	}
-	ASSERT(0);
-	return 1;
-}
-
 enum Block_Flag
 {
 	BLOCK_WALK = 1 << 0,
@@ -496,10 +468,6 @@ struct Game
 
 	// TODO: keep the player id here in the game struct? - it would make life a lot easier
 	// Entity_ID player_id;
-
-	// probably don't need this
-	u32 cur_block_id;
-	f32 block_time;
 
 	Max_Length_Array<Entity, MAX_ENTITIES> entities;
 
@@ -3597,7 +3565,6 @@ struct World_Anim_State
 {
 	Max_Length_Array<Anim, MAX_ANIMS> anims;
 	f32                               dynamic_anim_start_time;
-	u32                               anim_block_number;
 	u32                               event_buffer_idx;
 	Event_Buffer                      events_to_be_animated;
 	v2                                camera_offset;
@@ -3617,22 +3584,11 @@ u8 world_anim_is_animating(World_Anim_State *world_anim)
 void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Event_Buffer* event_buffer)
 {
 	u32 num_events = event_buffer->len;
-	u32 new_blocks = 0;
-	u32 cur_block_number = world_anim->anim_block_number;
 	Event_Buffer *dest = &world_anim->events_to_be_animated;
-	u8 prev_event_is_blocking = 1;
 	for (u32 i = 0; i < num_events; ++i) {
 		Event *cur_event = &event_buffer->items[i];
-		u8 create_new_block = prev_event_is_blocking || event_type_is_blocking(cur_event->type);
-		prev_event_is_blocking = event_type_is_blocking(cur_event->type);
-		if (create_new_block) {
-			++cur_block_number;
-			++new_blocks;
-		}
-		cur_event->block_id = cur_block_number;
 		dest->append(*cur_event);
 	}
-	world_anim->anim_block_number = cur_block_number;
 }
 
 f32 angle_to_sprite_x_coord(f32 angle)
@@ -3662,11 +3618,9 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 		return;
 	}
 
-	u32 cur_block_id = events[event_idx].block_id;
-
 	auto& anims = world_anim->anims;
 
-	while (event_idx < num_events && events[event_idx].block_id == cur_block_id) {
+	while (event_idx < num_events) {
 		Event *event = &events[event_idx];
 		switch (event->type) {
 		case EVENT_MOVE: {

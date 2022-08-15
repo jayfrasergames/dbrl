@@ -44,6 +44,7 @@ set(object_sources
 	fov.cpp
 	input.cpp
 	imgui.cpp
+	level_gen.cpp
 	log.cpp
 	dbrl.cpp
 	format.cpp
