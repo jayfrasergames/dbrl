@@ -1,5 +1,10 @@
+* initial content goals
+  * 6 enemy groups with at least 3 enemies each (18+ enemies)
+  * 6 schools of magic with 8 spells each (48 spells)
+
 * tasks:
   * level generation!
+    * zoom view entire level
     * room generators (generate a spider room - webs around the edges, invisible trap
       that summons more webs and more spiders :-D!)
         * spiders:
@@ -22,6 +27,7 @@
 
     * console
       * command history
+      * left arrow/command editing
       * tab completion
       * scrolling
       * move output history to generic logging thing
@@ -43,8 +49,22 @@
 
 * scenarios:
   * fireball hits barrels, chain reaction
-  * enemies
-    * spiders (traps)
+  * enemy groups
+    * early enemies (rats/bats/wolves/bears)
+    * spiders (normal/web/poison/shadow)
+    * goblins (melee/archer/shaman/king)
+    * trolls/ogres/ettin/whatever teh grey things are :/
+    * undead (late game) (zombie/skeleton/skeleton archer/skeleton warrior/wrath/ghost/mummy/mummy lord/lich/vampire)
+
+    * gnolls
+    * drow
+  * one off enemies
+    * slimes (slime mancer)
+    * dragons
+    * golems
+    * beholder
+
+  * enemy abilities
     * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
   * improve anims etc
     * exchange

@@ -34,6 +34,7 @@ set(headers
 
 set(object_sources
 	console.cpp
+	appearance.cpp
 	assets.cpp
 	card_render.cpp
 	debug_draw_world.cpp

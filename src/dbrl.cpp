@@ -22,9 +22,9 @@
 #include "particles.h"
 #include "physics.h"
 #include "console.h"
+#include "appearance.h"
 
 #include "gen/cards.data.h"
-#include "gen/appearance.data.h"
 #include "gen/sprite_sheet_creatures.data.h"
 #include "gen/sprite_sheet_tiles.data.h"
 #include "gen/sprite_sheet_water_edges.data.h"
@@ -5424,6 +5424,37 @@ static int l_build_level(lua_State* lua_state)
 	return 0;
 }
 
+static int l_zoom_whole_map(lua_State* lua_state)
+{
+	i32 num_args = lua_gettop(lua_state);
+	if (num_args != 0) {
+		return luaL_error(lua_state, "Lua function 'zoom_whole_map' expected 0 arguments, got %d!", num_args);
+	}
+	auto program = (Program*)lua_touserdata(lua_state, lua_upvalueindex(1));
+
+	// program->draw->camera.zoom;
+
+	v2_u32 size = {};
+	v2_u32 top_left = v2_u32(256, 256);
+	v2_u32 bottom_right = v2_u32(0, 0);
+
+	for (u32 y = 0; y < 256; ++y) {
+		for (u32 x = 0; x < 256; ++x) {
+			v2_u32 p = v2_u32(x, y);
+			if (program->game.tiles[(Pos)p].type != TILE_EMPTY) {
+				top_left = jfg_min(top_left, p);
+				bottom_right = jfg_max(bottom_right, p);
+			}
+		}
+	}
+
+	size = bottom_right - top_left + v2_u32(1, 1);
+	program->draw->camera.world_center = (v2)top_left + (v2)size / 2.0f;
+	program->draw->camera.zoom = (f32)size.h;
+
+	return 0;
+}
+
 static int l_set_fov(lua_State* lua_state)
 {
 	i32 num_args = lua_gettop(lua_state);
@@ -5437,6 +5468,22 @@ static int l_set_fov(lua_State* lua_state)
 
 	auto program = (Program*)lua_touserdata(lua_state, lua_upvalueindex(1));
 	program->display_fog_of_war = fov_enabled;
+
+	return 0;
+}
+
+static int l_random_cards(lua_State* lua_state)
+{
+
+	i32 num_args = lua_gettop(lua_state);
+	if (num_args != 1) {
+		return luaL_error(lua_state, "Lua function 'random_cards' expected 1 arguments, got %d!", num_args);
+	}
+
+	u32 num_cards = luaL_checkinteger(lua_state, 1);
+	auto program = (Program*)lua_touserdata(lua_state, lua_upvalueindex(1));
+
+	build_deck_random_n(program, num_cards);
 
 	return 0;
 }
@@ -5463,6 +5510,14 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 		lua_pushlightuserdata(lua_state, program);
 		lua_pushcclosure(lua_state, l_set_fov, 1);
 		lua_setglobal(lua_state, "set_fov");
+
+		lua_pushlightuserdata(lua_state, program);
+		lua_pushcclosure(lua_state, l_zoom_whole_map, 1);
+		lua_setglobal(lua_state, "zoom_whole_map");
+
+		lua_pushlightuserdata(lua_state, program);
+		lua_pushcclosure(lua_state, l_random_cards, 1);
+		lua_setglobal(lua_state, "random_cards");
 
 		for (u32 i = 0; i < NUM_LEVEL_GEN_FUNCS; ++i) {
 			auto func_data = &BUILD_LEVEL_FUNCS[i];
@@ -6154,6 +6209,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			imgui_text(ic, "Selected Card ID: %u", selected_card_id);
 			imgui_text(ic, "World Center: (%f, %f)", program->draw->camera.world_center.x,
 			           program->draw->camera.world_center.y);
+			imgui_text(ic, "Zoom: %f", program->draw->camera.zoom);
 			// draw input state stack
 			{
 				imgui_text(ic, "Program Input State Stack:");

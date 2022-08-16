@@ -3,17 +3,17 @@
 #include "stdafx.h"
 #include "prelude.h"
 #include "input.h"
-#include "jfg_error.h"
 #include "types.h"
 
 #include "log.h"
 
-#define CONSOLE_INPUT_BUFFER_LENGTH   512
-#define CONSOLE_HISTORY_BUFFER_LENGTH 4096
+#define CONSOLE_INPUT_BUFFER_LENGTH    512
+#define CONSOLE_HISTORY_BUFFER_LENGTH  4096
 
 struct Console
 {
 	Max_Length_Array<char, CONSOLE_INPUT_BUFFER_LENGTH> input_buffer;
+	char last_command[CONSOLE_INPUT_BUFFER_LENGTH];
 	lua_State *lua_state;
 	f32 blink_offset;
 	Log log;

@@ -24,7 +24,17 @@ MAKE_MIN_MAX_FUNCTIONS(f32)
 
 static inline v2_u32 max_v2_u32(v2_u32 a, v2_u32 b)
 {
-	return v2_u32(max(a.x, b.x), max(a.y, b.y));
+	return v2_u32(max_u32(a.x, b.x), max_u32(a.y, b.y));
+}
+
+static inline v2_u32 jfg_max(v2_u32 a, v2_u32 b)
+{
+	return v2_u32(max_u32(a.x, b.x), max_u32(a.y, b.y));
+}
+
+static inline v2_u32 jfg_min(v2_u32 a, v2_u32 b)
+{
+	return v2_u32(min_u32(a.x, b.x), min_u32(a.y, b.y));
 }
 
 #undef MAKE_MIN_MAX_FUNCTIONS

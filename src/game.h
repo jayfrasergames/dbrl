@@ -5,9 +5,9 @@
 #include "types.h"
 
 #include "fov.h"
+#include "appearance.h"
 
 #define JFG_HEADER_ONLY
-#include "gen/appearance.data.h"
 #include "gen/cards.data.h"
 #undef JFG_HEADER_ONLY
 
@@ -99,7 +99,10 @@ enum Controller_Type
 	CONTROLLER_SLIME,
 	CONTROLLER_LICH,
 
-	NUM_CONTROLLERS,
+	CONTROLLER_SPIDER_NORMAL,
+	CONTROLLER_SPIDER_WEB,
+	CONTROLLER_SPIDER_POISON,
+	CONTROLLER_SPIDER_SHADER,
 };
 
 #define CONTROLLER_LICH_MAX_SKELETONS 16
@@ -128,6 +131,18 @@ struct Controller
 			Max_Length_Array<Entity_ID, CONTROLLER_LICH_MAX_SKELETONS> skeleton_ids;
 			u32 heal_cooldown;
 		} lich;
+		struct {
+			Entity_ID entity_id;
+		} spider_normal;
+		struct {
+			Entity_ID entity_id;
+		} spider_web;
+		struct {
+			Entity_ID entity_id;
+		} spider_poison;
+		struct {
+			Entity_ID entity_id;
+		} spider_shadow;
 	};
 };
 

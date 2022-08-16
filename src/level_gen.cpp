@@ -41,24 +41,55 @@ static void log_map(Map_Cache_Bool* map, v2_u32 size)
 }
 
 // Rooms always assumed to have borders
+// set bits represent walls
+// unset bits are clear
+// the border bits are guaranteed to be walls
+
+static bool is_tile_wall_or_empty(Tile t)
+{
+	return (t.type == TILE_EMPTY) || (t.type == TILE_WALL);
+}
+
+static void remove_internal_walls(Map_Cache<Tile>* m)
+{
+	auto &map = *m;
+	for (u32 y = 1; y < 255; ++y) {
+		for (u32 x = 1; x < 255; ++x) {
+			Pos p = Pos(x, y);
+			if (!is_tile_wall_or_empty(map[Pos(x - 1, y - 1)])) { continue; }
+			if (!is_tile_wall_or_empty(map[Pos(    x, y - 1)])) { continue; }
+			if (!is_tile_wall_or_empty(map[Pos(x + 1, y - 1)])) { continue; }
+			if (!is_tile_wall_or_empty(map[Pos(x - 1,     y)])) { continue; }
+			if (!is_tile_wall_or_empty(map[Pos(    x,     y)])) { continue; }
+			if (!is_tile_wall_or_empty(map[Pos(x + 1,     y)])) { continue; }
+			if (!is_tile_wall_or_empty(map[Pos(x - 1, y + 1)])) { continue; }
+			if (!is_tile_wall_or_empty(map[Pos(    x, y + 1)])) { continue; }
+			if (!is_tile_wall_or_empty(map[Pos(x + 1, y + 1)])) { continue; }
+			map[p] = {};
+		}
+	}
+
+	// TODO -- edges!!!
+}
 
 static void move_to_top_left(Map_Cache_Bool* map, v2_u32* size)
 {
 	v2_u32 orig_size = *size;
 	v2_u32 offset = v2_u32(256, 256);
+	v2_u32 bound = v2_u32(0, 0);
 	for (u32 y = 0; y < orig_size.h; ++y) {
 		for (u32 x = 0; x < orig_size.w; ++x) {
 			Pos p = Pos(x, y);
 			if (!map->get(p)) {
-				offset.x = min_u32(offset.x, x);
-				offset.y = min_u32(offset.y, y);
+				offset = jfg_min(offset, (v2_u32)p);
+				bound = jfg_max(bound, (v2_u32)p);
 			}
 		}
 	}
-
-	// *size -= offset;
-	v2_u32 new_size = *size - offset;
 	offset -= v2_u32(1, 1);
+	bound += v2_u32(2, 2);
+
+	v2_u32 new_size = bound - offset;
 	for (u32 y = 0; y < new_size.h; ++y) {
 		for (u32 x = 0; x < new_size.w; ++x) {
 			Pos old_p = Pos(x, y) + (Pos)offset;
@@ -83,6 +114,8 @@ static void move_to_top_left(Map_Cache_Bool* map, v2_u32* size)
 			map->set(p);
 		}
 	}
+
+	*size = new_size;
 }
 
 static void biggest_connected_component(Map_Cache_Bool* map, v2_u32 size)
@@ -154,13 +187,12 @@ static void biggest_connected_component(Map_Cache_Bool* map, v2_u32 size)
 
 static void cellular_automata(Map_Cache_Bool* map, v2_u32* out_size, f32 wall_chance, u32 remain_wall_count, u32 become_wall_count, u32 num_iters, f32 minimum_area, u32 max_attempts)
 {
-	// set bits represent walls
-	// unset bits are clear
-	// the border bits are guaranteed to be walls
-
 	v2_u32 size = *out_size;
 
 	f32 area = 0.0f;
+	f32 best_area = 0.0f;
+	Map_Cache_Bool best_map = {};
+	log("================================================================================");
 	do {
 		map->reset();
 		for (u32 x = 0; x < size.w; ++x) {
@@ -217,29 +249,88 @@ static void cellular_automata(Map_Cache_Bool* map, v2_u32* out_size, f32 wall_ch
 			}
 		}
 		area = num_floors / (f32)(size.w * size.h);
+		logf("attempt %u, area=%f, min_area=%f", max_attempts, area, minimum_area);
+		if (area > best_area) {
+			best_area = area;
+			memcpy(&best_map, map, sizeof(best_map));
+		}
 	} while (area < minimum_area && --max_attempts);
+
+	memcpy(map, &best_map, sizeof(*map));
 
 	move_to_top_left(map, out_size);
 }
 
-// struct Room
-struct Room
+static const u32 ITEM_TAKES_UP_TILE = 0x100;
+
+enum Item_Type : u32
 {
-	v2_u32 top_left;
-	v2_u32 size;
+	ITEM_NONE,
+	ITEM_SPIDERWEB_TOP_LEFT,
+	ITEM_SPIDERWEB_TOP_RIGHT,
+	ITEM_SPIDERWEB_BOTTOM_LEFT,
+	ITEM_SPIDERWEB_BOTTOM_RIGHT,
+
+	ITEM_SPIDERWEB_1 = ITEM_TAKES_UP_TILE,
+	ITEM_SPIDERWEB_2,
+
+	ITEM_SPIDER_NORMAL,
+	ITEM_SPIDER_WEB,
+	ITEM_SPIDER_POISON,
+	ITEM_SPIDER_SHADOW,
 };
 
-static void make_spider_room(Game* game, Room* room)
+struct Item
+{
+	Item_Type type;
+	Pos       pos;
+};
+
+// struct Room
+// How can I store the items for the room?
+#define ROOM_MAX_ITEMS 64
+
+struct Room
+{
+	v2_u32                                 size;
+	Map_Cache<Tile>                        tiles;
+	Max_Length_Array<Item, ROOM_MAX_ITEMS> items;
+};
+
+static Pos random_floor_pos(Room* room)
+{
+	Pos result = {};
+	u32 floor_tiles_seen = 0;
+	for (u32 y = 0; y < room->size.h; ++y) {
+		for (u32 x = 0; x < room->size.w; ++x) {
+			Pos p = Pos(x, y);
+			if (room->tiles[p].type == TILE_FLOOR) {
+				for (u32 i = 0; i < room->items.len; ++i) {
+					if (room->items[i].pos == p && room->items[i].type & ITEM_TAKES_UP_TILE) {
+						goto next_tile;
+					}
+				}
+				if (rand_u32() % ++floor_tiles_seen == 0) {
+					result = p;
+				}
+			}
+		next_tile: ;
+		}
+	}
+	return result;
+}
+
+static void make_spider_room(Room* room)
 {
 	Map_Cache_Bool map = {};
 	cellular_automata(&map, &room->size, 0.5f, 4, 5, 4, 0.4f, 20);
 
-	Pos player_pos = {};
-	u32 floors_seen = 0;
+	f32 corner_web_chance = 0.5f;
+	f32 centre_web_chance = 0.125f;
+
 	for (u32 y = 0; y < room->size.h; ++y) {
 		for (u32 x = 0; x < room->size.w; ++x) {
 			Pos p = Pos(x, y);
-			Pos real_pos = p + (Pos)room->top_left;
 			Tile t = {};
 			if (map.get(p)) {
 				t.type = TILE_WALL;
@@ -247,11 +338,217 @@ static void make_spider_room(Game* game, Room* room)
 			} else {
 				t.type = TILE_FLOOR;
 				t.appearance = APPEARANCE_FLOOR_ROCK;
-				if ((rand_u32() % ++floors_seen) == 0) {
-					player_pos = real_pos;
+			}
+			room->tiles[p] = t;
+		}
+	}
+
+	for (u32 y = 1; y < room->size.h - 1; ++y) {
+		for (u32 x = 1; x < room->size.w - 1; ++x) {
+			if (map.get(Pos(x, y))) {
+				continue;
+			}
+
+			u64 top    = map.get(Pos(x, y - 1));
+			u64 bottom = map.get(Pos(x, y + 1));
+			u64 left   = map.get(Pos(x - 1, y));
+			u64 right  = map.get(Pos(x + 1, y));
+
+			Item web = {};
+			web.type = ITEM_NONE;
+			web.pos = Pos(x, y);
+			f32 chance = 0.0f;
+			if        (top  &&  left && !bottom && !right) {
+				web.type = ITEM_SPIDERWEB_TOP_LEFT;
+				chance = corner_web_chance;
+			} else if (top  && !left && !bottom &&  right) {
+				web.type = ITEM_SPIDERWEB_TOP_RIGHT;
+				chance = corner_web_chance;
+			} else if (!top &&  left &&  bottom && !right) {
+				web.type = ITEM_SPIDERWEB_BOTTOM_LEFT;
+				chance = corner_web_chance;
+			} else if (!top && !left &&  bottom &&  right) {
+				web.type = ITEM_SPIDERWEB_BOTTOM_RIGHT;
+				chance = corner_web_chance;
+			} else {
+				web.type = rand_u32() % 2 ? ITEM_SPIDERWEB_1 : ITEM_SPIDERWEB_2;
+				chance = centre_web_chance;
+			}
+
+			if (rand_f32() < chance) {
+				room->items.append(web);
+			}
+		}
+	}
+
+	Item spider = {};
+
+	spider.type = ITEM_SPIDER_NORMAL;
+	spider.pos = random_floor_pos(room);
+	room->items.append(spider);
+
+	spider.pos = random_floor_pos(room);
+	room->items.append(spider);
+
+	spider.type = ITEM_SPIDER_WEB;
+	spider.pos = random_floor_pos(room);
+	room->items.append(spider);
+
+	spider.type = ITEM_SPIDER_POISON;
+	spider.pos = random_floor_pos(room);
+	room->items.append(spider);
+
+	spider.type = ITEM_SPIDER_SHADOW;
+	spider.pos = random_floor_pos(room);
+	room->items.append(spider);
+}
+
+static Entity* add_enemy(Game* game, u32 hit_points)
+{
+	auto e = add_entity(game);
+	e->hit_points = hit_points;
+	e->max_hit_points = hit_points;
+	e->default_action = ACTION_BUMP_ATTACK;
+
+	return e;
+}
+
+static Entity* add_spider_normal(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_RED_SPIDER;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_SPIDER_NORMAL;
+	c->spider_normal.entity_id = e->id;
+
+	return e;
+}
+
+static Entity* add_spider_web(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_BLACK_SPIDER;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_SPIDER_WEB;
+	c->spider_web.entity_id = e->id;
+
+	return e;
+}
+
+static Entity* add_spider_poison(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_SPIDER_GREEN;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_SPIDER_NORMAL;
+	c->spider_normal.entity_id = e->id;
+
+	return e;
+}
+
+static Entity* add_spider_shadow(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_SPIDER_BLUE;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_SPIDER_NORMAL;
+	c->spider_normal.entity_id = e->id;
+
+	return e;
+}
+
+static Entity* add_spiderweb(Game* game, Pos pos, Appearance appearance)
+{
+	auto e = add_entity(game);
+	e->hit_points = 1;
+	e->max_hit_points = 1;
+	e->appearance = appearance;
+	e->pos = pos;
+
+	auto mh = add_message_handler(game);
+	mh->type = MESSAGE_HANDLER_PREVENT_EXIT;
+	mh->handle_mask = MESSAGE_MOVE_PRE_EXIT;
+	mh->owner_id = e->id;
+	mh->prevent_exit.pos = pos;
+
+	return e;
+}
+
+static void draw_room(Game* game, Room* room, v2_u32 offset)
+{
+	v2_u32 size = room->size;
+	for (u32 y = 0; y < size.h; ++y) {
+		for (u32 x = 0; x < size.w; ++x) {
+			Pos room_pos = Pos(x, y);
+			Pos game_pos = room_pos + (Pos)offset;
+			game->tiles[game_pos] = room->tiles[room_pos];
+		}
+	}
+
+	for (u32 i = 0; i < room->items.len; ++i) {
+		auto item = room->items[i];
+		Pos p = item.pos + (Pos)offset;
+		switch (item.type) {
+		case ITEM_NONE:
+			ASSERT(0);
+			break;
+		case ITEM_SPIDERWEB_TOP_LEFT:
+			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_TOP_LEFT);
+			break;
+		case ITEM_SPIDERWEB_TOP_RIGHT:
+			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_TOP_RIGHT);
+			break;
+		case ITEM_SPIDERWEB_BOTTOM_LEFT:
+			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_BOTTOM_LEFT);
+			break;
+		case ITEM_SPIDERWEB_BOTTOM_RIGHT:
+			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_BOTTOM_RIGHT);
+			break;
+		case ITEM_SPIDERWEB_1:
+			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_1);
+			break;
+		case ITEM_SPIDERWEB_2:
+			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_2);
+			break;
+		case ITEM_SPIDER_NORMAL:
+			add_spider_normal(game, p);
+			break;
+		case ITEM_SPIDER_WEB:
+			add_spider_web(game, p);
+			break;
+		case ITEM_SPIDER_POISON:
+			add_spider_poison(game, p);
+			break;
+		case ITEM_SPIDER_SHADOW:
+			add_spider_shadow(game, p);
+			break;
+		default:
+			ASSERT(0);
+			break;
+		}
+	}
+}
+
+static void random_place_player(Game* game)
+{
+	u32 floors_seen = 0;
+	Pos player_pos;
+	for (u32 y = 0; y < 256; ++y) {
+		for (u32 x = 0; x < 256; ++x) {
+			Pos p = Pos(x, y);
+			if (game->tiles[p].type == TILE_FLOOR) {
+				if (rand_u32() % ++floors_seen == 0) {
+					player_pos = p;
 				}
 			}
-			game->tiles[real_pos] = t;
 		}
 	}
 
@@ -266,14 +563,15 @@ void build_level_spider_room(Game* game, Log* l)
 	init(game);
 
 	Room room = {};
-	room.top_left = v2_u32(10, 10);
-	room.size = v2_u32(40, 40);
-	make_spider_room(game, &room);
+	room.size = v2_u32(20, 20);
+	make_spider_room(&room);
+
+	draw_room(game, &room, v2_u32(10, 10));
+	remove_internal_walls(&game->tiles);
+	random_place_player(game);
 
 	update_fov(game);
 }
-
-// static void add_creature(Game* game)
 
 static void from_string(Game* game, char* str)
 {
@@ -312,17 +610,8 @@ static void from_string(Game* game, char* str)
 			tiles[cur_pos].type = TILE_FLOOR;
 			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
 
-			auto e = add_entity(game);
-			e->hit_points = 1;
-			e->max_hit_points = 1;
-			e->pos = cur_pos;
-			e->appearance = rand_u32() % 2 ?  APPEARANCE_ITEM_SPIDERWEB_1 : APPEARANCE_ITEM_SPIDERWEB_2;
-
-			auto mh = add_message_handler(game);
-			mh->type = MESSAGE_HANDLER_PREVENT_EXIT;
-			mh->handle_mask = MESSAGE_MOVE_PRE_EXIT;
-			mh->owner_id = e->id;
-			mh->prevent_exit.pos = cur_pos;
+			auto appearance = rand_u32() % 2 ?  APPEARANCE_ITEM_SPIDERWEB_1 : APPEARANCE_ITEM_SPIDERWEB_2;
+			auto e = add_spiderweb(game, cur_pos, appearance);
 
 			break;
 		}
@@ -480,7 +769,7 @@ void build_level_default(Game* game, Log* log)
 {
 	from_string(game,
 		"##########################################\n"
-		"#.........b...#b#........................#\n"
+		"#.........b...#b#..##....................#\n"
 		"#......#.bwb..#b#........................#\n"
 		"#.....###.b...#b#.......###..............#\n"
 		"#....#####....#b#.......#x#..............#\n"

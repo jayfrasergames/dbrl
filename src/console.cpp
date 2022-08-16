@@ -92,10 +92,14 @@ void init(Console* console, v2_u32 size, lua_State* lua_state)
 bool handle_input(Console* console, Input* input)
 {
 	if (input_get_num_down_transitions(input, INPUT_BUTTON_DOWN)) {
-		scroll(&console->log, LOG_SCROLL_DOWN_ONE);
 	}
 	if (input_get_num_down_transitions(input, INPUT_BUTTON_UP)) {
-		scroll(&console->log, LOG_SCROLL_UP_ONE);
+		char buffer[CONSOLE_INPUT_BUFFER_LENGTH] = {};
+		console->input_buffer.append(0);
+		strcpy(buffer, console->input_buffer.items);
+		strcpy(console->input_buffer.items, console->last_command);
+		strcpy(console->last_command, buffer);
+		console->input_buffer.len = strlen(console->input_buffer.items);
 	}
 
 	if (!input->text_input) {
@@ -105,7 +109,20 @@ bool handle_input(Console* console, Input* input)
 	for (u32 i = 0; i < input->text_input.len; ++i) {
 		switch (char c = input->text_input[i]) {
 		case '\t':
-			// TODO -- tab completion
+			// TODO -- tab completion, might be a bit involved for Lua?
+			/* 
+			// table traversal for table at index t
+			// don't know the index for the "global table"
+			lua_pushnil(L);  // first key
+			while (lua_next(L, t) != 0) {
+			// uses 'key' (at index -2) and 'value' (at index -1)
+			printf("%s - %s\n",
+				lua_typename(L, lua_type(L, -2)),
+				lua_typename(L, lua_type(L, -1)));
+			// removes 'value'; keeps 'key' for next iteration
+			lua_pop(L, 1);
+			}
+			*/
 			break;
 		case '\b':
 			if (console->input_buffer) {
@@ -115,6 +132,7 @@ bool handle_input(Console* console, Input* input)
 		case '\n':
 		case '\r': {
 			console->input_buffer.append(0);
+			strcpy(console->last_command, console->input_buffer.items);
 			print(console, fmt("> %s", console->input_buffer.items));
 			int error = luaL_dostring(console->lua_state, console->input_buffer.items);
 			if (error != LUA_OK) {
