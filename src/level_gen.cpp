@@ -263,18 +263,12 @@ static void cellular_automata(Map_Cache_Bool* map, v2_u32* out_size, f32 wall_ch
 
 static const u32 ITEM_TAKES_UP_TILE = 0x100;
 
-enum Item_Type : u32
+enum Item_Type
 {
 	ITEM_NONE,
-	ITEM_SPIDERWEB_TOP_LEFT,
-	ITEM_SPIDERWEB_TOP_RIGHT,
-	ITEM_SPIDERWEB_BOTTOM_LEFT,
-	ITEM_SPIDERWEB_BOTTOM_RIGHT,
+	ITEM_SPIDERWEB,
 
-	ITEM_SPIDERWEB_1 = ITEM_TAKES_UP_TILE,
-	ITEM_SPIDERWEB_2,
-
-	ITEM_SPIDER_NORMAL,
+	ITEM_SPIDER_NORMAL = ITEM_TAKES_UP_TILE,
 	ITEM_SPIDER_WEB,
 	ITEM_SPIDER_POISON,
 	ITEM_SPIDER_SHADOW,
@@ -355,25 +349,14 @@ static void make_spider_room(Room* room)
 			u64 right  = map.get(Pos(x + 1, y));
 
 			Item web = {};
-			web.type = ITEM_NONE;
+			web.type = ITEM_SPIDERWEB;
 			web.pos = Pos(x, y);
-			f32 chance = 0.0f;
-			if        (top  &&  left && !bottom && !right) {
-				web.type = ITEM_SPIDERWEB_TOP_LEFT;
-				chance = corner_web_chance;
-			} else if (top  && !left && !bottom &&  right) {
-				web.type = ITEM_SPIDERWEB_TOP_RIGHT;
-				chance = corner_web_chance;
-			} else if (!top &&  left &&  bottom && !right) {
-				web.type = ITEM_SPIDERWEB_BOTTOM_LEFT;
-				chance = corner_web_chance;
-			} else if (!top && !left &&  bottom &&  right) {
-				web.type = ITEM_SPIDERWEB_BOTTOM_RIGHT;
-				chance = corner_web_chance;
-			} else {
-				web.type = rand_u32() % 2 ? ITEM_SPIDERWEB_1 : ITEM_SPIDERWEB_2;
-				chance = centre_web_chance;
-			}
+			u32 wall_count = 0;
+			if (top)    { ++wall_count; }
+			if (bottom) { ++wall_count; }
+			if (left)   { ++wall_count; }
+			if (right)  { ++wall_count; }
+			f32 chance = wall_count >= 2 ? corner_web_chance : centre_web_chance;
 
 			if (rand_f32() < chance) {
 				room->items.append(web);
@@ -409,6 +392,7 @@ static Entity* add_enemy(Game* game, u32 hit_points)
 	e->hit_points = hit_points;
 	e->max_hit_points = hit_points;
 	e->default_action = ACTION_BUMP_ATTACK;
+	e->block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 
 	return e;
 }
@@ -417,6 +401,7 @@ static Entity* add_spider_normal(Game* game, Pos pos)
 {
 	auto e = add_enemy(game, 5);
 	e->appearance = APPEARANCE_CREATURE_RED_SPIDER;
+	e->movement_type = BLOCK_WALK;
 	e->pos = pos;
 
 	auto c = add_controller(game);
@@ -430,11 +415,13 @@ static Entity* add_spider_web(Game* game, Pos pos)
 {
 	auto e = add_enemy(game, 5);
 	e->appearance = APPEARANCE_CREATURE_BLACK_SPIDER;
+	e->movement_type = BLOCK_WALK;
 	e->pos = pos;
 
 	auto c = add_controller(game);
 	c->type = CONTROLLER_SPIDER_WEB;
 	c->spider_web.entity_id = e->id;
+	c->spider_web.web_cooldown = 3;
 
 	return e;
 }
@@ -443,10 +430,11 @@ static Entity* add_spider_poison(Game* game, Pos pos)
 {
 	auto e = add_enemy(game, 5);
 	e->appearance = APPEARANCE_CREATURE_SPIDER_GREEN;
+	e->movement_type = BLOCK_WALK;
 	e->pos = pos;
 
 	auto c = add_controller(game);
-	c->type = CONTROLLER_SPIDER_NORMAL;
+	c->type = CONTROLLER_SPIDER_POISON;
 	c->spider_normal.entity_id = e->id;
 
 	return e;
@@ -456,32 +444,15 @@ static Entity* add_spider_shadow(Game* game, Pos pos)
 {
 	auto e = add_enemy(game, 5);
 	e->appearance = APPEARANCE_CREATURE_SPIDER_BLUE;
+	e->movement_type = BLOCK_WALK;
 	e->pos = pos;
 
 	auto c = add_controller(game);
-	c->type = CONTROLLER_SPIDER_NORMAL;
+	c->type = CONTROLLER_SPIDER_SHADOW;
 	c->spider_normal.entity_id = e->id;
 
 	return e;
 }
-
-static Entity* add_spiderweb(Game* game, Pos pos, Appearance appearance)
-{
-	auto e = add_entity(game);
-	e->hit_points = 1;
-	e->max_hit_points = 1;
-	e->appearance = appearance;
-	e->pos = pos;
-
-	auto mh = add_message_handler(game);
-	mh->type = MESSAGE_HANDLER_PREVENT_EXIT;
-	mh->handle_mask = MESSAGE_MOVE_PRE_EXIT;
-	mh->owner_id = e->id;
-	mh->prevent_exit.pos = pos;
-
-	return e;
-}
-
 static void draw_room(Game* game, Room* room, v2_u32 offset)
 {
 	v2_u32 size = room->size;
@@ -500,23 +471,8 @@ static void draw_room(Game* game, Room* room, v2_u32 offset)
 		case ITEM_NONE:
 			ASSERT(0);
 			break;
-		case ITEM_SPIDERWEB_TOP_LEFT:
-			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_TOP_LEFT);
-			break;
-		case ITEM_SPIDERWEB_TOP_RIGHT:
-			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_TOP_RIGHT);
-			break;
-		case ITEM_SPIDERWEB_BOTTOM_LEFT:
-			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_BOTTOM_LEFT);
-			break;
-		case ITEM_SPIDERWEB_BOTTOM_RIGHT:
-			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_BOTTOM_RIGHT);
-			break;
-		case ITEM_SPIDERWEB_1:
-			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_1);
-			break;
-		case ITEM_SPIDERWEB_2:
-			add_spiderweb(game, p, APPEARANCE_ITEM_SPIDERWEB_2);
+		case ITEM_SPIDERWEB:
+			add_spiderweb(game, p);
 			break;
 		case ITEM_SPIDER_NORMAL:
 			add_spider_normal(game, p);
@@ -609,9 +565,7 @@ static void from_string(Game* game, char* str)
 		case 'w': {
 			tiles[cur_pos].type = TILE_FLOOR;
 			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
-
-			auto appearance = rand_u32() % 2 ?  APPEARANCE_ITEM_SPIDERWEB_1 : APPEARANCE_ITEM_SPIDERWEB_2;
-			auto e = add_spiderweb(game, cur_pos, appearance);
+			add_spiderweb(game, cur_pos);
 
 			break;
 		}

@@ -12,6 +12,13 @@ static inline Pos u16_to_pos(u16 n)
 	return Pos(n % 256, n / 256);
 }
 
+static inline bool positions_are_adjacent(Pos a, Pos b)
+{
+	v2_i32 d = (v2_i32)a - (v2_i32)b;
+	d *= d;
+	return d.x <= 1 && d.y <= 1;
+}
+
 template <typename T>
 struct Map_Cache
 {

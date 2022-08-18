@@ -28,7 +28,7 @@ VS_Particles_Output vs_particles(Particle_Instance instance)
 	float4 color = lerp(instance.start_color, instance.end_color, float4(dt, dt, dt, dt));
 
 	float2 pos = instance.start_pos + t * instance.start_velocity;
-	pos += t*t * instance.acceleration;
+	pos += t*t * instance.acceleration / 2.0f;
 	pos += instance.sin_outer_coeff * sin(instance.sin_phase_offset + instance.sin_inner_coeff * t);
 
 	pos += 0.5f;

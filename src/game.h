@@ -12,6 +12,13 @@
 #undef JFG_HEADER_ONLY
 
 // =============================================================================
+// Forwards
+// =============================================================================
+
+struct Controller;
+struct Game;
+
+// =============================================================================
 // Actions
 // =============================================================================
 
@@ -30,11 +37,13 @@ enum Action_Type
 	ACTION_LIGHTNING,
 	ACTION_OPEN_DOOR,
 	ACTION_CLOSE_DOOR,
+	ACTION_SHOOT_WEB,
 };
 
 struct Action
 {
 	Action_Type type;
+	Entity_ID   entity_id;
 	union {
 		struct {
 			Entity_ID entity_id;
@@ -49,7 +58,6 @@ struct Action
 			Pos end;
 		} fireball;
 		struct {
-			// Entity_ID caster;
 			Entity_ID a;
 			Entity_ID b;
 		} exchange;
@@ -63,8 +71,6 @@ struct Action
 		struct {
 			Entity_ID caster_id;
 			Entity_ID target_id;
-			// Pos start;
-			// Pos end;
 		} fire_bolt;
 		struct {
 			Entity_ID caster_id;
@@ -80,6 +86,9 @@ struct Action
 			Entity_ID entity_id;
 			Entity_ID door_id;
 		} open_door;
+		struct {
+			Pos target;
+		} shoot_web;
 	};
 
 	operator bool() { return type; }
@@ -102,7 +111,7 @@ enum Controller_Type
 	CONTROLLER_SPIDER_NORMAL,
 	CONTROLLER_SPIDER_WEB,
 	CONTROLLER_SPIDER_POISON,
-	CONTROLLER_SPIDER_SHADER,
+	CONTROLLER_SPIDER_SHADOW,
 };
 
 #define CONTROLLER_LICH_MAX_SKELETONS 16
@@ -111,6 +120,7 @@ struct Controller
 {
 	Controller_Type type;
 	Controller_ID   id;
+
 	union {
 		struct {
 			Entity_ID entity_id;
@@ -136,6 +146,7 @@ struct Controller
 		} spider_normal;
 		struct {
 			Entity_ID entity_id;
+			u32       web_cooldown;
 		} spider_web;
 		struct {
 			Entity_ID entity_id;
@@ -145,6 +156,18 @@ struct Controller
 		} spider_shadow;
 	};
 };
+
+struct Potential_Move
+{
+	Entity_ID entity_id;
+	Pos start;
+	Pos end;
+	f32 weight;
+};
+
+void make_bump_attacks(Controller* controller, Game* game, Output_Buffer<Action> attacks);
+void make_moves(Controller* controller, Game* game, Output_Buffer<Potential_Move> moves);
+void make_actions(Controller* controller, Game* game, Slice<bool> has_acted, Output_Buffer<Action> actions);
 
 // =============================================================================
 // Entities
@@ -325,8 +348,11 @@ Entity*          add_entity(Game* game);
 Controller*      add_controller(Game* game);
 Message_Handler* add_message_handler(Game* game);
 
+Entity*          add_spiderweb(Game* game, Pos pos);
+
 Entity_ID        add_slime(Game* game, Pos pos, u32 hit_points);
 
 // These functions should probably become internal
 Entity*          game_get_entity_by_id(Game* game, Entity_ID entity_id);
 bool             game_is_pos_opaque(Game* game, Pos pos);
+bool             tile_is_passable(Tile tile, u16 move_mask);

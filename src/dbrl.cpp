@@ -44,20 +44,13 @@
 
 #define CARD_STATE_MAX_EVENTS 1024
 
-
 struct Program;
 thread_local Program *global_program;
 void debug_pause();
 
-static bool positions_are_adjacent(Pos a, Pos b)
-{
-	v2_i32 d = (v2_i32)a - (v2_i32)b;
-	d *= d;
-	return d.x <= 1 && d.y <= 1;
-}
-
 // =============================================================================
 // game
+
 #define GAME_MAX_ACTIONS 1024
 typedef Max_Length_Array<Action, GAME_MAX_ACTIONS> Action_Buffer;
 
@@ -87,6 +80,8 @@ enum Event_Type
 	EVENT_FIELD_OF_VISION_CHANGED,
 	EVENT_LIGHTNING_BOLT,
 	EVENT_LIGHTNING_BOLT_START,
+	EVENT_SHOOT_WEB_CAST,
+	EVENT_SHOOT_WEB_HIT,
 };
 
 struct Event
@@ -183,6 +178,16 @@ struct Event
 		struct {
 			v2 pos;
 		} lightning_bolt_start;
+		struct {
+			Entity_ID caster_id;
+			v2        start;
+			v2        end;
+		} shoot_web_cast;
+		struct {
+			Entity_ID  web_id;
+			Appearance appearance;
+			v2         pos;
+		} shoot_web_hit;
 	};
 };
 
@@ -287,6 +292,30 @@ void game_remove_entity(Game* game, Entity_ID entity_id)
 			}
 			break;
 		}
+		case CONTROLLER_SPIDER_NORMAL:
+			if (c->spider_normal.entity_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
+			break;
+		case CONTROLLER_SPIDER_WEB:
+			if (c->spider_web.entity_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
+			break;
+		case CONTROLLER_SPIDER_POISON:
+			if (c->spider_poison.entity_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
+			break;
+		case CONTROLLER_SPIDER_SHADOW:
+			if (c->spider_shadow.entity_id == entity_id) {
+				controllers.remove(i);
+				goto break_loop;
+			}
+			break;
 		}
 	}
 break_loop: ;
@@ -605,48 +634,6 @@ break_outer_loop:
 	return 0;
 }
 
-Entity_ID lich_get_skeleton_to_heal(Game *game, Controller *controller)
-{
-	Entity_ID best_skeleton_id = 0;
-	if (!controller->lich.heal_cooldown) {
-		auto& skeleton_ids = controller->lich.skeleton_ids;
-		u32 num_skeleton_ids = skeleton_ids.len;
-		i32 best_heal = 0;
-		for (u32 i = 0; i < num_skeleton_ids; ++i) {
-			Entity_ID e_id = skeleton_ids[i];
-			Entity *e = game_get_entity_by_id(game, e_id);
-			ASSERT(e);
-			i32 heal = e->max_hit_points - e->hit_points;
-			if (heal > best_heal) {
-				best_skeleton_id = e_id;
-				best_heal = heal;
-			}
-		}
-	}
-	return best_skeleton_id;
-}
-
-u8 tile_is_passable(Tile tile, u16 move_mask)
-{
-	switch (tile.type) {
-	case TILE_EMPTY:
-	case TILE_WALL:
-		return 0;
-	case TILE_FLOOR:
-		if (move_mask & BLOCK_SWIM) {
-			return 0;
-		}
-		return 1;
-	case TILE_WATER:
-		if (move_mask & BLOCK_WALK) {
-			return 0;
-		}
-		return 1;
-	}
-	ASSERT(0);
-	return 0;
-}
-
 u8 game_is_passable(Game* game, Pos pos, u16 move_mask)
 {
 	Tile t = game->tiles[pos];
@@ -695,6 +682,7 @@ void game_draw_cards(Game* game, Action_Buffer* action_buffer, u32 num_to_draw, 
 			action.type = ACTION_POISON;
 			Controller *c = &game->controllers[0];
 			ASSERT(c->type == CONTROLLER_PLAYER);
+			action.entity_id = c->player.entity_id;
 			action.poison.target = c->player.entity_id;
 			actions.append(action);
 			break;
@@ -757,6 +745,8 @@ enum Transaction_Type
 	TRANSACTION_HEAL,
 	TRANSACTION_LIGHTNING_CAST,
 	TRANSACTION_LIGHTNING_SHOT,
+	TRANSACTION_SHOOT_WEB_CAST,
+	TRANSACTION_SHOOT_WEB_HIT,
 };
 
 #define TRANSACTION_EPSILON 1e-6f;
@@ -820,6 +810,10 @@ struct Transaction
 			Entity_ID entity_id;
 			Entity_ID door_id;
 		} open_door;
+		struct {
+			Entity_ID caster_id;
+			Pos       target;
+		} shoot_web;
 	};
 };
 
@@ -1335,6 +1329,15 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			t.lightning.caster_id = action.lightning.caster_id;
 			t.lightning.start = action.lightning.start;
 			t.lightning.end = action.lightning.end;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_SHOOT_WEB: {
+			Transaction t = {};
+			t.type = TRANSACTION_SHOOT_WEB_CAST;
+			t.start_time = bump_attack_delay;
+			t.shoot_web.caster_id = action.entity_id;
+			t.shoot_web.target = action.shoot_web.target;
 			transactions.append(t);
 			break;
 		}
@@ -2292,6 +2295,43 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				events.append(e);
 				break;
 			}
+
+			case TRANSACTION_SHOOT_WEB_CAST: {
+				auto caster = game_get_entity_by_id(game, t->shoot_web.caster_id);
+				if (!caster) {
+					t->type = TRANSACTION_REMOVE;
+					break;
+				}
+				t->type = TRANSACTION_SHOOT_WEB_HIT;
+				t->start_time += constants.anims.shoot_web.cast_time;
+
+				Event e = {};
+				e.type = EVENT_SHOOT_WEB_CAST;
+				e.time = t->start_time;
+				e.shoot_web_cast.caster_id = t->shoot_web.caster_id;
+				e.shoot_web_cast.start = (v2)caster->pos;
+				e.shoot_web_cast.end = (v2)t->shoot_web.target;
+				events.append(e);
+
+				t->start_time += constants.anims.shoot_web.shot_duration;
+
+				break;
+			}
+			case TRANSACTION_SHOOT_WEB_HIT:
+				t->type = TRANSACTION_REMOVE;
+
+				auto web = add_spiderweb(game, t->shoot_web.target);
+
+				Event e = {};
+				e.type = EVENT_SHOOT_WEB_HIT;
+				e.time = t->start_time;
+				e.shoot_web_hit.pos = (v2)t->shoot_web.target;
+				e.shoot_web_hit.web_id = web->id;
+				e.shoot_web_hit.appearance = web->appearance;
+				events.append(e);
+
+				break;
+
 			}
 		}
 
@@ -2433,7 +2473,6 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 	// Entity_ID player_id = game_get_play
 	Entity_ID player_id = game_get_player_id(game);
-	Pos player_pos = game_get_player_pos(game);
 	u32 num_controllers = game->controllers.len;
 
 	bool entity_has_acted[MAX_ENTITIES] = {};
@@ -2442,55 +2481,18 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 	for (u32 i = 0; i < num_controllers; ++i) {
 		Controller *c = &game->controllers[i];
-		switch (c->type) {
-		case CONTROLLER_PLAYER:
-			if (c->player.action.type == ACTION_BUMP_ATTACK) {
-				actions.append(c->player.action);
-				entity_has_acted[player_id] = true;
-			}
-			break;
-		case CONTROLLER_SLIME: {
-			Entity *slime = game_get_entity_by_id(game, c->slime.entity_id);
-			if (positions_are_adjacent(player_pos, slime->pos)) {
-				Action bump = {};
-				bump.type = ACTION_BUMP_ATTACK;
-				bump.bump_attack.attacker_id = slime->id;
-				bump.bump_attack.target_id = player_id;
-				actions.append(bump);
-				entity_has_acted[slime->id] = true;
-			}
-			break;
-		}
-		case CONTROLLER_LICH: {
-			u32 num_skeletons = c->lich.skeleton_ids.len;
-			for (u32 i = 0; i < num_skeletons; ++i) {
-				Entity *skeleton = game_get_entity_by_id(game, c->lich.skeleton_ids[i]);
-				if (positions_are_adjacent(player_pos, skeleton->pos)) {
-					Action bump = {};
-					bump.type = ACTION_BUMP_ATTACK;
-					bump.bump_attack.attacker_id = skeleton->id;
-					bump.bump_attack.target_id = player_id;
-					actions.append(bump);
-					entity_has_acted[skeleton->id] = true;
-				}
-			}
-			break;
-		}
-		case CONTROLLER_RANDOM_MOVE:
-		case CONTROLLER_DRAGON:
-			break;
+		make_bump_attacks(c, game, actions);
+	}
+
+	for (u32 i = 0; i < actions.len; ++i) {
+		auto action = &actions[i];
+		if (action->entity_id) {
+			entity_has_acted[action->entity_id] = true;
 		}
 	}
 
 	// 1. choose moves
 
-	struct Potential_Move
-	{
-		Entity_ID entity_id;
-		Pos start;
-		Pos end;
-		f32 weight;
-	};
 	Max_Length_Array<Potential_Move, MAX_ENTITIES * 9> potential_moves;
 	potential_moves.reset();
 
@@ -2501,129 +2503,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 	for (u32 i = 0; i < num_controllers; ++i) {
 		Controller *c = &game->controllers[i];
-		switch (c->type) {
-		case CONTROLLER_PLAYER:
-			if (c->player.action.type == ACTION_MOVE) {
-				Potential_Move pm = {};
-				pm.entity_id = c->player.entity_id;
-				pm.start = c->player.action.move.start;
-				pm.end = c->player.action.move.end;
-				player_pos = pm.end;
-				// XXX -- weight here should be infinite
-				pm.weight = 10.0f;
-				potential_moves.append(pm);
-			}
-			break;
-		case CONTROLLER_RANDOM_MOVE: {
-			Entity *e = game_get_entity_by_id(game, c->random_move.entity_id);
-			u16 move_mask = e->movement_type;
-			Pos start = e->pos;
-			for (i8 dy = -1; dy <= 1; ++dy) {
-				for (i8 dx = -1; dx <= 1; ++dx) {
-					if (!(dx || dy)) {
-						continue;
-					}
-					Pos end = (Pos)((v2_i16)start + v2_i16(dx, dy));
-					Tile t = tiles[end];
-					if (tile_is_passable(t, move_mask)) {
-						Potential_Move pm = {};
-						pm.entity_id = e->id;
-						pm.start = start;
-						pm.end = end;
-						pm.weight = uniform_f32(0.0f, 1.0f);
-						// pm.weight = 1.0f;
-						potential_moves.append(pm);
-					}
-				}
-			}
-			break;
-		}
-		case CONTROLLER_SLIME: {
-			Entity *e = game_get_entity_by_id(game, c->slime.entity_id);
-			// Pos p = e->pos;
-			v2_i16 start = (v2_i16)e->pos;
-			v2_i16 iplayer_pos = (v2_i16)player_pos;
-			v2_i16 d = iplayer_pos - start;
-			u32 distance_squared = (u32)(d.x*d.x + d.y*d.y);
-			for (i16 dy = -1; dy <= 1; ++dy) {
-				for (i16 dx = -1; dx <= 1; ++dx) {
-					if (!dx && !dy) {
-						continue;
-					}
-					v2_i16 end = start + v2_i16(dx, dy);
-					d = iplayer_pos - end;
-					Pos pend = (Pos)end;
-					Tile t = tiles[pend];
-					if ((u32)(d.x*d.x + d.y*d.y) <= distance_squared
-					 && tile_is_passable(t, e->movement_type)) {
-						Potential_Move pm = {};
-						pm.entity_id = e->id;
-						pm.start = (Pos)start;
-						pm.end = (Pos)end;
-						pm.weight = uniform_f32(1.9f, 2.1f);
-						potential_moves.append(pm);
-					}
-				}
-			}
-			break;
-		}
-		case CONTROLLER_LICH: {
-			if (!lich_get_skeleton_to_heal(game, c)) {
-				Entity *e = game_get_entity_by_id(game, c->lich.lich_id);
-				u16 move_mask = e->movement_type;
-				Pos start = e->pos;
-				for (i8 dy = -1; dy <= 1; ++dy) {
-					for (i8 dx = -1; dx <= 1; ++dx) {
-						if (!(dx || dy)) {
-							continue;
-						}
-						Pos end = (Pos)((v2_i16)start + v2_i16(dx, dy));
-						Tile t = tiles[end];
-						if (tile_is_passable(t, move_mask)) {
-							Potential_Move pm = {};
-							pm.entity_id = e->id;
-							pm.start = start;
-							pm.end = end;
-							pm.weight = uniform_f32(0.0f, 1.0f);
-							// pm.weight = 1.0f;
-							potential_moves.append(pm);
-						}
-					}
-				}
-			}
-			auto& skeleton_ids = c->lich.skeleton_ids;
-			u32 num_skeleton_ids = skeleton_ids.len;
-			for (u32 i = 0; i < num_skeleton_ids; ++i) {
-				Entity *e = game_get_entity_by_id(game, skeleton_ids[i]);
-				// Pos p = e->pos;
-				v2_i16 start = (v2_i16)e->pos;
-				v2_i16 iplayer_pos = (v2_i16)player_pos;
-				v2_i16 d = iplayer_pos - start;
-				u32 distance_squared = (u32)(d.x*d.x + d.y*d.y);
-				for (i16 dy = -1; dy <= 1; ++dy) {
-					for (i16 dx = -1; dx <= 1; ++dx) {
-						if (!dx && !dy) {
-							continue;
-						}
-						v2_i16 end = start + v2_i16(dx, dy);
-						d = iplayer_pos - end;
-						Pos pend = (Pos)end;
-						Tile t = tiles[pend];
-						if ((u32)(d.x*d.x + d.y*d.y) <= distance_squared
-						 && tile_is_passable(t, e->movement_type)) {
-							Potential_Move pm = {};
-							pm.entity_id = e->id;
-							pm.start = (Pos)start;
-							pm.end = (Pos)end;
-							pm.weight = uniform_f32(1.9f, 2.1f);
-							potential_moves.append(pm);
-						}
-					}
-				}
-			}
-			break;
-		}
-		}
+		make_moves(c, game, potential_moves);
 	}
 
 	u32 num_entities = game->entities.len;
@@ -2678,6 +2558,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 		if (!entity_has_acted[pm.entity_id]) {
 			Action chosen_move = {};
+			chosen_move.entity_id = pm.entity_id;
 			chosen_move.type = ACTION_MOVE;
 			chosen_move.move.entity_id = pm.entity_id;
 			chosen_move.move.start = pm.start;
@@ -2718,50 +2599,7 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 	// we should incorporate that here
 	for (u32 i = 0; i < num_controllers; ++i) {
 		Controller *c = &game->controllers[i];
-		switch (c->type) {
-		case CONTROLLER_PLAYER:
-			// if (c->player.action.type != ACTION_MOVE) {
-			if (!entity_has_acted[player_id]) {
-				actions.append(c->player.action);
-			}
-			break;
-		case CONTROLLER_DRAGON: {
-			Entity *e = game_get_entity_by_id(game, c->dragon.entity_id);
-			u16 move_mask = e->movement_type;
-			u32 t_idx = rand_u32() % game->entities.len;
-			Entity *t = &game->entities[t_idx];
-			Action a = {};
-			a.type = ACTION_FIREBALL;
-			a.fireball.start = e->pos;
-			a.fireball.end = t->pos;
-
-			/*
-			debug_draw_world_reset();
-			debug_draw_world_set_color(v4(1.0f, 1.0f, 0.0f, 1.0f));
-			debug_draw_world_arrow((v2)a.fireball.start, (v2)a.fireball.end);
-			debug_pause();
-			*/
-
-			actions.append(a);
-			break;
-		}
-		case CONTROLLER_LICH: {
-			Entity_ID skeleton_to_heal = lich_get_skeleton_to_heal(game, c);
-			if (skeleton_to_heal) {
-				c->lich.heal_cooldown = 5;
-
-				Action a = {};
-				a.type = ACTION_HEAL;
-				a.heal.caster_id = c->lich.lich_id;
-				a.heal.target_id = skeleton_to_heal;
-				a.heal.amount = 5;
-				actions.append(a);
-			} else if (c->lich.heal_cooldown) {
-				--c->lich.heal_cooldown;
-			}
-			break;
-		}
-		}
+		make_actions(c, game, Slice<bool>(entity_has_acted, ARRAY_SIZE(entity_has_acted)), actions);
 	}
 
 #ifdef DEBUG_SHOW_ACTIONS
@@ -2809,6 +2647,7 @@ enum Anim_Type
 	ANIM_TILE_LIQUID,
 	ANIM_WATER_EDGE,
 	ANIM_CREATURE_IDLE,
+	ANIM_ADD_ITEM,
 	ANIM_MOVE,
 	ANIM_MOVE_BLOCKED,
 	ANIM_DROP_TILE,
@@ -2826,6 +2665,7 @@ enum Anim_Type
 	ANIM_POLYMORPH_PARTICLES,
 	ANIM_HEAL_PARTICLES,
 	ANIM_FIELD_OF_VISION_CHANGED,
+	ANIM_SHOOT_WEB_PARTICLES,
 };
 
 struct Anim
@@ -2844,6 +2684,9 @@ struct Anim
 		struct {
 			v4_u8 color;
 		} water_edge;
+		struct {
+			f32 time;
+		} add_item;
 		struct {
 			f32 duration;
 			f32 start_time;
@@ -2923,6 +2766,12 @@ struct Anim
 			u32 buffer_id;
 			Field_Of_Vision* fov;
 		} field_of_vision;
+		struct {
+			f32 start_time;
+			f32 duration;
+			v2  start;
+			v2  end;
+		} shoot_web_particles;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -2937,6 +2786,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_TILE_LIQUID:             return 0;
 	case ANIM_WATER_EDGE:              return 0;
 	case ANIM_CREATURE_IDLE:           return 0;
+	case ANIM_ADD_ITEM:                return 1;
 	case ANIM_MOVE:                    return 1;
 	case ANIM_MOVE_BLOCKED:            return 1;
 	case ANIM_DROP_TILE:               return 1;
@@ -2954,6 +2804,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_POLYMORPH_PARTICLES:     return 1;
 	case ANIM_HEAL_PARTICLES:          return 1;
 	case ANIM_FIELD_OF_VISION_CHANGED: return 1;
+	case ANIM_SHOOT_WEB_PARTICLES:     return 1;
 	}
 	ASSERT(0);
 	return 0;
@@ -3266,6 +3117,34 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			world_anim->anims.append(anim);
 			break;
 		}
+		case EVENT_SHOOT_WEB_CAST: {
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_SHADOW_ATTACK_4;
+
+			Anim particles = {};
+			particles.type = ANIM_SHOOT_WEB_PARTICLES;
+			particles.shoot_web_particles.start_time = event->time;
+			particles.shoot_web_particles.duration = constants.anims.shoot_web.shot_duration;
+			particles.shoot_web_particles.start = event->shoot_web_cast.start;
+			particles.shoot_web_particles.end = event->shoot_web_cast.end;
+
+			world_anim->anims.append(sound);
+			world_anim->anims.append(particles);
+			break;
+		}
+		case EVENT_SHOOT_WEB_HIT: {
+			Anim anim = {};
+			anim.type = ANIM_ADD_ITEM;
+			anim.sprite_coords = appearance_get_item_sprite_coords(event->shoot_web_hit.appearance);
+			anim.world_coords = event->shoot_web_hit.pos;
+			anim.entity_id = event->shoot_web_hit.web_id;
+			anim.depth_offset = constants.z_offsets.item;
+			anim.add_item.time = event->time;
+			world_anim->anims.append(anim);
+			break;
+		}
 		case EVENT_FIRE_BOLT_SHOT: {
 			Anim a = {};
 			a.type = ANIM_PROJECTILE_EFFECT_32;
@@ -3564,6 +3443,12 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 	for (u32 i = 0; i < anims.len; ) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
+		case ANIM_ADD_ITEM: {
+			if (anim->add_item.time <= dyn_time) {
+				anim->type = ANIM_TILE_STATIC;
+			}
+			break;
+		}
 		case ANIM_MOVE:
 			if (anim->move.start_time + anim->move.duration <= dyn_time) {
 				anim->world_coords = anim->move.end;
@@ -3745,6 +3630,42 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 				}
 				anims.remove(i);
 				continue;
+			}
+			break;
+		case ANIM_SHOOT_WEB_PARTICLES:
+			if (anim->shoot_web_particles.start_time <= dyn_time) {
+				u32 num_particles = constants.anims.shoot_web.num_particles;
+
+				v2 start = anim->shoot_web_particles.start;
+				v2 end = anim->shoot_web_particles.end;
+				v2 velocity = (end - start) / constants.anims.shoot_web.shot_duration;
+
+				Particles *particles = &draw->renderer.particles;
+				Particle_Instance instance = {};
+				instance.start_time = time;
+				instance.end_time = time + constants.anims.shoot_web.shot_duration;
+
+				for (u32 i = 0; i < num_particles; ++i) {
+					f32 color = uniform_f32(0.8f, 1.0f);
+					instance.start_color = v4(color, color, color, 1.0f);
+					color = uniform_f32(0.8f, 1.0f);
+					instance.end_color = v4(color, color, color, 1.0f);
+
+					f32 h = 1.0f;
+					f32 d = constants.anims.shoot_web.shot_duration;
+					f32 v = - (4.0f*h) / d;
+					f32 a = (8.0f*h) / (d*d);
+
+					instance.acceleration = v2(0.0f, a);
+					instance.start_velocity = velocity + v2(0.0f, v);
+
+					f32 angle = 2.0f * PI_F32 * rand_f32();
+					f32 mag = 0.5f * rand_f32();
+
+					instance.start_pos = start + v2(cosf(angle), sinf(angle)) * mag;
+					particles_add(particles, instance);
+				}
+				anims.remove(i);
 			}
 			break;
 		case ANIM_HEAL_PARTICLES:
@@ -5726,6 +5647,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	case GIS_PLAYING_CARDS: {
 		Action player_action = {};
 		player_action.type = ACTION_NONE;
+		player_action.entity_id = game_get_player_id(&program->game);
 
 		Card_State *card_state = &program->game.card_state;
 		Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> card_events;
@@ -5883,6 +5805,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			player_action.type = ACTION_WAIT;
 			Controller *c = &program->game.controllers.items[0];
 			ASSERT(c->type == CONTROLLER_PLAYER);
+			player_action.entity_id = c->player.entity_id;
 			c->player.action = player_action;
 			Event_Buffer event_buffer;
 			game_do_turn(&program->game, &event_buffer);
@@ -5900,6 +5823,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	case GIS_NONE: {
 		Action player_action = {};
 		player_action.type = ACTION_NONE;
+		player_action.entity_id = game_get_player_id(&program->game);
 
 		Card_State *card_state = &program->game.card_state;
 		Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> card_events;

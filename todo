@@ -1,18 +1,60 @@
-* initial content goals
-  * 6 enemy groups with at least 3 enemies each (18+ enemies)
-  * 6 schools of magic with 8 spells each (48 spells)
+* goals (initial)
+  * content
+    * 6 enemy groups with at least 3 enemies each (18+ enemies)
+      * early enemies (rats/bats/wolves/bears)
+      * spiders
+        * normal spider - just does normal attacks
+        * web spider - shoots webs
+        * poison spider - attacks have a chance to give the player a poison card
+        * shadow spider - can turn invisible
+      * goblins (melee/archer/shaman/king)
+      * trolls/ogres/ettin/whatever teh grey things are :/
+      * undead (late game) (zombie/skeleton/skeleton archer/skeleton warrior/wrath/ghost/mummy/mummy lord/lich/vampire)
+        * skeleton - normal attack
+        * skeleton warrior - stronger attack
+        * skeleton archer - ranged attack
+        * lich - can turn bones into skeletons; possesses a skeleton if killed
+
+        * zombie
+        * headless zombie
+        * mummy - gives player disease (card cannot be discarded, remains in hand)
+        * mummy lord
+        * wrath
+        * ghost
+        * reaper
+        * vampire red
+        * vampire blue
+        * vampire lord - can turn into a group of bats/any one of those bats can turn back into the vampire lord
+
+      * gnolls
+      * drow
+
+    * 6 one of enemies
+      * slimes/sminemancer - slimes split on attack, slimemancer heals slimes
+      * imp - steals cards (monkey like enemy)
+      * dragons
+      * golems
+      * beholder
+
+    * 6 schools of magic with 8 spells each (48 spells)
+    * level generation
+      * classic 26 level dungeon
+      * forking paths (e.g. level with two stairs down, one with spider webs, another with other environmental clues showing a different type of enemy)
+      * different enemy groups have their own map styles
+      * progression:
+        * first levels caves
+          * plain caves (bears/bats/rats/wolves)
+          * spider caves (bugs? scorpions?)
+          * goblin caves
+          * cavern/entrance to later levels
+        * entrance to 
+
+* content 
 
 * tasks:
   * level generation!
-    * zoom view entire level
     * room generators (generate a spider room - webs around the edges, invisible trap
       that summons more webs and more spiders :-D!)
-        * spiders:
-          * normal spider
-          * web spider (chance to make a web when it attacks)
-          * poison spider (chance to deal poison cards)
-          * shadow spider (turns invisible before attacking)
-
   * field of vision
     * transition between fovs
   * doors
@@ -49,20 +91,7 @@
 
 * scenarios:
   * fireball hits barrels, chain reaction
-  * enemy groups
-    * early enemies (rats/bats/wolves/bears)
-    * spiders (normal/web/poison/shadow)
-    * goblins (melee/archer/shaman/king)
-    * trolls/ogres/ettin/whatever teh grey things are :/
-    * undead (late game) (zombie/skeleton/skeleton archer/skeleton warrior/wrath/ghost/mummy/mummy lord/lich/vampire)
-
-    * gnolls
-    * drow
   * one off enemies
-    * slimes (slime mancer)
-    * dragons
-    * golems
-    * beholder
 
   * enemy abilities
     * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
