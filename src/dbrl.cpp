@@ -82,6 +82,8 @@ enum Event_Type
 	EVENT_LIGHTNING_BOLT_START,
 	EVENT_SHOOT_WEB_CAST,
 	EVENT_SHOOT_WEB_HIT,
+	EVENT_CREATURE_DROP_IN,
+	EVENT_ADD_CREATURE,
 };
 
 struct Event
@@ -188,6 +190,15 @@ struct Event
 			Appearance appearance;
 			v2         pos;
 		} shoot_web_hit;
+		struct {
+			Appearance appearance;
+			v2         pos;
+		} creature_drop_in;
+		struct {
+			Entity_ID  creature_id;
+			Appearance appearance;
+			v2         pos;
+		} add_creature;
 	};
 };
 
@@ -747,6 +758,8 @@ enum Transaction_Type
 	TRANSACTION_LIGHTNING_SHOT,
 	TRANSACTION_SHOOT_WEB_CAST,
 	TRANSACTION_SHOOT_WEB_HIT,
+	TRANSACTION_CREATURE_DROP_IN,
+	TRANSACTION_ADD_CREATURE,
 };
 
 #define TRANSACTION_EPSILON 1e-6f;
@@ -814,6 +827,14 @@ struct Transaction
 			Entity_ID caster_id;
 			Pos       target;
 		} shoot_web;
+		struct {
+			Pos           pos;
+			Creature_Type type;
+		} creature_drop_in;
+		struct {
+			Pos           pos;
+			Creature_Type type;
+		} add_creature;
 	};
 };
 
@@ -830,9 +851,10 @@ void game_dispatch_message(Game*               game,
 	auto& transactions = *transaction_buffer;
 	auto& events = *event_buffer;
 	u32 num_handlers = handlers.len;
-	for (u32 i = 0; i < num_handlers; ++i) {
+	for (u32 i = 0; i < handlers.len; ) {
 		Message_Handler *h = &handlers[i];
 		if (!(message.type & h->handle_mask)) {
+			++i;
 			continue;
 		}
 		switch (h->type) {
@@ -929,7 +951,70 @@ void game_dispatch_message(Game*               game,
 				events.append(e);
 			}
 			break;
+		case MESSAGE_HANDLER_TRAP_SPIDER_CAVE: {
+			Pos end = message.move.end;
+			v2_i32 trap_pos = (v2_i32)h->trap_spider_cave.center;
+			i32 radius = h->trap_spider_cave.radius;
+			v2_i32 d = (v2_i32)end - trap_pos;
+			i32 dist_squared = (i32)(d.x*d.x + d.y*d.y);
+			if (dist_squared <= radius*radius) {
+				if (dist_squared <= h->trap_spider_cave.last_dist_squared) {
+					h->trap_spider_cave.last_dist_squared = dist_squared;
+					break;
+				}
+
+				Max_Length_Array<Pos, 1024> spawn_poss;
+				spawn_poss.reset();
+
+				for (i32 y = trap_pos.y - radius; y <= trap_pos.y + radius; ++y) {
+					for (i32 x = trap_pos.x - radius; x <= trap_pos.x + radius; ++x) {
+						Pos p = Pos(x, y);
+						if (is_pos_passable(game, p, BLOCK_WALK)) {
+							spawn_poss.append(p);
+						}
+					}
+				}
+				ASSERT(spawn_poss.len >= 5);
+
+				for (u32 i = 0; i < 5; ++i) {
+					u32 idx = i + rand_u32() % (spawn_poss.len - i);
+					auto tmp = spawn_poss[idx];
+					spawn_poss[idx] = spawn_poss[i];
+					spawn_poss[i] = tmp;
+				}
+
+				Transaction t = {};
+				t.type = TRANSACTION_CREATURE_DROP_IN;
+				t.start_time = time + TRANSACTION_EPSILON;
+
+				t.creature_drop_in.pos = spawn_poss[0];
+				t.creature_drop_in.type = CREATURE_SPIDER_NORMAL;
+				transaction_buffer->append(t);
+
+				t.creature_drop_in.pos = spawn_poss[1];
+				t.creature_drop_in.type = CREATURE_SPIDER_NORMAL;
+				transaction_buffer->append(t);
+
+				t.creature_drop_in.pos = spawn_poss[2];
+				t.creature_drop_in.type = CREATURE_SPIDER_WEB;
+				transaction_buffer->append(t);
+
+				t.creature_drop_in.pos = spawn_poss[3];
+				t.creature_drop_in.type = CREATURE_SPIDER_POISON;
+				transaction_buffer->append(t);
+
+				t.creature_drop_in.pos = spawn_poss[4];
+				t.creature_drop_in.type = CREATURE_SPIDER_SHADOW;
+				transaction_buffer->append(t);
+
+				handlers.remove(i);
+				continue;
+			}
+			break;
 		}
+		} // end switch
+
+		++i;
 	}
 }
 
@@ -2317,7 +2402,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 				break;
 			}
-			case TRANSACTION_SHOOT_WEB_HIT:
+			case TRANSACTION_SHOOT_WEB_HIT: {
 				t->type = TRANSACTION_REMOVE;
 
 				auto web = add_spiderweb(game, t->shoot_web.target);
@@ -2331,6 +2416,37 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				events.append(e);
 
 				break;
+			}
+
+			case TRANSACTION_CREATURE_DROP_IN: {
+				Event e = {};
+				e.type = EVENT_CREATURE_DROP_IN;
+				e.time = t->start_time;
+				e.creature_drop_in.pos = (v2)t->creature_drop_in.pos;
+				e.creature_drop_in.appearance = get_creature_appearance(t->creature_drop_in.type);
+				events.append(e);
+
+				t->type = TRANSACTION_ADD_CREATURE;
+				t->start_time += constants.anims.creature_drop_in.duration;
+				t->add_creature.pos = t->creature_drop_in.pos;
+				t->add_creature.type = t->creature_drop_in.type;
+
+				break;
+			}
+
+			case TRANSACTION_ADD_CREATURE: {
+				auto entity = add_creature(game, t->add_creature.pos, t->add_creature.type);
+
+				Event event = {};
+				event.type = EVENT_ADD_CREATURE;
+				event.time = t->start_time;
+				event.add_creature.creature_id = entity->id;
+				event.add_creature.appearance = entity->appearance;
+				event.add_creature.pos = (v2)entity->pos;
+				events.append(event);
+
+				t->type = TRANSACTION_REMOVE;
+			}
 
 			}
 		}
@@ -2648,6 +2764,7 @@ enum Anim_Type
 	ANIM_WATER_EDGE,
 	ANIM_CREATURE_IDLE,
 	ANIM_ADD_ITEM,
+	ANIM_ADD_CREATURE,
 	ANIM_MOVE,
 	ANIM_MOVE_BLOCKED,
 	ANIM_DROP_TILE,
@@ -2666,6 +2783,7 @@ enum Anim_Type
 	ANIM_HEAL_PARTICLES,
 	ANIM_FIELD_OF_VISION_CHANGED,
 	ANIM_SHOOT_WEB_PARTICLES,
+	ANIM_CREATURE_DROP_IN,
 };
 
 struct Anim
@@ -2687,6 +2805,9 @@ struct Anim
 		struct {
 			f32 time;
 		} add_item;
+		struct {
+			f32 time;
+		} add_creature;
 		struct {
 			f32 duration;
 			f32 start_time;
@@ -2772,6 +2893,10 @@ struct Anim
 			v2  start;
 			v2  end;
 		} shoot_web_particles;
+		struct {
+			f32 start_time;
+			f32 duration;
+		} creature_drop_in;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
@@ -2787,6 +2912,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_WATER_EDGE:              return 0;
 	case ANIM_CREATURE_IDLE:           return 0;
 	case ANIM_ADD_ITEM:                return 1;
+	case ANIM_ADD_CREATURE:            return 1;
 	case ANIM_MOVE:                    return 1;
 	case ANIM_MOVE_BLOCKED:            return 1;
 	case ANIM_DROP_TILE:               return 1;
@@ -2805,6 +2931,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_HEAL_PARTICLES:          return 1;
 	case ANIM_FIELD_OF_VISION_CHANGED: return 1;
 	case ANIM_SHOOT_WEB_PARTICLES:     return 1;
+	case ANIM_CREATURE_DROP_IN:        return 1;
 	}
 	ASSERT(0);
 	return 0;
@@ -2940,6 +3067,25 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			anims.append(bump_sound);
 			break;
 		}
+
+		case EVENT_CREATURE_DROP_IN: {
+			Anim drop_in = {};
+			drop_in.type = ANIM_CREATURE_DROP_IN;
+			drop_in.sprite_coords = appearance_get_creature_sprite_coords(event->creature_drop_in.appearance);
+			drop_in.world_coords = (v2)event->creature_drop_in.pos;
+			drop_in.depth_offset = constants.z_offsets.character;
+			drop_in.creature_drop_in.start_time = event->time;
+			drop_in.creature_drop_in.duration = constants.anims.creature_drop_in.duration;
+			anims.append(drop_in);
+
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_SPIDER_RUNNING_01_LOOP;
+			anims.append(sound);
+			break;
+		}
+
 		case EVENT_DROP_TILE: {
 			u32 tile_id = MAX_ENTITIES + pos_to_u16(event->drop_tile.pos);
 			for (u32 i = 0; i < anims.len; ++i) {
@@ -3225,6 +3371,18 @@ void world_anim_animate_next_event_block(World_Anim_State* world_anim)
 			anims.append(a);
 			break;
 		}
+		case EVENT_ADD_CREATURE: {
+			Anim a = {};
+			a.type = ANIM_ADD_CREATURE;
+			a.sprite_coords = appearance_get_creature_sprite_coords(event->add_creature.appearance);
+			a.world_coords = event->add_creature.pos;
+			a.entity_id = event->add_creature.creature_id;
+			a.depth_offset = constants.z_offsets.character;
+			a.add_creature.time = event->time;
+			anims.append(a);
+			break;
+		}
+
 		}
 		++event_idx;
 	}
@@ -3449,6 +3607,12 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 			}
 			break;
 		}
+		case ANIM_ADD_CREATURE: {
+			if (anim->add_creature.time <= dyn_time) {
+				anim->type = ANIM_CREATURE_IDLE;
+			}
+			break;
+		}
 		case ANIM_MOVE:
 			if (anim->move.start_time + anim->move.duration <= dyn_time) {
 				anim->world_coords = anim->move.end;
@@ -3463,6 +3627,12 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 				anim->type = ANIM_CREATURE_IDLE;
 				anim->idle.offset = time;
 				anim->idle.duration = uniform_f32(0.8f, 1.2f);
+			}
+			break;
+		case ANIM_CREATURE_DROP_IN:
+			if (anim->creature_drop_in.start_time + anim->creature_drop_in.duration <= dyn_time) {
+				anims.remove(i);
+				continue;
 			}
 			break;
 		case ANIM_DROP_TILE:
@@ -3885,6 +4055,30 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 
 			sprite_sheet_instances_add(&draw->creatures, ci);
 
+			break;
+		}
+		case ANIM_CREATURE_DROP_IN: {
+			f32 dt = (dyn_time - anim->creature_drop_in.start_time) / anim->creature_drop_in.duration;
+
+			Sprite_Sheet_Instance ci = {};
+
+			ci.color_mod = v4(1.0f, 1.0f, 1.0f, dt);
+
+			v2 world_pos = anim->world_coords;
+			ci.y_offset = -3.0f;
+			ci.sprite_pos = v2(4.0f, 22.0f);
+			ci.world_pos = world_pos;
+			ci.sprite_id = anim->entity_id;
+			ci.depth_offset = anim->depth_offset;
+			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			v2 sprite_pos = anim->sprite_coords;
+			ci.sprite_pos = sprite_pos;
+			ci.y_offset = -6.0f - (1.0f - dt) * constants.anims.creature_drop_in.drop_height * 24.0f;
+			ci.world_pos = world_pos;
+			ci.depth_offset += 0.5f;
+
+			sprite_sheet_instances_add(&draw->creatures, ci);
 			break;
 		}
 		case ANIM_DROP_TILE: {

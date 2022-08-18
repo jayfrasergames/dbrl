@@ -102,6 +102,24 @@ bool tile_is_passable(Tile tile, u16 move_mask)
 	return false;
 }
 
+bool is_pos_passable(Game* game, Pos pos, u16 move_mask)
+{
+	auto tile = game->tiles[pos];
+	if (!tile_is_passable(tile, move_mask)) {
+		return false;
+	}
+
+	auto &entities = game->entities;
+	for (u32 i = 0; i < entities.len; ++i) {
+		auto entity = &entities[i];
+		if (entity->pos == pos && entity->block_mask & move_mask) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 void update_fov(Game* game)
 {
 	Map_Cache_Bool map = {}, fov = {};
@@ -134,6 +152,103 @@ void update_fov(Game* game)
 // ============================================================================
 // creatures
 // ============================================================================
+
+Entity* add_enemy(Game* game, u32 hit_points)
+{
+	auto e = add_entity(game);
+	e->hit_points = hit_points;
+	e->max_hit_points = hit_points;
+	e->default_action = ACTION_BUMP_ATTACK;
+	e->block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
+
+	return e;
+}
+
+Entity* add_creature(Game* game, Pos pos, Creature_Type type)
+{
+	switch (type) {
+	case CREATURE_SPIDER_NORMAL:
+		return add_spider_normal(game, pos);
+	case CREATURE_SPIDER_WEB:
+		return add_spider_web(game, pos);
+	case CREATURE_SPIDER_POISON:
+		return add_spider_poison(game, pos);
+	case CREATURE_SPIDER_SHADOW:
+		return add_spider_shadow(game, pos);
+	default:
+		ASSERT(0);
+	}
+	return NULL;
+}
+
+Appearance get_creature_appearance(Creature_Type type)
+{
+	switch (type) {
+	case CREATURE_SPIDER_NORMAL: return APPEARANCE_CREATURE_RED_SPIDER;
+	case CREATURE_SPIDER_WEB:    return APPEARANCE_CREATURE_BLACK_SPIDER;
+	case CREATURE_SPIDER_POISON: return APPEARANCE_CREATURE_SPIDER_GREEN;
+	case CREATURE_SPIDER_SHADOW: return APPEARANCE_CREATURE_SPIDER_BLUE;
+	}
+	ASSERT(0);
+	return APPEARANCE_NONE;
+}
+
+Entity* add_spider_normal(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_RED_SPIDER;
+	e->movement_type = BLOCK_WALK;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_SPIDER_NORMAL;
+	c->spider_normal.entity_id = e->id;
+
+	return e;
+}
+
+Entity* add_spider_web(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_BLACK_SPIDER;
+	e->movement_type = BLOCK_WALK;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_SPIDER_WEB;
+	c->spider_web.entity_id = e->id;
+	c->spider_web.web_cooldown = 3;
+
+	return e;
+}
+
+Entity* add_spider_poison(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_SPIDER_GREEN;
+	e->movement_type = BLOCK_WALK;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_SPIDER_POISON;
+	c->spider_normal.entity_id = e->id;
+
+	return e;
+}
+
+Entity* add_spider_shadow(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_SPIDER_BLUE;
+	e->movement_type = BLOCK_WALK;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_SPIDER_SHADOW;
+	c->spider_normal.entity_id = e->id;
+
+	return e;
+}
 
 Entity* add_spiderweb(Game* game, Pos pos)
 {
@@ -169,6 +284,18 @@ Entity* add_spiderweb(Game* game, Pos pos)
 	mh->prevent_exit.pos = pos;
 
 	return e;
+}
+
+Message_Handler* add_trap_spider_cave(Game* game, Pos pos, u32 radius)
+{
+	auto mh = add_message_handler(game);
+	mh->type = MESSAGE_HANDLER_TRAP_SPIDER_CAVE;
+	mh->handle_mask = MESSAGE_MOVE_POST_ENTER;
+	mh->trap_spider_cave.center = pos;
+	mh->trap_spider_cave.radius = radius;
+	mh->trap_spider_cave.last_dist_squared = radius*radius + 1;
+
+	return mh;
 }
 
 // Old style

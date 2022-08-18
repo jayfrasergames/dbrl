@@ -221,6 +221,18 @@ struct Tile
 };
 
 // =============================================================================
+// Creatures
+// =============================================================================
+
+enum Creature_Type
+{
+	CREATURE_SPIDER_NORMAL,
+	CREATURE_SPIDER_WEB,
+	CREATURE_SPIDER_POISON,
+	CREATURE_SPIDER_SHADOW,
+};
+
+// =============================================================================
 // Messages
 // =============================================================================
 
@@ -263,6 +275,7 @@ enum Message_Handler_Type
 	MESSAGE_HANDLER_TRAP_FIREBALL,
 	MESSAGE_HANDLER_SLIME_SPLIT,
 	MESSAGE_HANDLER_LICH_DEATH,
+	MESSAGE_HANDLER_TRAP_SPIDER_CAVE,
 };
 
 struct Message_Handler
@@ -283,6 +296,11 @@ struct Message_Handler
 		struct {
 			Controller_ID controller_id;
 		} lich_death;
+		struct {
+			Pos center;
+			u32 radius;
+			u32 last_dist_squared;
+		} trap_spider_cave;
 	};
 };
 
@@ -348,7 +366,15 @@ Entity*          add_entity(Game* game);
 Controller*      add_controller(Game* game);
 Message_Handler* add_message_handler(Game* game);
 
+Entity*          add_creature(Game* game, Pos pos, Creature_Type type);
+Appearance       get_creature_appearance(Creature_Type type);
+
+Entity*          add_spider_normal(Game* game, Pos pos);
+Entity*          add_spider_web(Game* game, Pos pos);
+Entity*          add_spider_poison(Game* game, Pos pos);
+Entity*          add_spider_shadow(Game* game, Pos pos);
 Entity*          add_spiderweb(Game* game, Pos pos);
+Message_Handler* add_trap_spider_cave(Game* game, Pos pos, u32 radius);
 
 Entity_ID        add_slime(Game* game, Pos pos, u32 hit_points);
 
@@ -356,3 +382,5 @@ Entity_ID        add_slime(Game* game, Pos pos, u32 hit_points);
 Entity*          game_get_entity_by_id(Game* game, Entity_ID entity_id);
 bool             game_is_pos_opaque(Game* game, Pos pos);
 bool             tile_is_passable(Tile tile, u16 move_mask);
+
+bool is_pos_passable(Game* game, Pos pos, u16 move_mask);

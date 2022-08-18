@@ -267,6 +267,7 @@ enum Item_Type
 {
 	ITEM_NONE,
 	ITEM_SPIDERWEB,
+	ITEM_SPIDER_TRAP,
 
 	ITEM_SPIDER_NORMAL = ITEM_TAKES_UP_TILE,
 	ITEM_SPIDER_WEB,
@@ -278,6 +279,11 @@ struct Item
 {
 	Item_Type type;
 	Pos       pos;
+	union {
+		struct {
+			u32 radius;
+		} spider_trap;
+	};
 };
 
 // struct Room
@@ -384,75 +390,17 @@ static void make_spider_room(Room* room)
 	spider.type = ITEM_SPIDER_SHADOW;
 	spider.pos = random_floor_pos(room);
 	room->items.append(spider);
+
+	Pos center = (Pos)(room->size / (u32)2);
+	u32 radius = min_u32(room->size.w, room->size.h);
+
+	Item trap = {};
+	trap.type = ITEM_SPIDER_TRAP;
+	trap.pos = center;
+	trap.spider_trap.radius = radius;
+	room->items.append(trap);
 }
 
-static Entity* add_enemy(Game* game, u32 hit_points)
-{
-	auto e = add_entity(game);
-	e->hit_points = hit_points;
-	e->max_hit_points = hit_points;
-	e->default_action = ACTION_BUMP_ATTACK;
-	e->block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-
-	return e;
-}
-
-static Entity* add_spider_normal(Game* game, Pos pos)
-{
-	auto e = add_enemy(game, 5);
-	e->appearance = APPEARANCE_CREATURE_RED_SPIDER;
-	e->movement_type = BLOCK_WALK;
-	e->pos = pos;
-
-	auto c = add_controller(game);
-	c->type = CONTROLLER_SPIDER_NORMAL;
-	c->spider_normal.entity_id = e->id;
-
-	return e;
-}
-
-static Entity* add_spider_web(Game* game, Pos pos)
-{
-	auto e = add_enemy(game, 5);
-	e->appearance = APPEARANCE_CREATURE_BLACK_SPIDER;
-	e->movement_type = BLOCK_WALK;
-	e->pos = pos;
-
-	auto c = add_controller(game);
-	c->type = CONTROLLER_SPIDER_WEB;
-	c->spider_web.entity_id = e->id;
-	c->spider_web.web_cooldown = 3;
-
-	return e;
-}
-
-static Entity* add_spider_poison(Game* game, Pos pos)
-{
-	auto e = add_enemy(game, 5);
-	e->appearance = APPEARANCE_CREATURE_SPIDER_GREEN;
-	e->movement_type = BLOCK_WALK;
-	e->pos = pos;
-
-	auto c = add_controller(game);
-	c->type = CONTROLLER_SPIDER_POISON;
-	c->spider_normal.entity_id = e->id;
-
-	return e;
-}
-
-static Entity* add_spider_shadow(Game* game, Pos pos)
-{
-	auto e = add_enemy(game, 5);
-	e->appearance = APPEARANCE_CREATURE_SPIDER_BLUE;
-	e->movement_type = BLOCK_WALK;
-	e->pos = pos;
-
-	auto c = add_controller(game);
-	c->type = CONTROLLER_SPIDER_SHADOW;
-	c->spider_normal.entity_id = e->id;
-
-	return e;
-}
 static void draw_room(Game* game, Room* room, v2_u32 offset)
 {
 	v2_u32 size = room->size;
@@ -485,6 +433,9 @@ static void draw_room(Game* game, Room* room, v2_u32 offset)
 			break;
 		case ITEM_SPIDER_SHADOW:
 			add_spider_shadow(game, p);
+			break;
+		case ITEM_SPIDER_TRAP:
+			add_trap_spider_cave(game, p, item.spider_trap.radius);
 			break;
 		default:
 			ASSERT(0);
