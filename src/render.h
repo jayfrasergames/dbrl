@@ -13,6 +13,7 @@
 #include "sprite_sheet_gpu_data_types.h"
 #include "particles_gpu_data_types.h"
 #include "pixel_art_upsampler_gpu_data_types.h"
+#include "debug_draw_world_gpu_data_types.h"
 
 #define MAX_EVENT_DEPTH 32
 // EVENT(name)
@@ -120,6 +121,8 @@ enum Render_Job_Type
 	RENDER_JOB_BEGIN_EVENT,
 	RENDER_JOB_END_EVENT,
 	RENDER_JOB_PIXEL_ART_UPSAMPLE,
+	RENDER_JOB_DDW_TRIANGLES,
+	RENDER_JOB_DDW_LINES,
 
 	RENDER_JOB_RELOAD_SHADERS,
 
@@ -207,6 +210,18 @@ struct Render_Job
 			Target_Texture_ID                   output_tex_id;
 			Pixel_Art_Upsampler_Constant_Buffer constants;
 		} upsample_pixel_art;
+		struct {
+			Debug_Draw_World_Constant_Buffer constants;
+			Target_Texture_ID                output_tex_id;
+			u32                              start;
+			u32                              count;
+		} ddw_triangles;
+		struct {
+			Debug_Draw_World_Constant_Buffer constants;
+			Target_Texture_ID                output_tex_id;
+			u32                              start;
+			u32                              count;
+		} ddw_lines;
 	};
 };
 
@@ -217,6 +232,8 @@ extern const char *SOURCE_TEXTURE_FILENAMES[NUM_SOURCE_TEXTURES];
 	INSTANCE_BUFFER(SPRITE,       Sprite_Instance,               8192) \
 	INSTANCE_BUFFER(WORLD_SPRITE, Sprite_Sheet_Instance,         8192) \
 	INSTANCE_BUFFER(WORLD_FONT,   Sprite_Sheet_Font_Instance,    8192) \
+	INSTANCE_BUFFER(DDW_TRIANGLE, Debug_Draw_World_Triangle,     4*1024*1024) \
+	INSTANCE_BUFFER(DDW_LINE,     Debug_Draw_World_Line,         8192) \
 	INSTANCE_BUFFER(TRIANGLE,     Triangle_Instance,             2048) \
 	INSTANCE_BUFFER(FOV_EDGE,     Field_Of_Vision_Edge_Instance, 2*256*256) \
 	INSTANCE_BUFFER(FOV_FILL,     Field_Of_Vision_Fill_Instance, 2*256*256) \
@@ -262,7 +279,16 @@ extern const char *SOURCE_TEXTURE_FILENAMES[NUM_SOURCE_TEXTURES];
 	INPUT_ELEM(PARTICLES, "ACCELERATION",     FORMAT_R32G32_F) \
 	INPUT_ELEM(PARTICLES, "SIN_INNER_COEFF",  FORMAT_R32G32_F) \
 	INPUT_ELEM(PARTICLES, "SIN_OUTER_COEFF",  FORMAT_R32G32_F) \
-	INPUT_ELEM(PARTICLES, "SIN_PHASE_OFFSET", FORMAT_R32G32_F)
+	INPUT_ELEM(PARTICLES, "SIN_PHASE_OFFSET", FORMAT_R32G32_F) \
+	\
+	INPUT_ELEM(DDW_TRIANGLE, "VERTEX_A", FORMAT_R32G32_F) \
+	INPUT_ELEM(DDW_TRIANGLE, "VERTEX_B", FORMAT_R32G32_F) \
+	INPUT_ELEM(DDW_TRIANGLE, "VERTEX_C", FORMAT_R32G32_F) \
+	INPUT_ELEM(DDW_TRIANGLE, "COLOR",    FORMAT_R32G32B32A32_F) \
+	\
+	INPUT_ELEM(DDW_LINE, "START",   FORMAT_R32G32_F) \
+	INPUT_ELEM(DDW_LINE, "END",     FORMAT_R32G32_F) \
+	INPUT_ELEM(DDW_LINE, "COLOR",   FORMAT_R32G32B32A32_F)
 
 
 // XXX -- dirty hack but oh well

@@ -51,6 +51,7 @@ set(object_sources
 	dbrl.cpp
 	format.cpp
 	particles.cpp
+	pathfinding.cpp
 	platform_functions.cpp
 	draw_dx11.cpp
 	jfg_d3d11.cpp

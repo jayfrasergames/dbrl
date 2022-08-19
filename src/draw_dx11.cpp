@@ -41,6 +41,8 @@ static DX11_Vertex_Shader vertex_shader_for_instance_buffer(Instance_Buffer_ID i
 	case INSTANCE_BUFFER_WORLD_SPRITE: return DX11_VS_SPRITE_SHEET_RENDER;
 	case INSTANCE_BUFFER_WORLD_FONT:   return DX11_VS_SPRITE_SHEET_FONT;
 	case INSTANCE_BUFFER_PARTICLES:    return DX11_VS_PARTICLES;
+	case INSTANCE_BUFFER_DDW_TRIANGLE: return DX11_VS_DDW_TRIANGLE;
+	case INSTANCE_BUFFER_DDW_LINE:     return DX11_VS_DDW_LINE;
 	}
 	ASSERT(0);
 	return (DX11_Vertex_Shader)-1;
@@ -671,6 +673,48 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			dc->CSSetUnorderedAccessViews(0, ARRAY_SIZE(uavs), uavs, NULL);
 
 			dc->Dispatch(256*24 / 8, 256*24 / 8, 1);
+
+			break;
+		}
+
+		case RENDER_JOB_DDW_TRIANGLES: {
+
+			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_DDW_TRIANGLE]);
+			u32 stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_DDW_TRIANGLE].element_size;
+			u32 offset = 0;
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_DDW_TRIANGLE], &stride, &offset);
+
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &job->ddw_triangles.constants, sizeof(job->ddw_triangles.constants));
+			dc->Unmap(cb, 0);
+
+			dc->VSSetConstantBuffers(0, 1, &cb);
+			dc->VSSetShader(vs[DX11_VS_DDW_TRIANGLE], NULL, 0);
+
+			// XXX
+			D3D11_VIEWPORT fov_viewport = {};
+			fov_viewport.TopLeftX = 0;
+			fov_viewport.TopLeftY = 0;
+			fov_viewport.Width = 256*24;
+			fov_viewport.Height = 256*24;
+			fov_viewport.MinDepth = 0.0f;
+			fov_viewport.MaxDepth = 1.0f;
+
+			dc->RSSetViewports(1, &fov_viewport);
+			dc->RSSetState(renderer->rasterizer_state);
+
+			dc->PSSetConstantBuffers(0, 1, &cb);
+			dc->PSSetShader(ps[DX11_PS_DDW_TRIANGLE], NULL, 0);
+
+			dc->OMSetRenderTargets(1, &target_rtvs[job->ddw_triangles.output_tex_id], NULL);
+			dc->OMSetBlendState(NULL, NULL, 0xFFFFFFFF);
+
+			dc->DrawInstanced(3, job->ddw_triangles.count, 0, job->ddw_triangles.start);
 
 			break;
 		}

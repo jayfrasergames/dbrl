@@ -20,6 +20,7 @@
 #include "sprite_sheet.h"
 #include "card_render.h"
 #include "particles.h"
+#include "pathfinding.h"
 #include "physics.h"
 #include "console.h"
 #include "appearance.h"
@@ -6379,6 +6380,54 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		                    TARGET_TEXTURE_SPRITE_ID,
 		                    sprite_id,
 		                    v4(1.0f, 0.0f, 0.0f, 1.0f));
+	}
+
+	// debug draw world
+	if (program->program_input_state_stack.peek() == GIS_NONE) {
+		Dijkstra_Map map;
+		Map_Cache_Bool can_pass = {};
+
+		auto player = get_player(&program->game);
+		for (u32 y = 0; y < 256; ++y) {
+			for (u32 x = 0; x < 256; ++x) {
+				Pos p = Pos(x, y);
+				if (is_pos_passable(&program->game, p, player->movement_type)) {
+					can_pass.set(p);
+				}
+			}
+		}
+
+		calc_dijkstra_map(&can_pass, player->pos, &map);
+		debug_draw_dijkstra_map(&map);
+
+		v2 world_tl = screen_pos_to_world_pos(&program->draw->camera,
+						screen_size,
+						v2_u32(0, 0));
+		v2 world_br = screen_pos_to_world_pos(&program->draw->camera,
+						screen_size,
+						screen_size);
+		Debug_Draw_World_Constant_Buffer constants = {};
+		constants.zoom = v2(256.0f, 256.0f);
+		constants.center = v2(-128.0f, -128.0f);
+		// constants.center = program->draw->camera.world_center + program->draw->camera.offset;
+
+
+
+		Render_Job job = {};
+		job.type = RENDER_JOB_DDW_TRIANGLES;
+		job.ddw_triangles.output_tex_id = TARGET_TEXTURE_WORLD_COMPOSITE;
+		job.ddw_triangles.constants = constants;
+		job.ddw_triangles.start = 0;
+		job.ddw_triangles.count = program->draw->debug_draw_world.triangles.len;
+
+		// XXX - memcpy to the instance buffer for now
+		/*
+		memcpy(program->render->render_job_buffer.instance_buffers[INSTANCE_BUFFER_DDW_TRIANGLE].base,
+		       program->draw->debug_draw_world.triangles.items,
+		       sizeof(program->draw->debug_draw_world.triangles.items[0]) * job.ddw_triangles.count);
+
+		push(&program->render->render_job_buffer, job);
+		*/
 	}
 
 	// pixel art upsample

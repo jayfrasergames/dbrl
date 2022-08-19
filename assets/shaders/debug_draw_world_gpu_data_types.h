@@ -11,19 +11,19 @@ struct Debug_Draw_World_Constant_Buffer
 
 struct Debug_Draw_World_Triangle
 {
-	F2 a;
-	F2 b;
+	F2 a        SEMANTIC_NAME(VERTEX_A);
+	F2 b        SEMANTIC_NAME(VERTEX_B);
 
-	F2 c;
-	F4 color; // Nvidia will be upset :(
+	F2 c        SEMANTIC_NAME(VERTEX_C);
+	F4 color    SEMANTIC_NAME(COLOR); // Nvidia will be upset :(
 };
 
 struct Debug_Draw_World_Line
 {
-	F2 start;
-	F2 end;
+	F2 start  SEMANTIC_NAME(START);
+	F2 end    SEMANTIC_NAME(END);
 
-	F4 color;
+	F4 color  SEMANTIC_NAME(COLOR);
 };
 
 #endif

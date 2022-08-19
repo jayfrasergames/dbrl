@@ -345,6 +345,7 @@ void game_loop(void *uncast_args)
 	DX11_Renderer dx11_renderer = {};	
 	// TODO -- should probably post a quit message along with exiting!!!
 	if (init(&dx11_renderer, &renderer, &d3d11_log, &draw_data, window) != JFG_SUCCESS) {
+		MessageBox(window, d3d11_log.buffer, "DBRL", MB_OK);
 		return;
 	}
 

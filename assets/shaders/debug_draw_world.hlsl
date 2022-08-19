@@ -9,8 +9,6 @@ cbuffer debug_draw_world_contants : register(b0)
 // ==============================================================================
 // Triangles
 
-StructuredBuffer<Debug_Draw_World_Triangle> triangles : register(t0);
-
 struct VS_Triangle_Output
 {
 	float4 pos   : SV_Position;
@@ -27,18 +25,16 @@ struct PS_Triangle_Output
 	float4 color : SV_Target0;
 };
 
-VS_Triangle_Output vs_triangle(uint vid : SV_VertexID, uint iid : SV_InstanceID)
+VS_Triangle_Output vs_triangle(uint vid : SV_VertexID, Debug_Draw_World_Triangle instance)
 {
 	VS_Triangle_Output output;
-
-	Debug_Draw_World_Triangle t = triangles[iid];
 
 	float2 pos = float2(0.0f, 0.0f);
 
 	switch (vid) {
-	case 0: pos = t.a; break;
-	case 1: pos = t.b; break;
-	case 2: pos = t.c; break;
+	case 0: pos = instance.a; break;
+	case 1: pos = instance.b; break;
+	case 2: pos = instance.c; break;
 	}
 
 	pos += constants.center;
@@ -48,7 +44,7 @@ VS_Triangle_Output vs_triangle(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 	// pos.x *= -1.0f;
 
 	output.pos   = float4(pos, 0.0f, 1.0f);
-	output.color = t.color;
+	output.color = instance.color;
 
 	return output;
 }
@@ -64,8 +60,6 @@ PS_Triangle_Output ps_triangle(VS_Triangle_Output input)
 
 // ==============================================================================
 // Lines
-
-StructuredBuffer<Debug_Draw_World_Line> lines : register(t0);
 
 struct VS_Line_Output
 {
@@ -83,17 +77,15 @@ struct PS_Line_Output
 	float4 color : SV_Target0;
 };
 
-VS_Line_Output vs_line(uint vid : SV_VertexID, uint iid : SV_InstanceID)
+VS_Line_Output vs_line(uint vid : SV_VertexID, Debug_Draw_World_Line instance)
 {
 	VS_Line_Output output;
-
-	Debug_Draw_World_Line l = lines[iid];
 
 	float2 pos = float2(0.0f, 0.0f);
 
 	switch (vid) {
-	case 0: pos = l.start; break;
-	case 1: pos = l.end;   break;
+	case 0: pos = instance.start; break;
+	case 1: pos = instance.end;   break;
 	}
 
 	pos += constants.center;
@@ -103,7 +95,7 @@ VS_Line_Output vs_line(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 	// pos.x *= -1.0f;
 
 	output.pos   = float4(pos, 0.0f, 1.0f);
-	output.color = l.color;
+	output.color = instance.color;
 
 	return output;
 }
