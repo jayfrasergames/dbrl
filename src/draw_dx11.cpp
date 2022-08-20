@@ -719,6 +719,48 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 			break;
 		}
 
+		case RENDER_JOB_DDW_LINES: {
+
+			dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+			dc->IASetInputLayout(renderer->input_layouts[INSTANCE_BUFFER_DDW_LINE]);
+			u32 stride = INSTANCE_BUFFER_METADATA[INSTANCE_BUFFER_DDW_LINE].element_size;
+			u32 offset = 0;
+			dc->IASetVertexBuffers(0, 1, &renderer->instance_buffers[INSTANCE_BUFFER_DDW_LINE], &stride, &offset);
+
+			ASSERT(cur_cb < MAX_CONSTANT_BUFFERS);
+			D3D11_MAPPED_SUBRESOURCE mapped_res = {};
+			ID3D11Buffer *cb = cbs[cur_cb++];
+			hr = dc->Map(cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_res);
+			ASSERT(SUCCEEDED(hr));
+			memcpy(mapped_res.pData, &job->ddw_lines.constants, sizeof(job->ddw_lines.constants));
+			dc->Unmap(cb, 0);
+
+			dc->VSSetConstantBuffers(0, 1, &cb);
+			dc->VSSetShader(vs[DX11_VS_DDW_LINE], NULL, 0);
+
+			// XXX
+			D3D11_VIEWPORT fov_viewport = {};
+			fov_viewport.TopLeftX = 0;
+			fov_viewport.TopLeftY = 0;
+			fov_viewport.Width = 256*24;
+			fov_viewport.Height = 256*24;
+			fov_viewport.MinDepth = 0.0f;
+			fov_viewport.MaxDepth = 1.0f;
+
+			dc->RSSetViewports(1, &fov_viewport);
+			dc->RSSetState(renderer->rasterizer_state);
+
+			dc->PSSetConstantBuffers(0, 1, &cb);
+			dc->PSSetShader(ps[DX11_PS_DDW_LINE], NULL, 0);
+
+			dc->OMSetRenderTargets(1, &target_rtvs[job->ddw_lines.output_tex_id], NULL);
+			dc->OMSetBlendState(NULL, NULL, 0xFFFFFFFF);
+
+			dc->DrawInstanced(3, job->ddw_lines.count, 0, job->ddw_lines.start);
+
+			break;
+		}
+
 		case RENDER_JOB_WORLD_HIGHLIGHT_SPRITE_ID: {
 
 			Sprite_Sheet_Highlight_Constant_Buffer constants = {};
@@ -769,26 +811,10 @@ void draw(DX11_Renderer* renderer, Draw* draw, Render* render)
 		case RENDER_JOB_XXX_FLUSH_OLD_RENDERER: {
 			uda->BeginEvent(L"Old renderer (compositing)");
 
-			v2 world_tl = screen_pos_to_world_pos(&draw->camera,
-							screen_size,
-							{ 0, 0 });
-			v2 world_br = screen_pos_to_world_pos(&draw->camera,
-							screen_size,
-							screen_size);
-
 			card_render_d3d11_draw(&draw->card_render,
 					dc,
 					screen_size,
 					renderer->output_rtv);
-			// debug_line_d3d11_draw(&draw->card_debug_line, dc, renderer->output_rtv);
-
-			v2 debug_zoom = (v2)(world_br - world_tl) / 24.0f;
-			debug_draw_world_d3d11_draw(&draw->debug_draw_world,
-						dc,
-						renderer->output_rtv,
-						draw->camera.world_center + draw->camera.offset,
-						debug_zoom);
-
 
 			dc->ClearState();
 
@@ -828,20 +854,8 @@ static bool program_d3d11_init(Draw* draw, ID3D11Device* device)
 		goto error_init_card_render;
 	}
 
-	if (!debug_line_d3d11_init(&draw->card_debug_line, device)) {
-		goto error_init_debug_line;
-	}
-
-	if (!debug_draw_world_d3d11_init(&draw->debug_draw_world, device)) {
-		goto error_init_debug_draw_world;
-	}
-
 	return true;
 
-	debug_draw_world_d3d11_free(&draw->debug_draw_world);
-error_init_debug_draw_world:
-	debug_line_d3d11_free(&draw->card_debug_line);
-error_init_debug_line:
 	card_render_d3d11_free(&draw->card_render);
 error_init_card_render:
 	return false;

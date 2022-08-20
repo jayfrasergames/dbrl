@@ -60,7 +60,8 @@ void debug_draw_dijkstra_map(Dijkstra_Map* _map)
 				for (u32 x2 = x - 1; x2 <= x + 1; ++x2) {
 					Pos q = Pos(x2, y2);
 					if (map[p] && map[q] == map[p] - 1) {
-						debug_draw_world_arrow((v2)p, (v2)q);
+						debug_draw_world_arrow((v2)p, (v2)q, 0.25f);
+						// debug_draw_world_line((v2)p, (v2)q);
 					}
 				}
 			}

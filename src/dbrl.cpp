@@ -6409,9 +6409,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		Debug_Draw_World_Constant_Buffer constants = {};
 		constants.zoom = v2(256.0f, 256.0f);
 		constants.center = v2(-128.0f, -128.0f);
-		// constants.center = program->draw->camera.world_center + program->draw->camera.offset;
-
-
 
 		Render_Job job = {};
 		job.type = RENDER_JOB_DDW_TRIANGLES;
@@ -6421,13 +6418,25 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		job.ddw_triangles.count = program->draw->debug_draw_world.triangles.len;
 
 		// XXX - memcpy to the instance buffer for now
-		/*
 		memcpy(program->render->render_job_buffer.instance_buffers[INSTANCE_BUFFER_DDW_TRIANGLE].base,
 		       program->draw->debug_draw_world.triangles.items,
 		       sizeof(program->draw->debug_draw_world.triangles.items[0]) * job.ddw_triangles.count);
 
 		push(&program->render->render_job_buffer, job);
-		*/
+
+		// XXX - same thing
+		Render_Job lines_job = {};
+		lines_job.type = RENDER_JOB_DDW_LINES;
+		lines_job.ddw_lines.output_tex_id = TARGET_TEXTURE_WORLD_COMPOSITE;
+		lines_job.ddw_lines.constants = constants;
+		lines_job.ddw_lines.start = 0;
+		lines_job.ddw_lines.count = program->draw->debug_draw_world.lines.len;
+
+		memcpy(program->render->render_job_buffer.instance_buffers[INSTANCE_BUFFER_DDW_LINE].base,
+		       program->draw->debug_draw_world.lines.items,
+		       sizeof(program->draw->debug_draw_world.lines.items[0]) * lines_job.ddw_lines.count);
+
+		push(&program->render->render_job_buffer, lines_job);
 	}
 
 	// pixel art upsample
