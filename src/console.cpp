@@ -72,6 +72,21 @@ static int l_print(lua_State* lua_state)
 	return 0;
 }
 
+static int l_write_log(lua_State* lua_state)
+{
+	i32 num_args = lua_gettop(lua_state);
+	if (num_args != 1) {
+		return luaL_error(lua_state, "Lua function 'write_log_to_file' expected 1 arguments, got %d!", num_args);
+	}
+	auto console = (Console*)lua_touserdata(lua_state, lua_upvalueindex(1));
+
+	auto filename = luaL_checkstring(lua_state, 1);
+
+	write_to_file(&console->log, filename);
+
+	return 0;
+}
+
 void init(Console* console, v2_u32 size, lua_State* lua_state)
 {
 	memset(console, 0, sizeof(*console));
@@ -87,6 +102,10 @@ void init(Console* console, v2_u32 size, lua_State* lua_state)
 	lua_pushlightuserdata(lua_state, console);
 	lua_pushcclosure(lua_state, l_print, 1);
 	lua_setglobal(lua_state, "print");
+
+	lua_pushlightuserdata(lua_state, console);
+	lua_pushcclosure(lua_state, l_write_log, 1);
+	lua_setglobal(lua_state, "write_log_to_file");
 }
 
 bool handle_input(Console* console, Input* input)

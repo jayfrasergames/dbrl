@@ -194,56 +194,74 @@ static void cellular_automata(Map_Cache_Bool* map, v2_u32* out_size, f32 wall_ch
 	Map_Cache_Bool best_map = {};
 	log("================================================================================");
 	do {
-		map->reset();
+		Map_Cache_Bool tmp1 = {};
+		Map_Cache_Bool tmp2 = {};
+		Map_Cache_Bool *front = &tmp1;
+		Map_Cache_Bool *back = &tmp2;
+		front->reset();
+		back->reset();
 		for (u32 x = 0; x < size.w; ++x) {
-			map->set(Pos(x,          0));
-			map->set(Pos(x, size.h - 1));
+			front->set(Pos(x,          0));
+			front->set(Pos(x, size.h - 1));
 		}
 		for (u32 y = 0; y < size.h; ++y) {
-			map->set(Pos(         0, y));
-			map->set(Pos(size.w - 1, y));
+			front->set(Pos(         0, y));
+			front->set(Pos(size.w - 1, y));
 		}
 
 		for (u32 y = 1; y < size.h - 1; ++y) {
 			for (u32 x = 1; x < size.w - 1; ++x) {
 				if (rand_f32() > wall_chance) {
-					map->set(Pos(x, y));
+					front->set(Pos(x, y));
 				}
 			}
 		}
 
+		memcpy(back, front, sizeof(*back));
+
 		for (u32 i = 0; i < num_iters; ++i) {
+			log("--------------------------------------------------------------------------------");
+			log_map(front, size);
 			for (u32 y = 1; y < size.h - 1; ++y) {
 				for (u32 x = 1; x < size.w - 1; ++x) {
 					u32 wall_count = 0;
-					if (map->get(Pos(x - 1, y - 1))) { ++wall_count; }
-					if (map->get(Pos(    x, y - 1))) { ++wall_count; }
-					if (map->get(Pos(x + 1, y - 1))) { ++wall_count; }
-					if (map->get(Pos(x - 1,     y))) { ++wall_count; }
-					if (map->get(Pos(x + 1,     y))) { ++wall_count; }
-					if (map->get(Pos(x - 1, y + 1))) { ++wall_count; }
-					if (map->get(Pos(    x, y + 1))) { ++wall_count; }
-					if (map->get(Pos(x + 1, y + 1))) { ++wall_count; }
+					if (front->get(Pos(x - 1, y - 1))) { ++wall_count; }
+					if (front->get(Pos(    x, y - 1))) { ++wall_count; }
+					if (front->get(Pos(x + 1, y - 1))) { ++wall_count; }
+					if (front->get(Pos(x - 1,     y))) { ++wall_count; }
+					if (front->get(Pos(x + 1,     y))) { ++wall_count; }
+					if (front->get(Pos(x - 1, y + 1))) { ++wall_count; }
+					if (front->get(Pos(    x, y + 1))) { ++wall_count; }
+					if (front->get(Pos(x + 1, y + 1))) { ++wall_count; }
 
-					if (map->get(Pos(x, y))) {
+					if (front->get(Pos(x, y))) {
 						if (wall_count < remain_wall_count) {
-							map->unset(Pos(x, y));
+							back->unset(Pos(x, y));
+						} else {
+							back->set(Pos(x, y));
 						}
 					} else {
 						if (wall_count >= become_wall_count) {
-							map->set(Pos(x, y));
+							back->set(Pos(x, y));
+						} else {
+							back->unset(Pos(x, y));
 						}
 					}
 				}
 			}
+			auto tmp = front;
+			front = back;
+			back = tmp;
 		}
+		log("--------------------------------------------------------------------------------");
+		log_map(front, size);
 
-		biggest_connected_component(map, size);
+		biggest_connected_component(front, size);
 
 		f32 num_floors = 0.0f;
 		for (u32 y = 1; y < size.h - 1; ++y) {
 			for (u32 x = 1; x < size.w - 1; ++x) {
-				if (!map->get(Pos(x, y))) {
+				if (!front->get(Pos(x, y))) {
 					++num_floors;
 				}
 			}
@@ -252,7 +270,7 @@ static void cellular_automata(Map_Cache_Bool* map, v2_u32* out_size, f32 wall_ch
 		logf("attempt %u, area=%f, min_area=%f", max_attempts, area, minimum_area);
 		if (area > best_area) {
 			best_area = area;
-			memcpy(&best_map, map, sizeof(best_map));
+			memcpy(&best_map, front, sizeof(best_map));
 		}
 	} while (area < minimum_area && --max_attempts);
 

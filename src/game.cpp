@@ -23,6 +23,15 @@ Message_Handler* add_message_handler(Game* game)
 	return handler;
 }
 
+Card* add_card(Game* game, Card_Appearance appearance)
+{
+	// XXX -- for now add the card to the discard pile
+	auto card = game->card_state.discard.append();
+	card->id = game->next_card_id++;
+	card->appearance = appearance;
+	return card;
+}
+
 void init(Game* game)
 {
 	memset(game, 0, sizeof(*game));
@@ -354,104 +363,91 @@ static Entity_ID lich_get_skeleton_to_heal(Game *game, Controller *controller)
 	return best_skeleton_id;
 }
 
+static void bump_attack_player_if_adjacent(Game* game, Entity_ID entity_id, Output_Buffer<Action> attacks, Action_Type bump_attack_type = ACTION_BUMP_ATTACK)
+{
+	auto player = get_player(game);
+
+	Entity *entity = game_get_entity_by_id(game, entity_id);
+	if (positions_are_adjacent(player->pos, entity->pos)) {
+		Action bump = {};
+		bump.type = bump_attack_type;
+		bump.entity_id = entity_id;
+		bump.bump_attack.target_id = player->id;
+		attacks.append(bump);
+	}
+}
 
 void make_bump_attacks(Controller* c, Game* game, Output_Buffer<Action> attacks)
 {
-	auto player = get_player(game);
-	auto player_id = player->id;
-	auto player_pos = player->pos;
-
 	switch (c->type) {
 	case CONTROLLER_PLAYER:
 		if (c->player.action.type == ACTION_BUMP_ATTACK) {
 			attacks.append(c->player.action);
-			// entity_has_acted[player_id] = true;
 		}
 		break;
 	case CONTROLLER_SLIME: {
-		Entity *slime = game_get_entity_by_id(game, c->slime.entity_id);
-		if (positions_are_adjacent(player_pos, slime->pos)) {
-			Action bump = {};
-			bump.type = ACTION_BUMP_ATTACK;
-			bump.bump_attack.attacker_id = slime->id;
-			bump.bump_attack.target_id = player_id;
-			attacks.append(bump);
-			// entity_has_acted[slime->id] = true;
-		}
+		bump_attack_player_if_adjacent(game, c->slime.entity_id, attacks);
 		break;
 	}
 	case CONTROLLER_LICH: {
 		u32 num_skeletons = c->lich.skeleton_ids.len;
 		for (u32 i = 0; i < num_skeletons; ++i) {
-			Entity *skeleton = game_get_entity_by_id(game, c->lich.skeleton_ids[i]);
-			if (positions_are_adjacent(player_pos, skeleton->pos)) {
-				Action bump = {};
-				bump.type = ACTION_BUMP_ATTACK;
-				bump.entity_id = skeleton->id;
-				bump.bump_attack.attacker_id = skeleton->id;
-				bump.bump_attack.target_id = player_id;
-				attacks.append(bump);
-				// entity_has_acted[skeleton->id] = true;
-			}
+			bump_attack_player_if_adjacent(game, c->lich.skeleton_ids[i], attacks);
 		}
 		break;
 	}
 	case CONTROLLER_SPIDER_NORMAL: {
-		auto spider_id = c->spider_normal.entity_id;
-		auto spider = game_get_entity_by_id(game, spider_id);
-		if (positions_are_adjacent(player_pos, spider->pos)) {
-			Action bump = {};
-			bump.type = ACTION_BUMP_ATTACK;
-			bump.entity_id = spider_id;
-			bump.bump_attack.attacker_id = spider_id;
-			bump.bump_attack.target_id = player_id;
-			attacks.append(bump);
-		}
+		bump_attack_player_if_adjacent(game, c->spider_normal.entity_id, attacks);
 		break;
 	}
 	case CONTROLLER_SPIDER_WEB: {
-		auto spider_id = c->spider_web.entity_id;
-		auto spider = game_get_entity_by_id(game, spider_id);
-		if (positions_are_adjacent(player_pos, spider->pos)) {
-			Action bump = {};
-			bump.type = ACTION_BUMP_ATTACK;
-			bump.entity_id = spider_id;
-			bump.bump_attack.attacker_id = spider_id;
-			bump.bump_attack.target_id = player_id;
-			attacks.append(bump);
-		}
+		bump_attack_player_if_adjacent(game, c->spider_web.entity_id, attacks);
 		break;
 	}
 	case CONTROLLER_SPIDER_POISON: {
-		auto spider_id = c->spider_poison.entity_id;
-		auto spider = game_get_entity_by_id(game, spider_id);
-		if (positions_are_adjacent(player_pos, spider->pos)) {
-			Action bump = {};
-			bump.type = ACTION_BUMP_ATTACK;
-			bump.entity_id = spider_id;
-			bump.bump_attack.attacker_id = spider_id;
-			bump.bump_attack.target_id = player_id;
-			attacks.append(bump);
-		}
+		bump_attack_player_if_adjacent(game, c->spider_poison.entity_id, attacks, ACTION_BUMP_ATTACK_POISON);
 		break;
 	}
 	case CONTROLLER_SPIDER_SHADOW: {
-		auto spider_id = c->spider_shadow.entity_id;
-		auto spider = game_get_entity_by_id(game, spider_id);
-		if (positions_are_adjacent(player_pos, spider->pos)) {
-			Action bump = {};
-			bump.type = ACTION_BUMP_ATTACK;
-			bump.entity_id = spider_id;
-			bump.bump_attack.attacker_id = spider_id;
-			bump.bump_attack.target_id = player_id;
-			attacks.append(bump);
-		}
+		bump_attack_player_if_adjacent(game, c->spider_shadow.entity_id, attacks);
 		break;
 	}
 
 	case CONTROLLER_RANDOM_MOVE:
 	case CONTROLLER_DRAGON:
 		break;
+	}
+}
+
+static void move_toward_player(Game* game, Entity_ID entity_id, Output_Buffer<Potential_Move> potential_moves)
+{
+	auto entity = game_get_entity_by_id(game, entity_id);
+	auto player = get_player(game);
+
+	v2_i16 spider_pos = (v2_i16)entity->pos;
+	v2_i16 player_pos = (v2_i16)player->pos;
+	v2_i16 d = player_pos - spider_pos;
+	u32 cur_dist_squared = d.x*d.x + d.y*d.y;
+
+	auto &tiles = game->tiles;
+	for (i16 dy = -1; dy <= 1; ++dy) {
+		for (i16 dx = -1; dx <= 1; ++dx) {
+			if (!dx && !dy) {
+				continue;
+			}
+			v2_i16 end = spider_pos + v2_i16(dx, dy);
+			d = player_pos - end;
+			Tile t = tiles[(Pos)end];
+			if (d.x*d.x + d.y*d.y <= cur_dist_squared
+				&& tile_is_passable(t, entity->movement_type)) {
+				Potential_Move pm = {};
+				pm.entity_id = entity_id;
+				pm.start = (Pos)spider_pos;
+				pm.end = (Pos)end;
+				pm.weight = uniform_f32(1.9f, 2.1f);
+				potential_moves.append(pm);
+			}
+		}
 	}
 }
 
@@ -583,38 +579,17 @@ void make_moves(Controller* c, Game* game, Output_Buffer<Potential_Move> potenti
 
 	case CONTROLLER_SPIDER_NORMAL: {
 		auto spider_id = c->spider_normal.entity_id;
-		auto spider = game_get_entity_by_id(game, spider_id);
-		auto player = get_player(game);
+		move_toward_player(game, spider_id, potential_moves);
+		break;
+	}
 
-		v2_i16 spider_pos = (v2_i16)spider->pos;
-		v2_i16 player_pos = (v2_i16)player->pos;
-		v2_i16 d = player_pos - spider_pos;
-		u32 cur_dist_squared = d.x*d.x + d.y*d.y;
-
-		for (i16 dy = -1; dy <= 1; ++dy) {
-			for (i16 dx = -1; dx <= 1; ++dx) {
-				if (!dx && !dy) {
-					continue;
-				}
-				v2_i16 end = spider_pos + v2_i16(dx, dy);
-				d = player_pos - end;
-				Tile t = tiles[(Pos)end];
-				if (d.x*d.x + d.y*d.y <= cur_dist_squared
-				 && tile_is_passable(t, spider->movement_type)) {
-					Potential_Move pm = {};
-					pm.entity_id = spider_id;
-					pm.start = (Pos)spider_pos;
-					pm.end = (Pos)end;
-					pm.weight = uniform_f32(1.9f, 2.1f);
-					potential_moves.append(pm);
-				}
-			}
-		}
+	case CONTROLLER_SPIDER_POISON: {
+		auto spider_id = c->spider_poison.entity_id;
+		move_toward_player(game, spider_id, potential_moves);
 		break;
 	}
 
 	case CONTROLLER_SPIDER_WEB:
-	case CONTROLLER_SPIDER_POISON:
 	case CONTROLLER_SPIDER_SHADOW:
 		break;
 
@@ -659,7 +634,6 @@ void make_actions(Controller* c, Game* game, Slice<bool> has_acted, Output_Buffe
 			Action a = {};
 			a.type = ACTION_HEAL;
 			a.entity_id = c->lich.lich_id;
-			a.heal.caster_id = c->lich.lich_id;
 			a.heal.target_id = skeleton_to_heal;
 			a.heal.amount = 5;
 			actions.append(a);

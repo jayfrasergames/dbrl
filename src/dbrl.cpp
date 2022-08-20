@@ -85,6 +85,7 @@ enum Event_Type
 	EVENT_SHOOT_WEB_HIT,
 	EVENT_CREATURE_DROP_IN,
 	EVENT_ADD_CREATURE,
+	EVENT_ADD_CARD_TO_DISCARD,
 };
 
 struct Event
@@ -98,7 +99,9 @@ struct Event
 		} move;
 		struct {
 			Entity_ID attacker_id;
-			Pos start, end;
+			Pos       start;
+			Pos       end;
+			Sound_ID  sound;
 		} bump_attack;
 		struct {
 			Entity_ID  door_id;
@@ -200,6 +203,11 @@ struct Event
 			Appearance appearance;
 			v2         pos;
 		} add_creature;
+		struct {
+			Entity_ID       entity_id;
+			Card_ID         card_id;
+			Card_Appearance appearance;
+		} add_card_to_discard;
 	};
 };
 
@@ -739,6 +747,8 @@ enum Transaction_Type
 	TRANSACTION_MOVE_ENTER,
 	TRANSACTION_BUMP_ATTACK,
 	TRANSACTION_BUMP_ATTACK_CONNECT,
+	TRANSACTION_BUMP_ATTACK_POISON,
+	TRANSACTION_BUMP_ATTACK_POISON_CONNECT,
 	TRANSACTION_OPEN_DOOR,
 	TRANSACTION_DROP_TILE,
 	TRANSACTION_FIREBALL_SHOT,
@@ -1312,6 +1322,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		Action action = actions[i];
 		switch (action.type) {
 		case ACTION_BUMP_ATTACK:
+		case ACTION_BUMP_ATTACK_POISON:
 			bump_attack_delay = constants.anims.bump_attack.duration / 2.0f;
 			break;
 		}
@@ -1330,7 +1341,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			Transaction t = {};
 			t.type = TRANSACTION_MOVE_EXIT;
 			t.start_time = bump_attack_delay;
-			t.move.entity_id = action.move.entity_id;
+			t.move.entity_id = action.entity_id;
 			t.move.start = action.move.start;
 			t.move.end = action.move.end;
 			transactions.append(t);
@@ -1340,7 +1351,16 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			Transaction t = {};
 			t.type = TRANSACTION_BUMP_ATTACK;
 			t.start_time = 0.0f;
-			t.bump_attack.attacker_id = action.bump_attack.attacker_id;
+			t.bump_attack.attacker_id = action.entity_id;
+			t.bump_attack.target_id = action.bump_attack.target_id;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_BUMP_ATTACK_POISON: {
+			Transaction t = {};
+			t.type = TRANSACTION_BUMP_ATTACK_POISON;
+			t.start_time = 0.0f;
+			t.bump_attack.attacker_id = action.entity_id;
 			t.bump_attack.target_id = action.bump_attack.target_id;
 			transactions.append(t);
 			break;
@@ -1349,7 +1369,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			Transaction t = {};
 			t.type = TRANSACTION_OPEN_DOOR;
 			t.start_time = bump_attack_delay;
-			t.open_door.entity_id = action.open_door.entity_id;
+			t.open_door.entity_id = action.entity_id;
 			t.open_door.door_id = action.open_door.door_id;
 			transactions.append(t);
 			break;
@@ -1376,7 +1396,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			Transaction t = {};
 			t.type = TRANSACTION_BLINK_CAST;
 			t.start_time = bump_attack_delay;
-			t.blink.caster_id = action.blink.caster;
+			t.blink.caster_id = action.entity_id;
 			t.blink.target = action.blink.target;
 			transactions.append(t);
 			break;
@@ -1393,7 +1413,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			Transaction t = {};
 			t.type = TRANSACTION_FIRE_BOLT_CAST;
 			t.start_time = bump_attack_delay;
-			t.fire_bolt.caster_id = action.fire_bolt.caster_id;
+			t.fire_bolt.caster_id = action.entity_id;
 			t.fire_bolt.target_id = action.fire_bolt.target_id;
 			transactions.append(t);
 			break;
@@ -1402,7 +1422,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			Transaction t = {};
 			t.type = TRANSACTION_HEAL_CAST;
 			t.start_time = bump_attack_delay;
-			t.heal.caster_id = action.heal.caster_id;
+			t.heal.caster_id = action.entity_id;
 			t.heal.target_id = action.heal.target_id;
 			t.heal.amount = action.heal.amount;
 			transactions.append(t);
@@ -1412,7 +1432,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			Transaction t = {};
 			t.type = TRANSACTION_LIGHTNING_CAST;
 			t.start_time = bump_attack_delay;
-			t.lightning.caster_id = action.lightning.caster_id;
+			t.lightning.caster_id = action.entity_id;
 			t.lightning.start = action.lightning.start;
 			t.lightning.end = action.lightning.end;
 			transactions.append(t);
@@ -1994,7 +2014,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				break;
 			}
 
-			case TRANSACTION_BUMP_ATTACK: {
+			case TRANSACTION_BUMP_ATTACK:
+			case TRANSACTION_BUMP_ATTACK_POISON: {
 				// TODO -- move_pre_exit message
 				//         move_post_exit message
 
@@ -2005,7 +2026,17 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 					break;
 				}
 
-				t->type = TRANSACTION_BUMP_ATTACK_CONNECT;
+				switch (t->type) {
+				case TRANSACTION_BUMP_ATTACK:
+					t->type = TRANSACTION_BUMP_ATTACK_CONNECT;
+					break;
+				case TRANSACTION_BUMP_ATTACK_POISON:
+					t->type = TRANSACTION_BUMP_ATTACK_POISON_CONNECT;
+					break;
+				default:
+					ASSERT(0);
+					break;
+				}
 				t->start_time += constants.anims.bump_attack.duration / 2.0f;
 				t->bump_attack.start = attacker->pos;
 				t->bump_attack.end = target->pos;
@@ -2032,13 +2063,61 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 				Event event = {};
 				event.type = EVENT_BUMP_ATTACK;
+				// XXX - yuck
+				event.time = time - constants.anims.bump_attack.duration / 2.0f;
 				event.bump_attack.attacker_id = t->bump_attack.attacker_id;
 				event.bump_attack.start = t->bump_attack.start;
 				event.bump_attack.end = t->bump_attack.end;
+				Sound_ID sounds[] = { SOUND_PUNCH_1_1, SOUND_PUNCH_1_2, SOUND_PUNCH_2_1, SOUND_PUNCH_2_2 };
+				u32 idx = rand_u32() % ARRAY_SIZE(sounds);
+				event.bump_attack.sound = sounds[idx];
 				events.append(event);
 
 				break;
 			}
+
+			case TRANSACTION_BUMP_ATTACK_POISON_CONNECT: {
+				// TODO -- move_pre_enter message
+				//         move_post_enter message
+				t->type = TRANSACTION_REMOVE;
+
+				Entity *attacker = game_get_entity_by_id(game, t->bump_attack.attacker_id);
+				Entity *target = game_get_entity_by_id(game, t->bump_attack.target_id);
+				if (!attacker || !target) {
+					break;
+				}
+
+				Entity_Damage damage = {};
+				damage.entity_id = t->bump_attack.target_id;
+				damage.damage = 1;
+				damage.pos = (v2)t->bump_attack.end;
+				entity_damage.append(damage);
+
+				Event event = {};
+				event.type = EVENT_BUMP_ATTACK;
+				// XXX - yuck
+				event.time = time - constants.anims.bump_attack.duration / 2.0f;
+				event.bump_attack.attacker_id = t->bump_attack.attacker_id;
+				event.bump_attack.start = t->bump_attack.start;
+				event.bump_attack.end = t->bump_attack.end;
+				event.bump_attack.sound = SOUND_STAB_1_2;
+				events.append(event);
+
+				auto player = get_player(game);
+				if (target->id == player->id) {
+					auto poison_card = add_card(game, CARD_APPEARANCE_POISON);
+					Event add_card_event = {};
+					event.type = EVENT_ADD_CARD_TO_DISCARD;
+					event.time = time;
+					event.add_card_to_discard.entity_id = player->id;
+					event.add_card_to_discard.card_id = poison_card->id;
+					event.add_card_to_discard.appearance = poison_card->appearance;
+					events.append(event);
+				}
+
+				break;
+			}
+
 
 			case TRANSACTION_OPEN_DOOR: {
 				t->type = TRANSACTION_REMOVE;
@@ -2675,9 +2754,8 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 
 		if (!entity_has_acted[pm.entity_id]) {
 			Action chosen_move = {};
-			chosen_move.entity_id = pm.entity_id;
 			chosen_move.type = ACTION_MOVE;
-			chosen_move.move.entity_id = pm.entity_id;
+			chosen_move.entity_id = pm.entity_id;
 			chosen_move.move.start = pm.start;
 			chosen_move.move.end = pm.end;
 			actions.append(chosen_move);
@@ -2734,25 +2812,6 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 #endif
 
 	game_simulate_actions(game, actions, event_buffer);
-}
-// =============================================================================
-// turns
-
-// TODO -- need a "peek move resolve" function
-
-void peek_move_resolve(Slice<Action> moves)
-{
-	for (u32 i = 0; i < moves.len; ++i) {
-		Action a = moves[i];
-		ASSERT(a.type == ACTION_MOVE);
-		/*
-		if (will_resolve(a)) {
-			a.move.will_resolve = 1;
-		} else {
-			a.move.will_resolve = 0;
-		}
-		*/
-	}
 }
 
 // =============================================================================
@@ -2961,16 +3020,6 @@ u8 world_anim_is_animating(World_Anim_State *world_anim)
 	return 0;
 }
 
-void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Event_Buffer* event_buffer)
-{
-	u32 num_events = event_buffer->len;
-	Event_Buffer *dest = &world_anim->events_to_be_animated;
-	for (u32 i = 0; i < num_events; ++i) {
-		Event *cur_event = &event_buffer->items[i];
-		dest->append(*cur_event);
-	}
-}
-
 f32 angle_to_sprite_x_coord(f32 angle)
 {
 	angle /= PI_F32;
@@ -2985,415 +3034,6 @@ f32 angle_to_sprite_x_coord(f32 angle)
 	else if (angle <  0.875f) { x = 6.0f; }
 	else                      { x = 2.0f; }
 	return x;
-}
-
-void world_anim_animate_next_event_block(World_Anim_State* world_anim)
-{
-	u32 num_anims = world_anim->anims.len;
-	u32 event_idx = world_anim->event_buffer_idx;
-	u32 num_events = world_anim->events_to_be_animated.len;
-	Event *events = world_anim->events_to_be_animated.items;
-
-	if (event_idx >= num_events) {
-		return;
-	}
-
-	auto& anims = world_anim->anims;
-
-	while (event_idx < num_events) {
-		Event *event = &events[event_idx];
-		switch (event->type) {
-		case EVENT_MOVE: {
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->move.entity_id) {
-					anim->type = ANIM_MOVE;
-					anim->move.duration = constants.anims.move.duration;
-					anim->move.start_time = event->time;
-					anim->move.start.x = (f32)event->move.start.x;
-					anim->move.start.y = (f32)event->move.start.y;
-					anim->move.end.x   = (f32)event->move.end.x;
-					anim->move.end.y   = (f32)event->move.end.y;
-				}
-			}
-			break;
-		}
-		case EVENT_MOVE_BLOCKED:
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->move.entity_id) {
-					anim->type = ANIM_MOVE_BLOCKED;
-					anim->move.duration = constants.anims.move.duration;
-					anim->move.start_time = event->time;
-					anim->move.start.x = (f32)event->move.start.x;
-					anim->move.start.y = (f32)event->move.start.y;
-					anim->move.end.x   = (f32)event->move.end.x;
-					anim->move.end.y   = (f32)event->move.end.y;
-				}
-			}
-			break;
-		case EVENT_OPEN_DOOR: {
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->open_door.door_id) {
-					ASSERT(anim->type == ANIM_TILE_STATIC);
-					ASSERT(appearance_is_door(event->open_door.new_appearance));
-					anim->sprite_coords = appearance_get_door_sprite_coords(event->open_door.new_appearance);
-				}
-			}
-			Anim open_sound = {};
-			open_sound.type = ANIM_SOUND;
-			open_sound.sound.start_time = event->time;
-			open_sound.sound.sound_id = SOUND_FANTASY_GAME_DOOR_OPEN;
-			anims.append(open_sound);
-			break;
-		}
-		case EVENT_BUMP_ATTACK: {
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->bump_attack.attacker_id) {
-					anim->type = ANIM_MOVE_BLOCKED;
-					anim->move.duration = constants.anims.bump_attack.duration;
-					anim->move.start_time = event->time;
-					anim->move.start = (v2)event->bump_attack.start;
-					anim->move.end   = (v2)event->bump_attack.end;
-				}
-			}
-			Anim bump_sound = {};
-			bump_sound.type = ANIM_SOUND;
-			bump_sound.sound.start_time = event->time;
-			Sound_ID sounds[] = { SOUND_PUNCH_1_1, SOUND_PUNCH_1_2, SOUND_PUNCH_2_1, SOUND_PUNCH_2_2 };
-			u32 idx = rand_u32() % ARRAY_SIZE(sounds);
-			bump_sound.sound.sound_id = sounds[idx];
-			anims.append(bump_sound);
-			break;
-		}
-
-		case EVENT_CREATURE_DROP_IN: {
-			Anim drop_in = {};
-			drop_in.type = ANIM_CREATURE_DROP_IN;
-			drop_in.sprite_coords = appearance_get_creature_sprite_coords(event->creature_drop_in.appearance);
-			drop_in.world_coords = (v2)event->creature_drop_in.pos;
-			drop_in.depth_offset = constants.z_offsets.character;
-			drop_in.creature_drop_in.start_time = event->time;
-			drop_in.creature_drop_in.duration = constants.anims.creature_drop_in.duration;
-			anims.append(drop_in);
-
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_SPIDER_RUNNING_01_LOOP;
-			anims.append(sound);
-			break;
-		}
-
-		case EVENT_DROP_TILE: {
-			u32 tile_id = MAX_ENTITIES + pos_to_u16(event->drop_tile.pos);
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == tile_id) {
-					anim->type = ANIM_DROP_TILE;
-					anim->drop_tile.duration = constants.anims.drop_tile.duration;
-					anim->drop_tile.start_time = event->time;
-				}
-			}
-			break;
-		}
-		case EVENT_FIREBALL_SHOT: {
-			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_32;
-			a.projectile.start_time = event->time;
-			a.projectile.duration = constants.anims.fireball.shot_duration;
-			a.projectile.start = (v2)event->fireball_shot.start;
-			a.projectile.end = (v2)event->fireball_shot.end;
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_FIRE_SPELL_02;
-			anims.append(a);
-
-			break;
-		}
-		case EVENT_FIREBALL_HIT: {
-			Anim shake = {};
-			shake.type = ANIM_CAMERA_SHAKE;
-			shake.camera_shake.start_time = event->time;
-			shake.camera_shake.duration = constants.anims.fireball.shake_duration;
-			shake.camera_shake.power = constants.anims.fireball.shake_power;
-			anims.append(shake);
-
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_FIRE_SPELL_13;
-			anims.append(sound);
-			break;
-		}
-		case EVENT_FIREBALL_OFFSHOOT_2: {
-			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_24;
-			a.projectile.start_time = event->time;
-			a.projectile.duration = event->fireball_offshoot_2.duration;
-			a.projectile.start = event->fireball_offshoot_2.start;
-			a.projectile.end = event->fireball_offshoot_2.end;
-			v2 dir = a.projectile.end - a.projectile.start;
-			f32 angle = atan2f(-dir.y, dir.x);
-			a.projectile.sprite_coords = { angle_to_sprite_x_coord(angle), 11.0f };
-			anims.append(a);
-			break;
-		}
-		case EVENT_LIGHTNING_BOLT: {
-			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_24;
-			a.projectile.start_time = event->time;
-			a.projectile.duration = event->lightning_bolt.duration;
-			a.projectile.start = event->lightning_bolt.start;
-			a.projectile.end = event->lightning_bolt.end;
-			a.projectile.sprite_coords = { 0.0f, 9.0f };
-			anims.append(a);
-			break;
-		}
-		case EVENT_LIGHTNING_BOLT_START: {
-			Anim a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_LIGHTNING_SPELL_03;
-			anims.append(a);
-			break;
-		}
-		case EVENT_STUCK: {
-			Anim text_anim = {};
-			text_anim.type = ANIM_TEXT;
-			text_anim.text.start_time = event->time;
-			text_anim.text.duration = constants.anims.text_duration;
-			text_anim.text.color = v4(1.0f, 1.0f, 1.0f, 1.0f);
-			text_anim.text.caption[0] = '*';
-			text_anim.text.caption[1] = 's';
-			text_anim.text.caption[2] = 't';
-			text_anim.text.caption[3] = 'u';
-			text_anim.text.caption[4] = 'c';
-			text_anim.text.caption[5] = 'k';
-			text_anim.text.caption[6] = '*';
-			text_anim.text.caption[7] = 0;
-			text_anim.world_coords = (v2)event->stuck.pos;
-			world_anim->anims.append(text_anim);
-			break;
-		}
-		case EVENT_DAMAGED: {
-			Anim text_anim = {};
-			text_anim.type = ANIM_TEXT;
-			text_anim.text.start_time = event->time;
-			text_anim.text.duration = constants.anims.text_duration;
-			text_anim.text.color = v4(1.0f, 0.0f, 0.0f, 1.0f);
-
-			char *buffer = fmt("-%u", event->damaged.amount);
-			u32 i = 0;
-			for (char *p = buffer; *p; ++p, ++i) {
-				text_anim.text.caption[i] = (u8)*p;
-			}
-			ASSERT(i < ARRAY_SIZE(text_anim.text.caption));
-			text_anim.text.caption[i] = 0;
-			text_anim.world_coords = event->damaged.pos;
-			world_anim->anims.append(text_anim);
-			break;
-		}
-		case EVENT_DEATH: {
-			Anim anim = {};
-			anim.type = ANIM_DEATH;
-			anim.death.time = event->time;
-			anim.death.entity_id = event->death.entity_id;
-			world_anim->anims.append(anim);
-			break;
-		}
-		case EVENT_EXCHANGE: {
-			// TODO -- add anims for spell casting, sound of spell casting etc
-			Anim ex = {};
-			ex.type = ANIM_EXCHANGE;
-			ex.exchange.time = event->time;
-			ex.exchange.a = event->exchange.a;
-			ex.exchange.b = event->exchange.b;
-			world_anim->anims.append(ex);
-			break;
-		}
-		case EVENT_BLINK: {
-			// TODO -- spell casting sounds/anims/particle effect stuff
-			Anim anim = {};
-			anim.type = ANIM_BLINK;
-			anim.blink.time = event->time;
-			anim.blink.entity_id = event->blink.caster_id;
-			anim.blink.target = (v2)event->blink.target;
-			world_anim->anims.append(anim);
-
-			f32 particle_start = event->time - constants.anims.blink.particle_start;
-			anim = {};
-			anim.type = ANIM_BLINK_PARTICLES;
-			anim.blink_particles.time = particle_start;
-			anim.blink_particles.pos = (v2)event->blink.start;
-			world_anim->anims.append(anim);
-
-			anim = {};
-			anim.type = ANIM_BLINK_PARTICLES;
-			anim.blink_particles.time = event->time;
-			anim.blink_particles.pos = (v2)event->blink.target;
-			world_anim->anims.append(anim);
-
-			anim = {};
-			anim.type = ANIM_SOUND;
-			anim.sound.start_time = particle_start;
-			anim.sound.sound_id = SOUND_CARD_GAME_ABILITIES_POOF_02;
-			world_anim->anims.append(anim);
-
-			break;
-		}
-		case EVENT_SLIME_SPLIT: {
-			Anim anim = {};
-			anim.depth_offset = constants.z_offsets.character;
-			anim.type = ANIM_SLIME_SPLIT;
-			anim.slime_split.time = event->time;
-			anim.slime_split.duration = constants.anims.slime_split.duration;
-			anim.slime_split.original_id = event->slime_split.original_id;
-			anim.slime_split.new_id = event->slime_split.new_id;
-			anim.slime_split.start = event->slime_split.start;
-			anim.slime_split.end = event->slime_split.end;
-			anim.world_coords = event->slime_split.end;
-			anim.entity_id = event->slime_split.new_id;
-			anim.sprite_coords = appearance_get_creature_sprite_coords(
-				APPEARANCE_CREATURE_GREEN_SLIME);
-			world_anim->anims.append(anim);
-			break;
-		}
-		case EVENT_SHOOT_WEB_CAST: {
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_SHADOW_ATTACK_4;
-
-			Anim particles = {};
-			particles.type = ANIM_SHOOT_WEB_PARTICLES;
-			particles.shoot_web_particles.start_time = event->time;
-			particles.shoot_web_particles.duration = constants.anims.shoot_web.shot_duration;
-			particles.shoot_web_particles.start = event->shoot_web_cast.start;
-			particles.shoot_web_particles.end = event->shoot_web_cast.end;
-
-			world_anim->anims.append(sound);
-			world_anim->anims.append(particles);
-			break;
-		}
-		case EVENT_SHOOT_WEB_HIT: {
-			Anim anim = {};
-			anim.type = ANIM_ADD_ITEM;
-			anim.sprite_coords = appearance_get_item_sprite_coords(event->shoot_web_hit.appearance);
-			anim.world_coords = event->shoot_web_hit.pos;
-			anim.entity_id = event->shoot_web_hit.web_id;
-			anim.depth_offset = constants.z_offsets.item;
-			anim.add_item.time = event->time;
-			world_anim->anims.append(anim);
-			break;
-		}
-		case EVENT_FIRE_BOLT_SHOT: {
-			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_32;
-			a.projectile.start_time = event->time;
-			a.projectile.duration = event->fire_bolt_shot.duration;
-			v2 start = event->fire_bolt_shot.start;
-			v2 end = event->fire_bolt_shot.end;
-			a.projectile.start = start;
-			a.projectile.end = end;
-			v2 dir = end - start;
-			f32 angle = atan2f(-dir.y, dir.x);
-			a.projectile.sprite_coords = { angle_to_sprite_x_coord(angle), 5.0f };
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_FIRE_SPELL_04;
-			anims.append(a);
-			break;
-		}
-		case EVENT_POLYMORPH: {
-			Anim a = {};
-			a.type = ANIM_POLYMORPH;
-			a.polymorph.start_time = event->time;
-			a.polymorph.entity_id = event->polymorph.entity_id;
-			a.polymorph.new_sprite_coords = appearance_get_creature_sprite_coords(
-				event->polymorph.new_appearance);
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_POLYMORPH_PARTICLES;
-			a.polymorph_particles.start_time = event->time;
-			a.polymorph_particles.pos = (v2)event->polymorph.pos;
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_SHADOW_SPELL_01;
-			anims.append(a);
-		}
-		case EVENT_HEAL: {
-			Anim a = {};
-			a.type = ANIM_HEAL_PARTICLES;
-			a.heal_particles.start_time = event->time;
-			a.heal_particles.duration = constants.anims.heal.cast_time;
-			// a.heal_particles.amount = event->heal.amount;
-			a.heal_particles.start = (v2)event->heal.start;
-			a.heal_particles.end = (v2)event->heal.end;
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_TEXT;
-			a.text.start_time = event->time + constants.anims.heal.cast_time;
-			a.text.duration = 1.0f;
-			a.text.color = v4(0.0f, 1.0f, 1.0f, 1.0f);
-			snprintf((char*)a.text.caption,
-			         ARRAY_SIZE(a.text.caption),
-			         "%d",
-			         event->heal.amount);
-			a.world_coords = (v2)event->heal.end;
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_HEALING_01;
-			anims.append(a);
-			break;
-		}
-		case EVENT_FIELD_OF_VISION_CHANGED: {
-			Anim a = {};
-			a.type = ANIM_FIELD_OF_VISION_CHANGED;
-			a.field_of_vision.start_time = event->time;
-			a.field_of_vision.duration = event->field_of_vision.duration;
-			a.field_of_vision.fov = event->field_of_vision.fov;
-			anims.append(a);
-			break;
-		}
-		case EVENT_ADD_CREATURE: {
-			Anim a = {};
-			a.type = ANIM_ADD_CREATURE;
-			a.sprite_coords = appearance_get_creature_sprite_coords(event->add_creature.appearance);
-			a.world_coords = event->add_creature.pos;
-			a.entity_id = event->add_creature.creature_id;
-			a.depth_offset = constants.z_offsets.character;
-			a.add_creature.time = event->time;
-			anims.append(a);
-			break;
-		}
-
-		}
-		++event_idx;
-	}
-
-	if (event_idx < num_events) {
-		world_anim->event_buffer_idx = event_idx;
-	} else {
-		world_anim->events_to_be_animated.len = 0;
-		world_anim->event_buffer_idx = 0;
-	}
 }
 
 void world_anim_init(World_Anim_State* world_anim, Game* game)
@@ -3900,6 +3540,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 	}
 
 	// prepare next events if we're still animating
+	/*
 	if (!active_anims_remaining) {
 		if (world_anim->event_buffer_idx < world_anim->events_to_be_animated.len) {
 			world_anim_animate_next_event_block(world_anim);
@@ -3910,6 +3551,7 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 			world_anim->events_to_be_animated.reset();
 		}
 	}
+	*/
 
 
 	f32 camera_offset_mag = 0.0f;
@@ -4462,7 +4104,7 @@ struct Card_Pos
 	f32 z_offset;
 };
 
-enum Card_Anim_Type
+enum Card_Movement_Anim_Type
 {
 	CARD_ANIM_DECK,
 	CARD_ANIM_DISCARD,
@@ -4473,11 +4115,19 @@ enum Card_Anim_Type
 	CARD_ANIM_HAND_TO_IN_PLAY,
 	CARD_ANIM_HAND_TO_DISCARD,
 	CARD_ANIM_IN_PLAY_TO_DISCARD,
+	CARD_ANIM_ADD_CARD_TO_DISCARD,
+};
+
+enum Card_Anim_Modifier_Type
+{
+	CARD_ANIM_MOD_NONE,
+	CARD_ANIM_MOD_FLASH,
 };
 
 struct Card_Anim
 {
-	Card_Anim_Type type;
+	Card_Movement_Anim_Type type;
+	Card_Anim_Modifier_Type mod_type;
 	union {
 		struct {
 			u32 index;
@@ -4510,6 +4160,18 @@ struct Card_Anim
 			f32 duration;
 			Card_Pos start;
 		} in_play_to_discard;
+		struct {
+			f32      start_time;
+			f32      duration;
+		} add_to_discard;
+	};
+	union {
+		struct {
+			f32 start_time;
+			f32 duration;
+			f32 interval;
+			v4  color_mod;
+		} flash;
 	};
 	Card_Pos pos;
 	v4 color_mod;
@@ -4532,8 +4194,9 @@ struct Card_Anim_State
 	Hand_Params          hand_params;
 	u32                  hand_size;
 	u32                  highlighted_card_id;
-	u32                  num_card_anims;
-	Card_Anim            card_anims[MAX_CARD_ANIMS];
+	Max_Length_Array<Card_Anim, MAX_CARD_ANIMS> card_anims;
+
+	f32 dyn_time_start;
 
 	union {
 		struct {
@@ -4583,9 +4246,9 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 
 	Hand_Params hand_params = card_anim_state->hand_params;
 	u32 highlighted_card_id = card_anim_state->highlighted_card_id;
-	u32 num_card_anims = card_anim_state->num_card_anims;
+	u32 num_card_anims = card_anim_state->card_anims.len;
 	u32 selected_card_index = card_anim_state->hand_size;
-	Card_Anim *anim = card_anim_state->card_anims;
+	Card_Anim *anim = card_anim_state->card_anims.items;
 	// log(debug_log, "highlighted_card_id = %u", highlighted_card_id);
 	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 		if (anim->card_id == highlighted_card_id) {
@@ -4621,7 +4284,7 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 
 	f32 ratio = hand_params.screen_width;
 
-	anim = card_anim_state->card_anims;
+	anim = card_anim_state->card_anims.items;
 	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 		anim->color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
 		switch (anim->type) {
@@ -4768,6 +4431,29 @@ void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
 
 			break;
 		}
+
+		case CARD_ANIM_ADD_CARD_TO_DISCARD: {
+			f32 t = time - card_anim_state->dyn_time_start - anim->add_to_discard.start_time;
+			f32 dt = t / anim->add_to_discard.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+
+			v2 start_pos = v2(ratio - hand_params.border / 2.0f, -1.0f - hand_params.height);
+			f32 start_angle = 0.0f;
+			f32 start_zoom = 1.0f;
+
+			v2 end_pos = v2(ratio - hand_params.border / 2.0f, -1.0f + hand_params.height / 2.0f);
+			f32 end_angle = 0.0f;
+			f32 end_zoom = 1.0f;
+
+			anim->pos.type = CARD_POS_ABSOLUTE;
+			anim->pos.absolute.pos   = lerp(start_pos,   end_pos,   dt);
+			anim->pos.absolute.angle = lerp(start_angle, end_angle, dt);
+			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
+			anim->pos.z_offset = 0.1f;
+
+			break;
+		}
+
 		}
 	}
 }
@@ -4794,7 +4480,7 @@ void card_anim_create_hand_to_hand_anims(Card_Anim_State* card_anim_state,
 		base_delta = 0.0f;
 	}
 
-	u32 num_card_anims = card_anim_state->num_card_anims;
+	u32 num_card_anims = card_anim_state->card_anims.len;
 	for (u32 i = 0; i < num_card_anims; ++i) {
 		Card_Anim *anim = &card_anim_state->card_anims[i];
 		if (anim->pos.type != CARD_POS_HAND) {
@@ -4882,13 +4568,13 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 			anim.draw.played_sound = 0;
 			anim.card_id = event->draw.card_id;
 			anim.card_face = card_appearance_get_sprite_coords(event->draw.appearance);
-			card_anim_state->card_anims[card_anim_state->num_card_anims++] = anim;
+			card_anim_state->card_anims.append(anim);
 			break;
 		}
 		case CARD_EVENT_HAND_TO_IN_PLAY: {
 			do_hand_to_hand = 1;
-			Card_Anim *anim = card_anim_state->card_anims;
-			u32 num_card_anims = card_anim_state->num_card_anims;
+			Card_Anim *anim = card_anim_state->card_anims.items;
+			u32 num_card_anims = card_anim_state->card_anims.len;
 			u32 hand_index = 0;
 			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 				if (anim->card_id == event->hand_to_in_play.card_id) {
@@ -4912,7 +4598,7 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 					break;
 				}
 			}
-			anim = card_anim_state->card_anims;
+			anim = card_anim_state->card_anims.items;
 			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 				switch (anim->type) {
 				case CARD_ANIM_IN_HAND:
@@ -4932,8 +4618,8 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 		}
 		case CARD_EVENT_HAND_TO_DISCARD: {
 			do_hand_to_hand = 1;
-			Card_Anim *anim = card_anim_state->card_anims;
-			u32 num_card_anims = card_anim_state->num_card_anims;
+			Card_Anim *anim = card_anim_state->card_anims.items;
+			u32 num_card_anims = card_anim_state->card_anims.len;
 			u32 hand_index = 0;
 			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 				if (anim->card_id == event->hand_to_discard.card_id) {
@@ -4957,7 +4643,7 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 					break;
 				}
 			}
-			anim = card_anim_state->card_anims;
+			anim = card_anim_state->card_anims.items;
 			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 				switch (anim->type) {
 				case CARD_ANIM_IN_HAND:
@@ -4976,8 +4662,8 @@ void card_anim_update_anims(Card_Anim_State*  card_anim_state,
 			break;
 		}
 		case CARD_EVENT_IN_PLAY_TO_DISCARD: {
-			Card_Anim *anim = card_anim_state->card_anims;
-			u32 num_card_anims = card_anim_state->num_card_anims;
+			Card_Anim *anim = card_anim_state->card_anims.items;
+			u32 num_card_anims = card_anim_state->card_anims.len;
 			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 				if (anim->card_id == event->in_play_to_discard.card_id) {
 					anim->type = CARD_ANIM_IN_PLAY_TO_DISCARD;
@@ -5022,7 +4708,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 {
 	const u32 discard_id = (u32)-1;
 	const u32 deck_id    = (u32)-2;
-	u32 num_card_anims = card_anim_state->num_card_anims;
+	u32 num_card_anims = card_anim_state->card_anims.len;
 
 	card_anim_write_poss(card_anim_state, time);
 
@@ -5044,7 +4730,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		} else if (highlighted_card_id == deck_id) {
 			event.type = CARD_UI_EVENT_DECK_CLICKED;
 		} else {
-			Card_Anim *anim = card_anim_state->card_anims;
+			Card_Anim *anim = card_anim_state->card_anims.items;
 			for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 				if (anim->card_id == highlighted_card_id) {
 					switch (anim->type) {
@@ -5103,14 +4789,13 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	}
 
 	// convert finished card anims
-	for (u32 i = 0; i < num_card_anims; ) {
+	for (u32 i = 0; i < card_anim_state->card_anims.len; ) {
 		Card_Anim *anim = &card_anim_state->card_anims[i];
 		switch (anim->type) {
 		case CARD_ANIM_DECK:
-			break;
 		case CARD_ANIM_DISCARD:
-			break;
 		case CARD_ANIM_IN_HAND:
+		case CARD_ANIM_IN_PLAY:
 			break;
 		case CARD_ANIM_DRAW:
 			if (anim->draw.start_time + anim->draw.duration <= time) {
@@ -5132,22 +4817,31 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		case CARD_ANIM_IN_PLAY_TO_DISCARD:
 			if (anim->in_play_to_discard.start_time
 			  + anim->in_play_to_discard.duration <= time) {
-				card_anim_state->card_anims[i]
-					= card_anim_state->card_anims[--num_card_anims];
+				card_anim_state->card_anims.remove(i);
 				continue;
 			}
 			break;
 		case CARD_ANIM_HAND_TO_DISCARD:
 			if (anim->hand_to_discard.start_time + anim->hand_to_discard.duration <= time) {
-				card_anim_state->card_anims[i]
-					= card_anim_state->card_anims[--num_card_anims];
+				card_anim_state->card_anims.remove(i);
+				continue;
+			}
+			break;
+		case CARD_ANIM_ADD_CARD_TO_DISCARD: {
+			f32 t = time - anim->add_to_discard.start_time - card_anim_state->dyn_time_start;
+			if (anim->add_to_discard.duration <= t) {
+				card_anim_state->card_anims.remove(i);
 				continue;
 			}
 			break;
 		}
+		default:
+			ASSERT(0);
+			break;
+		}
 		++i;
 	}
-	card_anim_state->num_card_anims = num_card_anims;
+	num_card_anims = card_anim_state->card_anims.len;
 
 	// process hand to hand anims
 	u32 prev_highlighted_card_id = card_anim_state->highlighted_card_id;
@@ -5178,7 +4872,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 
 	u8 hi_or_prev_hi_was_hand = 0;
 	{
-		Card_Anim *anim = card_anim_state->card_anims;
+		Card_Anim *anim = card_anim_state->card_anims.items;
 		for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 			if (anim->card_id == highlighted_card_id
 			 || anim->card_id == prev_highlighted_card_id) {
@@ -5242,7 +4936,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	}
 	}
 
-	Card_Anim *anim = card_anim_state->card_anims;
+	Card_Anim *anim = card_anim_state->card_anims.items;
 	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
 		Card_Render_Instance instance = {};
 		switch (anim->pos.type) {
@@ -5338,6 +5032,420 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	card_render_z_sort(card_render);
 
 	return event;
+}
+
+void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Slice<Event> events)
+{
+	auto& anims = world_anim->anims;
+	auto& card_anims = card_anim->card_anims;
+
+	for (u32 i = 0; i < events.len; ++i) {
+		Event *event = &events[i];
+		switch (event->type) {
+		case EVENT_MOVE: {
+			for (u32 i = 0; i < anims.len; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->move.entity_id) {
+					anim->type = ANIM_MOVE;
+					anim->move.duration = constants.anims.move.duration;
+					anim->move.start_time = event->time;
+					anim->move.start.x = (f32)event->move.start.x;
+					anim->move.start.y = (f32)event->move.start.y;
+					anim->move.end.x   = (f32)event->move.end.x;
+					anim->move.end.y   = (f32)event->move.end.y;
+				}
+			}
+			break;
+		}
+		case EVENT_MOVE_BLOCKED:
+			for (u32 i = 0; i < anims.len; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->move.entity_id) {
+					anim->type = ANIM_MOVE_BLOCKED;
+					anim->move.duration = constants.anims.move.duration;
+					anim->move.start_time = event->time;
+					anim->move.start.x = (f32)event->move.start.x;
+					anim->move.start.y = (f32)event->move.start.y;
+					anim->move.end.x   = (f32)event->move.end.x;
+					anim->move.end.y   = (f32)event->move.end.y;
+				}
+			}
+			break;
+		case EVENT_OPEN_DOOR: {
+			for (u32 i = 0; i < anims.len; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->open_door.door_id) {
+					ASSERT(anim->type == ANIM_TILE_STATIC);
+					ASSERT(appearance_is_door(event->open_door.new_appearance));
+					anim->sprite_coords = appearance_get_door_sprite_coords(event->open_door.new_appearance);
+				}
+			}
+			Anim open_sound = {};
+			open_sound.type = ANIM_SOUND;
+			open_sound.sound.start_time = event->time;
+			open_sound.sound.sound_id = SOUND_FANTASY_GAME_DOOR_OPEN;
+			anims.append(open_sound);
+			break;
+		}
+		case EVENT_BUMP_ATTACK: {
+			for (u32 i = 0; i < anims.len; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == event->bump_attack.attacker_id) {
+					anim->type = ANIM_MOVE_BLOCKED;
+					anim->move.duration = constants.anims.bump_attack.duration;
+					anim->move.start_time = event->time;
+					anim->move.start = (v2)event->bump_attack.start;
+					anim->move.end   = (v2)event->bump_attack.end;
+				}
+			}
+			Anim bump_sound = {};
+			bump_sound.type = ANIM_SOUND;
+			bump_sound.sound.start_time = event->time;
+			bump_sound.sound.sound_id = event->bump_attack.sound;
+			anims.append(bump_sound);
+			break;
+		}
+
+		case EVENT_CREATURE_DROP_IN: {
+			Anim drop_in = {};
+			drop_in.type = ANIM_CREATURE_DROP_IN;
+			drop_in.sprite_coords = appearance_get_creature_sprite_coords(event->creature_drop_in.appearance);
+			drop_in.world_coords = (v2)event->creature_drop_in.pos;
+			drop_in.depth_offset = constants.z_offsets.character;
+			drop_in.creature_drop_in.start_time = event->time;
+			drop_in.creature_drop_in.duration = constants.anims.creature_drop_in.duration;
+			anims.append(drop_in);
+
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_SPIDER_RUNNING_01_LOOP;
+			anims.append(sound);
+			break;
+		}
+
+		case EVENT_DROP_TILE: {
+			u32 tile_id = MAX_ENTITIES + pos_to_u16(event->drop_tile.pos);
+			for (u32 i = 0; i < anims.len; ++i) {
+				Anim *anim = &world_anim->anims[i];
+				if (anim->entity_id == tile_id) {
+					anim->type = ANIM_DROP_TILE;
+					anim->drop_tile.duration = constants.anims.drop_tile.duration;
+					anim->drop_tile.start_time = event->time;
+				}
+			}
+			break;
+		}
+		case EVENT_FIREBALL_SHOT: {
+			Anim a = {};
+			a.type = ANIM_PROJECTILE_EFFECT_32;
+			a.projectile.start_time = event->time;
+			a.projectile.duration = constants.anims.fireball.shot_duration;
+			a.projectile.start = (v2)event->fireball_shot.start;
+			a.projectile.end = (v2)event->fireball_shot.end;
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_FIRE_SPELL_02;
+			anims.append(a);
+
+			break;
+		}
+		case EVENT_FIREBALL_HIT: {
+			Anim shake = {};
+			shake.type = ANIM_CAMERA_SHAKE;
+			shake.camera_shake.start_time = event->time;
+			shake.camera_shake.duration = constants.anims.fireball.shake_duration;
+			shake.camera_shake.power = constants.anims.fireball.shake_power;
+			anims.append(shake);
+
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_FIRE_SPELL_13;
+			anims.append(sound);
+			break;
+		}
+		case EVENT_FIREBALL_OFFSHOOT_2: {
+			Anim a = {};
+			a.type = ANIM_PROJECTILE_EFFECT_24;
+			a.projectile.start_time = event->time;
+			a.projectile.duration = event->fireball_offshoot_2.duration;
+			a.projectile.start = event->fireball_offshoot_2.start;
+			a.projectile.end = event->fireball_offshoot_2.end;
+			v2 dir = a.projectile.end - a.projectile.start;
+			f32 angle = atan2f(-dir.y, dir.x);
+			a.projectile.sprite_coords = { angle_to_sprite_x_coord(angle), 11.0f };
+			anims.append(a);
+			break;
+		}
+		case EVENT_LIGHTNING_BOLT: {
+			Anim a = {};
+			a.type = ANIM_PROJECTILE_EFFECT_24;
+			a.projectile.start_time = event->time;
+			a.projectile.duration = event->lightning_bolt.duration;
+			a.projectile.start = event->lightning_bolt.start;
+			a.projectile.end = event->lightning_bolt.end;
+			a.projectile.sprite_coords = { 0.0f, 9.0f };
+			anims.append(a);
+			break;
+		}
+		case EVENT_LIGHTNING_BOLT_START: {
+			Anim a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_LIGHTNING_SPELL_03;
+			anims.append(a);
+			break;
+		}
+		case EVENT_STUCK: {
+			Anim text_anim = {};
+			text_anim.type = ANIM_TEXT;
+			text_anim.text.start_time = event->time;
+			text_anim.text.duration = constants.anims.text_duration;
+			text_anim.text.color = v4(1.0f, 1.0f, 1.0f, 1.0f);
+			text_anim.text.caption[0] = '*';
+			text_anim.text.caption[1] = 's';
+			text_anim.text.caption[2] = 't';
+			text_anim.text.caption[3] = 'u';
+			text_anim.text.caption[4] = 'c';
+			text_anim.text.caption[5] = 'k';
+			text_anim.text.caption[6] = '*';
+			text_anim.text.caption[7] = 0;
+			text_anim.world_coords = (v2)event->stuck.pos;
+			world_anim->anims.append(text_anim);
+			break;
+		}
+		case EVENT_DAMAGED: {
+			Anim text_anim = {};
+			text_anim.type = ANIM_TEXT;
+			text_anim.text.start_time = event->time;
+			text_anim.text.duration = constants.anims.text_duration;
+			text_anim.text.color = v4(1.0f, 0.0f, 0.0f, 1.0f);
+
+			char *buffer = fmt("-%u", event->damaged.amount);
+			u32 i = 0;
+			for (char *p = buffer; *p; ++p, ++i) {
+				text_anim.text.caption[i] = (u8)*p;
+			}
+			ASSERT(i < ARRAY_SIZE(text_anim.text.caption));
+			text_anim.text.caption[i] = 0;
+			text_anim.world_coords = event->damaged.pos;
+			world_anim->anims.append(text_anim);
+			break;
+		}
+		case EVENT_DEATH: {
+			Anim anim = {};
+			anim.type = ANIM_DEATH;
+			anim.death.time = event->time;
+			anim.death.entity_id = event->death.entity_id;
+			world_anim->anims.append(anim);
+			break;
+		}
+		case EVENT_EXCHANGE: {
+			// TODO -- add anims for spell casting, sound of spell casting etc
+			Anim ex = {};
+			ex.type = ANIM_EXCHANGE;
+			ex.exchange.time = event->time;
+			ex.exchange.a = event->exchange.a;
+			ex.exchange.b = event->exchange.b;
+			world_anim->anims.append(ex);
+			break;
+		}
+		case EVENT_BLINK: {
+			// TODO -- spell casting sounds/anims/particle effect stuff
+			Anim anim = {};
+			anim.type = ANIM_BLINK;
+			anim.blink.time = event->time;
+			anim.blink.entity_id = event->blink.caster_id;
+			anim.blink.target = (v2)event->blink.target;
+			world_anim->anims.append(anim);
+
+			f32 particle_start = event->time - constants.anims.blink.particle_start;
+			anim = {};
+			anim.type = ANIM_BLINK_PARTICLES;
+			anim.blink_particles.time = particle_start;
+			anim.blink_particles.pos = (v2)event->blink.start;
+			world_anim->anims.append(anim);
+
+			anim = {};
+			anim.type = ANIM_BLINK_PARTICLES;
+			anim.blink_particles.time = event->time;
+			anim.blink_particles.pos = (v2)event->blink.target;
+			world_anim->anims.append(anim);
+
+			anim = {};
+			anim.type = ANIM_SOUND;
+			anim.sound.start_time = particle_start;
+			anim.sound.sound_id = SOUND_CARD_GAME_ABILITIES_POOF_02;
+			world_anim->anims.append(anim);
+
+			break;
+		}
+		case EVENT_SLIME_SPLIT: {
+			Anim anim = {};
+			anim.depth_offset = constants.z_offsets.character;
+			anim.type = ANIM_SLIME_SPLIT;
+			anim.slime_split.time = event->time;
+			anim.slime_split.duration = constants.anims.slime_split.duration;
+			anim.slime_split.original_id = event->slime_split.original_id;
+			anim.slime_split.new_id = event->slime_split.new_id;
+			anim.slime_split.start = event->slime_split.start;
+			anim.slime_split.end = event->slime_split.end;
+			anim.world_coords = event->slime_split.end;
+			anim.entity_id = event->slime_split.new_id;
+			anim.sprite_coords = appearance_get_creature_sprite_coords(
+				APPEARANCE_CREATURE_GREEN_SLIME);
+			world_anim->anims.append(anim);
+			break;
+		}
+		case EVENT_SHOOT_WEB_CAST: {
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_SHADOW_ATTACK_4;
+
+			Anim particles = {};
+			particles.type = ANIM_SHOOT_WEB_PARTICLES;
+			particles.shoot_web_particles.start_time = event->time;
+			particles.shoot_web_particles.duration = constants.anims.shoot_web.shot_duration;
+			particles.shoot_web_particles.start = event->shoot_web_cast.start;
+			particles.shoot_web_particles.end = event->shoot_web_cast.end;
+
+			world_anim->anims.append(sound);
+			world_anim->anims.append(particles);
+			break;
+		}
+		case EVENT_SHOOT_WEB_HIT: {
+			Anim anim = {};
+			anim.type = ANIM_ADD_ITEM;
+			anim.sprite_coords = appearance_get_item_sprite_coords(event->shoot_web_hit.appearance);
+			anim.world_coords = event->shoot_web_hit.pos;
+			anim.entity_id = event->shoot_web_hit.web_id;
+			anim.depth_offset = constants.z_offsets.item;
+			anim.add_item.time = event->time;
+			world_anim->anims.append(anim);
+			break;
+		}
+		case EVENT_FIRE_BOLT_SHOT: {
+			Anim a = {};
+			a.type = ANIM_PROJECTILE_EFFECT_32;
+			a.projectile.start_time = event->time;
+			a.projectile.duration = event->fire_bolt_shot.duration;
+			v2 start = event->fire_bolt_shot.start;
+			v2 end = event->fire_bolt_shot.end;
+			a.projectile.start = start;
+			a.projectile.end = end;
+			v2 dir = end - start;
+			f32 angle = atan2f(-dir.y, dir.x);
+			a.projectile.sprite_coords = { angle_to_sprite_x_coord(angle), 5.0f };
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_FIRE_SPELL_04;
+			anims.append(a);
+			break;
+		}
+		case EVENT_POLYMORPH: {
+			Anim a = {};
+			a.type = ANIM_POLYMORPH;
+			a.polymorph.start_time = event->time;
+			a.polymorph.entity_id = event->polymorph.entity_id;
+			a.polymorph.new_sprite_coords = appearance_get_creature_sprite_coords(
+				event->polymorph.new_appearance);
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_POLYMORPH_PARTICLES;
+			a.polymorph_particles.start_time = event->time;
+			a.polymorph_particles.pos = (v2)event->polymorph.pos;
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_SHADOW_SPELL_01;
+			anims.append(a);
+		}
+		case EVENT_HEAL: {
+			Anim a = {};
+			a.type = ANIM_HEAL_PARTICLES;
+			a.heal_particles.start_time = event->time;
+			a.heal_particles.duration = constants.anims.heal.cast_time;
+			// a.heal_particles.amount = event->heal.amount;
+			a.heal_particles.start = (v2)event->heal.start;
+			a.heal_particles.end = (v2)event->heal.end;
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_TEXT;
+			a.text.start_time = event->time + constants.anims.heal.cast_time;
+			a.text.duration = 1.0f;
+			a.text.color = v4(0.0f, 1.0f, 1.0f, 1.0f);
+			snprintf((char*)a.text.caption,
+			         ARRAY_SIZE(a.text.caption),
+			         "%d",
+			         event->heal.amount);
+			a.world_coords = (v2)event->heal.end;
+			anims.append(a);
+
+			a = {};
+			a.type = ANIM_SOUND;
+			a.sound.start_time = event->time;
+			a.sound.sound_id = SOUND_HEALING_01;
+			anims.append(a);
+			break;
+		}
+		case EVENT_FIELD_OF_VISION_CHANGED: {
+			Anim a = {};
+			a.type = ANIM_FIELD_OF_VISION_CHANGED;
+			a.field_of_vision.start_time = event->time;
+			a.field_of_vision.duration = event->field_of_vision.duration;
+			a.field_of_vision.fov = event->field_of_vision.fov;
+			anims.append(a);
+			break;
+		}
+		case EVENT_ADD_CREATURE: {
+			Anim a = {};
+			a.type = ANIM_ADD_CREATURE;
+			a.sprite_coords = appearance_get_creature_sprite_coords(event->add_creature.appearance);
+			a.world_coords = event->add_creature.pos;
+			a.entity_id = event->add_creature.creature_id;
+			a.depth_offset = constants.z_offsets.character;
+			a.add_creature.time = event->time;
+			anims.append(a);
+			break;
+		}
+		case EVENT_ADD_CARD_TO_DISCARD: {
+			// card_anim_
+			Card_Anim anim = {};
+			anim.type = CARD_ANIM_ADD_CARD_TO_DISCARD;
+			anim.mod_type = CARD_ANIM_MOD_NONE;
+
+			anim.add_to_discard.start_time = event->time;
+			anim.add_to_discard.duration = constants.cards_ui.add_to_discard_duration;
+
+			anim.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+			anim.card_id = event->add_card_to_discard.card_id;
+			anim.card_face = card_appearance_get_sprite_coords(event->add_card_to_discard.appearance);
+
+			card_anims.append(anim);
+			break;
+		}
+
+		}
+	}
+}
+
+void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Card_Anim_State* card_anim, Event_Buffer* event_buffer, f32 time)
+{
+	animate_events(world_anim, card_anim, *event_buffer);
+	world_anim->dynamic_anim_start_time = time;
+	card_anim->dyn_time_start = time;
 }
 
 // =============================================================================
@@ -5468,10 +5576,8 @@ void build_deck_random_n(Program *program, u32 n)
 	memset(card_anim_state, 0, sizeof(*card_anim_state));
 
 	for (u32 i = 0; i < n; ++i) {
-		Card card = {};
-		card.id = i + 1;
-		card.appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
-		card_state->discard.append(card);
+		auto appearance = (Card_Appearance)(rand_u32() % NUM_CARD_APPEARANCES);
+		add_card(&program->game, appearance);
 	}
 }
 
@@ -5840,9 +5946,11 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, 0);
 		break;
 	case GIS_PLAYING_CARDS: {
-		Action player_action = {};
-		player_action.type = ACTION_NONE;
-		player_action.entity_id = game_get_player_id(&program->game);
+		// Action player_action = {};
+		// player_action.type = ACTION_NONE;
+		// player_action.entity_id = game_get_player_id(&program->game);
+		program->action_being_built.type = ACTION_NONE;
+		program->action_being_built.entity_id = game_get_player_id(&program->game);
 
 		Card_State *card_state = &program->game.card_state;
 		Max_Length_Array<Card_Event, CARD_STATE_MAX_EVENTS> card_events;
@@ -5873,7 +5981,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				ASSERT(c->type == CONTROLLER_PLAYER);
 
 				program->action_being_built.type = ACTION_FIRE_BOLT;
-				program->action_being_built.fire_bolt.caster_id = c->player.entity_id;
 
 				Card_Param param = {};
 				param.type = CARD_PARAM_CREATURE;
@@ -5927,7 +6034,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				ASSERT(player);
 
 				program->action_being_built.type = ACTION_LIGHTNING;
-				program->action_being_built.lightning.caster_id = ENTITY_ID_PLAYER;
 				program->action_being_built.lightning.start = player->pos;
 
 				Card_Param param = {};
@@ -5977,7 +6083,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Entity *player = game_get_entity_by_id(&program->game,
 				                                       c->player.entity_id);
 				program->action_being_built.type = ACTION_BLINK;
-				program->action_being_built.blink.caster = player->id;
 
 				Card_Param param = {};
 				param.type = CARD_PARAM_AVAILABLE_TILE;
@@ -6004,7 +6109,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			c->player.action = player_action;
 			Event_Buffer event_buffer;
 			game_do_turn(&program->game, &event_buffer);
-			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
+			world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &event_buffer, time);
 			program->program_input_state_stack.pop();
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
@@ -6034,7 +6139,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Event_Buffer events;
 				events.reset();
 				game_simulate_actions(&program->game, actions, &events);
-				world_anim_build_events_to_be_animated(&program->world_anim, &events);
+				world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &events, time);
 				program->program_input_state_stack.push(GIS_ANIMATING);
 			}
 			program->program_input_state_stack.push(GIS_PLAYING_CARDS);
@@ -6047,7 +6152,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				Event_Buffer events;
 				events.reset();
 				game_simulate_actions(&program->game, actions, &events);
-				world_anim_build_events_to_be_animated(&program->world_anim, &events);
+				world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &events, time);
 				program->program_input_state_stack.push(GIS_ANIMATING);
 			}
 			program->program_input_state_stack.push(GIS_PLAYING_CARDS);
@@ -6083,7 +6188,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 				bool test = (dir.x || dir.y) && (dir.x <= 1 && dir.y <= 1);
 				if (game_is_passable(&program->game, end, player->movement_type) && test) {
 					player_action.type = ACTION_MOVE;
-					player_action.move.entity_id = player->id;
+					player_action.entity_id = player->id;
 					player_action.move.start = start;
 					player_action.move.end = end;
 				}
@@ -6096,7 +6201,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 				if (test) {
 					player_action.type = ACTION_OPEN_DOOR;
-					player_action.open_door.entity_id = player->id;
+					player_action.entity_id = player->id;
 					player_action.open_door.door_id = e->id;
 				}
 				
@@ -6109,7 +6214,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 				if (test) {
 					player_action.type = ACTION_BUMP_ATTACK;
-					player_action.bump_attack.attacker_id = player->id;
+					player_action.entity_id = player->id;
 					player_action.bump_attack.target_id = e->id;
 				}
 				break;
@@ -6124,7 +6229,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			c->player.action = player_action;
 			Event_Buffer event_buffer;
 			game_do_turn(&program->game, &event_buffer);
-			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
+			world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &event_buffer, time);
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
 
@@ -6140,6 +6245,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		case CARD_PARAM_TARGET:
 			sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
 			if (input_get_num_up_transitions(input, INPUT_BUTTON_MOUSE_LEFT)) {
+				if (!sprite_id) {
+					break;
+				}
 				Pos target;
 				if (sprite_id < MAX_ENTITIES) {
 					Entity *e = game_get_entity_by_id(&program->game, sprite_id);
@@ -6243,10 +6351,10 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			game_simulate_actions(&program->game,
 			                      slice_one(&program->action_being_built),
 			                      &event_buffer);
-			world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
+			world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &event_buffer, time);
 			// c->player.action.type = ACTION_WAIT;
 			// game_do_turn(&program->game, &event_buffer);
-			// world_anim_build_events_to_be_animated(&program->world_anim, &event_buffer);
+			// world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &event_buffer, time);
 			program->program_input_state_stack.pop();
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
@@ -6383,7 +6491,8 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 	// debug draw world
-	if (program->program_input_state_stack.peek() == GIS_NONE) {
+	// if (program->program_input_state_stack.peek() == GIS_NONE) {
+	if (false) {
 		Dijkstra_Map map;
 		Map_Cache_Bool can_pass = {};
 

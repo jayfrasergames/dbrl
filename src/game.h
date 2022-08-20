@@ -28,6 +28,7 @@ enum Action_Type
 	ACTION_MOVE,
 	ACTION_WAIT,
 	ACTION_BUMP_ATTACK,
+	ACTION_BUMP_ATTACK_POISON,
 	ACTION_FIREBALL,
 	ACTION_FIRE_BOLT,
 	ACTION_EXCHANGE,
@@ -46,11 +47,12 @@ struct Action
 	Entity_ID   entity_id;
 	union {
 		struct {
-			Entity_ID entity_id;
-			Pos start, end;
+			// Entity_ID entity_id;
+			Pos start;
+			Pos end;
 		} move;
 		struct {
-			Entity_ID attacker_id;
+			// Entity_ID attacker_id;
 			Entity_ID target_id;
 		} bump_attack;
 		struct {
@@ -62,28 +64,28 @@ struct Action
 			Entity_ID b;
 		} exchange;
 		struct {
-			Entity_ID caster;
+			// Entity_ID caster;
 			Pos       target;
 		} blink;
 		struct {
 			Entity_ID target;
 		} poison;
 		struct {
-			Entity_ID caster_id;
+			// Entity_ID caster_id;
 			Entity_ID target_id;
 		} fire_bolt;
 		struct {
-			Entity_ID caster_id;
+			// Entity_ID caster_id;
 			Entity_ID target_id;
 			i32 amount;
 		} heal;
 		struct {
-			Entity_ID caster_id;
+			// Entity_ID caster_id;
 			Pos start;
 			Pos end;
 		} lightning;
 		struct {
-			Entity_ID entity_id;
+			// Entity_ID entity_id;
 			Entity_ID door_id;
 		} open_door;
 		struct {
@@ -365,6 +367,8 @@ Entity*          get_player(Game* game);
 Entity*          add_entity(Game* game);
 Controller*      add_controller(Game* game);
 Message_Handler* add_message_handler(Game* game);
+
+Card*            add_card(Game* game, Card_Appearance appearance);
 
 Entity*          add_creature(Game* game, Pos pos, Creature_Type type);
 Appearance       get_creature_appearance(Creature_Type type);

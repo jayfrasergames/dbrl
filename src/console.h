@@ -8,7 +8,7 @@
 #include "log.h"
 
 #define CONSOLE_INPUT_BUFFER_LENGTH    512
-#define CONSOLE_HISTORY_BUFFER_LENGTH  4096
+#define CONSOLE_HISTORY_BUFFER_LENGTH  65536
 
 struct Console
 {

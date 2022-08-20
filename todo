@@ -1,4 +1,7 @@
 * current todo
+  * animate
+    * exchange
+    * draw poison card (sound/card flashing)
   * spider caves
     * shadow spider attacks
 
@@ -33,14 +36,16 @@
       * gnolls
       * drow
 
-    * 6 one of enemies
-      * slimes/sminemancer - slimes split on attack, slimemancer heals slimes
+    * 6 one off enemies
+      * slimes/slimemancer - slimes split on attack, slimemancer heals slimes
       * imp - steals cards (monkey like enemy)
+      * beholder - freeze attack
       * dragons
       * golems
-      * beholder
 
     * 6 schools of magic with 8 spells each (48 spells)
+      * focus cards on melee/close range attacks to make sure positioning is actually relevant
+
     * level generation
       * classic 26 level dungeon
       * forking paths (e.g. level with two stairs down, one with spider webs, another with other environmental clues showing a different type of enemy)
@@ -67,7 +72,17 @@
     * opens but gets stuck/doesn't close
     * opens but breaks
     * opens but becomes portal
-  * renderer unify texture types (source texture/target texture)
+
+  * refactor
+    * anim
+      * make an "anim" struct with Card_Anim_State/World_Anim_State
+      * separate out anim stuff into their own files
+      * separate out process input logic/draw animation logic
+      * split out static/dynamic animations
+    * renderer unify texture types (source texture/target texture)
+    * deprecate use of assets.bin for non-release candidates
+      * load sounds from wave files at run time
+      * deprecate gigabyte asset buffer *barf*
 
     * console
       * command history
@@ -76,16 +91,6 @@
       * scrolling
       * move output history to generic logging thing
 
-    * deprecate use of assets.bin for non-release candidates
-      * load sounds from wave files at run time
-      * deprecate gigabyte asset buffer *barf*
-
-  * invisible wall (interrupt transaction pre-enter/rebound for movement)
-    * test scenario: walk into invisible wall whilst standing on a drop tile
-
-  * anim system
-    * split out static/dynamic animations
-
   * path finding
   * move queueing/click path
   * variable move duration depending on user input frequency
@@ -93,8 +98,8 @@
 
 * scenarios:
   * fireball hits barrels, chain reaction
-  * one off enemies
-
+  * invisible wall (interrupt transaction pre-enter/rebound for movement)
+    * test scenario: walk into invisible wall whilst standing on a drop tile
   * enemy abilities
     * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
   * improve anims etc
