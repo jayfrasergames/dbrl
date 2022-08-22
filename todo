@@ -1,6 +1,5 @@
 * current todo
   * animate
-    * exchange
     * draw poison card (sound/card flashing)
   * spider caves
     * shadow spider attacks
@@ -102,13 +101,6 @@
     * test scenario: walk into invisible wall whilst standing on a drop tile
   * enemy abilities
     * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
-  * improve anims etc
-    * exchange
-      * cast sound
-      * "particle" effects
-    * poison card (take damage, anims etc)
-      * card flash
-      * sound effect
 
   * spells/cards
     * magic missile
@@ -148,26 +140,13 @@
       * move functions over to using jfg_error.h
       * add an error log (once logging is done)
 
-    * abstract renderer
-      * move to using adstracted renderer
-
     * cleanup renderer
       * merge all texture types (target/source) into a single abstract texture type
       * load shaders from text files at run time
-        * should be able to start up if we only compile a subset of all shaders(???)
         * add texture targets for writing debug output which can be viewed at runtime
 
       * port shaders to cleaned up renderer (reverse order they are rendered in dbrl.cpp)
         * card_render
-        * debug_draw_world
-        * debug_line_draw
-        * pixel_art_upsampler
-      * port textures to be loaded from PNG
-        * creatures
-        * tiles
-        * effects_24
-        * effects_32
-        * boxy_bold
 
     * asset reloading at runtime
       * load asset through asset manager?
@@ -202,7 +181,6 @@
   * hold tab to view entity health
   * transaction processing
     * only collapse "Entity_Damage" events after processing transactions
-  * "rational" class?
 * technical
     * memory functions/context
     * global context/global error message

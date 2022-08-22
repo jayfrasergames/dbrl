@@ -136,7 +136,10 @@ struct Event
 			Entity_ID entity_id;
 		} death;
 		struct {
-			Entity_ID a, b;
+			Entity_ID a;
+			Entity_ID b;
+			Pos       a_pos;
+			Pos       b_pos;
 		} exchange;
 		struct {
 			Entity_ID caster_id;
@@ -2219,14 +2222,19 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			}
 			case TRANSACTION_EXCHANGE: {
 				t->type = TRANSACTION_REMOVE;
+
+				Entity *a = game_get_entity_by_id(game, t->exchange.a);
+				Entity *b = game_get_entity_by_id(game, t->exchange.b);
+
 				Event event = {};
 				event.type = EVENT_EXCHANGE;
 				event.time = time;
 				event.exchange.a = t->exchange.a;
 				event.exchange.b = t->exchange.b;
+				event.exchange.a_pos = a->pos;
+				event.exchange.b_pos = b->pos;
 				events.append(event);
-				Entity *a = game_get_entity_by_id(game, t->exchange.a);
-				Entity *b = game_get_entity_by_id(game, t->exchange.b);
+
 				Pos tmp = a->pos;
 				a->pos = b->pos;
 				b->pos = tmp;
@@ -2835,6 +2843,7 @@ enum Anim_Type
 	ANIM_SOUND,
 	ANIM_DEATH,
 	ANIM_EXCHANGE,
+	ANIM_EXCHANGE_PARTICLES,
 	ANIM_BLINK,
 	ANIM_BLINK_PARTICLES,
 	ANIM_SLIME_SPLIT,
@@ -2907,7 +2916,13 @@ struct Anim
 		struct {
 			f32 time;
 			Entity_ID a, b;
+			v2 pos_a;
+			v2 pos_b;
 		} exchange;
+		struct {
+			f32 start_time;
+			v2  pos;
+		} exchange_particles;
 		struct {
 			f32 time;
 			Entity_ID entity_id;
@@ -2983,6 +2998,7 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_SOUND:                   return 1;
 	case ANIM_DEATH:                   return 1;
 	case ANIM_EXCHANGE:                return 1;
+	case ANIM_EXCHANGE_PARTICLES:      return 1;
 	case ANIM_BLINK:                   return 1;
 	case ANIM_BLINK_PARTICLES:         return 1;
 	case ANIM_SLIME_SPLIT:             return 1;
@@ -3377,6 +3393,29 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 					f32 angle = 2.0f * PI_F32 * rand_f32();
 					v2 v = { cosf(angle), sinf(angle) };
 					instance.start_velocity = speed * v;
+					particles_add(particles, instance);
+				}
+
+				anims.remove(i);
+				continue;
+			}
+			break;
+		case ANIM_EXCHANGE_PARTICLES:
+			if (anim->exchange_particles.start_time <= dyn_time) {
+				Particle_Instance instance = {};
+				Particles *particles = &draw->renderer.particles;
+				instance.start_time = time;
+				instance.end_time = time + constants.anims.exchange.particle_duration;
+				instance.end_color = v4(1.0f, 1.0f, 1.0f, 1.0f);
+
+				u32 num_particles = constants.anims.exchange.num_particles;
+				for (u32 i = 0; i < num_particles; ++i) {
+					f32 col = uniform_f32(0.8f, 1.0f);
+					instance.start_color = v4(col, col, col, 1.0f);
+
+					v2 offset = v2(uniform_f32(-0.5f, 0.5f), uniform_f32(0.0f, 0.5f));
+					instance.start_pos = anim->exchange_particles.pos + offset;
+					instance.start_velocity = v2(0.0f, -1.0f / constants.anims.exchange.particle_duration);
 					particles_add(particles, instance);
 				}
 
@@ -5252,6 +5291,22 @@ void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Sl
 			ex.exchange.a = event->exchange.a;
 			ex.exchange.b = event->exchange.b;
 			world_anim->anims.append(ex);
+
+			Anim particles = {};
+			particles.type = ANIM_EXCHANGE_PARTICLES;
+			particles.exchange_particles.start_time = event->time - constants.anims.exchange.particle_start;
+			particles.exchange_particles.pos = (v2)event->exchange.a_pos;
+			world_anim->anims.append(particles);
+
+			particles.exchange_particles.pos = (v2)event->exchange.b_pos;
+			world_anim->anims.append(particles);
+
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_CAST_03;
+			world_anim->anims.append(sound);
+
 			break;
 		}
 		case EVENT_BLINK: {
