@@ -88,6 +88,8 @@ enum Event_Type
 	EVENT_ADD_CREATURE,
 	EVENT_ADD_CARD_TO_DISCARD,
 	EVENT_CARD_POISON,
+	EVENT_TURN_INVISIBLE,
+	EVENT_TURN_VISIBLE,
 };
 
 struct Event
@@ -220,6 +222,12 @@ struct Event
 		struct {
 			Card_ID card_id;
 		} card_poison;
+		struct {
+			Entity_ID entity_id;
+		} turn_invisible;
+		struct {
+			Entity_ID entity_id;
+		} turn_visible;
 	};
 };
 
@@ -764,6 +772,8 @@ enum Transaction_Type
 	TRANSACTION_BUMP_ATTACK_CONNECT,
 	TRANSACTION_BUMP_ATTACK_POISON,
 	TRANSACTION_BUMP_ATTACK_POISON_CONNECT,
+	TRANSACTION_BUMP_ATTACK_SNEAK,
+	TRANSACTION_BUMP_ATTACK_SNEAK_CONNECT,
 	TRANSACTION_OPEN_DOOR,
 	TRANSACTION_DROP_TILE,
 	TRANSACTION_FIREBALL_SHOT,
@@ -786,6 +796,8 @@ enum Transaction_Type
 	TRANSACTION_SHOOT_WEB_HIT,
 	TRANSACTION_CREATURE_DROP_IN,
 	TRANSACTION_ADD_CREATURE,
+	TRANSACTION_TURN_INVISIBLE_CAST,
+	TRANSACTION_TURN_INVISIBLE,
 };
 
 #define TRANSACTION_EPSILON 1e-6f;
@@ -862,6 +874,9 @@ struct Transaction
 			Pos           pos;
 			Creature_Type type;
 		} add_creature;
+		struct {
+			Entity_ID entity_id;
+		} turn_invisible;
 	};
 };
 
@@ -889,6 +904,16 @@ void game_dispatch_message(Game*               game,
 			if (h->prevent_exit.pos == message.move.start) {
 				u8 *can_exit = (u8*)data;
 				*can_exit = 0;
+			}
+			break;
+		}
+		case MESSAGE_HANDLER_SPIDER_WEB_PREVENT_EXIT: {
+			if (h->prevent_exit.pos == message.move.start) {
+				auto entity = game_get_entity_by_id(game, message.move.entity_id);
+				if (!(entity->flags & ENTITY_FLAG_WALK_THROUGH_WEBS)) {
+					u8 *can_exit = (u8*) data;
+					*can_exit = 0;
+				}
 			}
 			break;
 		}
@@ -1103,7 +1128,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 		auto& entities = game->entities;
 		for (u32 i = 0; i < entities.len; ++i) {
-			if (entities[i].blocks_vision) {
+			if (entities[i].flags & ENTITY_FLAG_BLOCKS_VISION) {
 				map[entities[i].pos] |= is_wall;
 			}
 		}
@@ -1339,6 +1364,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		switch (action.type) {
 		case ACTION_BUMP_ATTACK:
 		case ACTION_BUMP_ATTACK_POISON:
+		case ACTION_BUMP_ATTACK_SNEAK:
 			bump_attack_delay = constants.anims.bump_attack.duration / 2.0f;
 			break;
 		}
@@ -1375,6 +1401,15 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		case ACTION_BUMP_ATTACK_POISON: {
 			Transaction t = {};
 			t.type = TRANSACTION_BUMP_ATTACK_POISON;
+			t.start_time = 0.0f;
+			t.bump_attack.attacker_id = action.entity_id;
+			t.bump_attack.target_id = action.bump_attack.target_id;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_BUMP_ATTACK_SNEAK: {
+			Transaction t = {};
+			t.type = TRANSACTION_BUMP_ATTACK_SNEAK;
 			t.start_time = 0.0f;
 			t.bump_attack.attacker_id = action.entity_id;
 			t.bump_attack.target_id = action.bump_attack.target_id;
@@ -1461,6 +1496,14 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			t.start_time = bump_attack_delay;
 			t.shoot_web.caster_id = action.entity_id;
 			t.shoot_web.target = action.shoot_web.target;
+			transactions.append(t);
+			break;
+		}
+		case ACTION_TURN_INVISIBLE: {
+			Transaction t = {};
+			t.type = TRANSACTION_TURN_INVISIBLE;
+			t.start_time = bump_attack_delay;
+			t.turn_invisible.entity_id = action.entity_id;
 			transactions.append(t);
 			break;
 		}
@@ -2032,7 +2075,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			}
 
 			case TRANSACTION_BUMP_ATTACK:
-			case TRANSACTION_BUMP_ATTACK_POISON: {
+			case TRANSACTION_BUMP_ATTACK_POISON:
+			case TRANSACTION_BUMP_ATTACK_SNEAK: {
 				// TODO -- move_pre_exit message
 				//         move_post_exit message
 
@@ -2049,6 +2093,9 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 					break;
 				case TRANSACTION_BUMP_ATTACK_POISON:
 					t->type = TRANSACTION_BUMP_ATTACK_POISON_CONNECT;
+					break;
+				case TRANSACTION_BUMP_ATTACK_SNEAK:
+					t->type = TRANSACTION_BUMP_ATTACK_SNEAK_CONNECT;
 					break;
 				default:
 					ASSERT(0);
@@ -2142,6 +2189,41 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				break;
 			}
 
+			case TRANSACTION_BUMP_ATTACK_SNEAK_CONNECT: {
+				t->type = TRANSACTION_REMOVE;
+
+				Entity *attacker = game_get_entity_by_id(game, t->bump_attack.attacker_id);
+				Entity *target = game_get_entity_by_id(game, t->bump_attack.target_id);
+				if (!attacker || !target) {
+					break;
+				}
+
+				Entity_Damage damage = {};
+				damage.entity_id = t->bump_attack.target_id;
+				damage.damage = 2;
+				damage.pos = (v2)t->bump_attack.end;
+				entity_damage.append(damage);
+
+				Event event = {};
+				event.type = EVENT_BUMP_ATTACK;
+				// XXX - yuck
+				event.time = time - constants.anims.bump_attack.duration / 2.0f;
+				event.bump_attack.attacker_id = t->bump_attack.attacker_id;
+				event.bump_attack.start = t->bump_attack.start;
+				event.bump_attack.end = t->bump_attack.end;
+				event.bump_attack.sound = SOUND_STAB_1_2;
+				events.append(event);
+
+				attacker->flags = (Entity_Flag)(attacker->flags & ~ENTITY_FLAG_INVISIBLE);
+
+				event = {};
+				event.type = EVENT_TURN_VISIBLE;
+				event.turn_visible.entity_id = t->bump_attack.attacker_id;
+				events.append(event);
+
+				break;
+			}
+
 
 			case TRANSACTION_OPEN_DOOR: {
 				t->type = TRANSACTION_REMOVE;
@@ -2159,7 +2241,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				event.open_door.new_appearance = APPEARANCE_DOOR_WOODEN_OPEN;
 				events.append(event);
 				door->appearance = APPEARANCE_DOOR_WOODEN_OPEN;
-				door->blocks_vision = false;
+				door->flags = (Entity_Flag)(door->flags | ENTITY_FLAG_BLOCKS_VISION);
 				door->block_mask = 0;
 				door->default_action = ACTION_NONE;
 
@@ -2561,6 +2643,30 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				events.append(event);
 
 				t->type = TRANSACTION_REMOVE;
+				break;
+			}
+
+			case TRANSACTION_TURN_INVISIBLE_CAST: {
+				t->type = TRANSACTION_TURN_INVISIBLE;
+				t->start_time += constants.anims.turn_invisible.cast_time;
+				break;
+			}
+
+			case TRANSACTION_TURN_INVISIBLE: {
+				t->type = TRANSACTION_REMOVE;
+
+				auto entity_id = t->turn_invisible.entity_id;
+				auto entity = game_get_entity_by_id(game, entity_id);
+
+				entity->flags = (Entity_Flag)(ENTITY_FLAG_INVISIBLE | entity->flags);
+
+				Event e = {};
+				e.type = EVENT_TURN_INVISIBLE;
+				e.time = t->start_time;
+				e.turn_invisible.entity_id = entity_id;
+				events.append(e);
+
+				break;
 			}
 
 			}
@@ -2880,6 +2986,8 @@ enum Anim_Type
 	ANIM_FIELD_OF_VISION_CHANGED,
 	ANIM_SHOOT_WEB_PARTICLES,
 	ANIM_CREATURE_DROP_IN,
+	ANIM_TURN_INVISIBLE,
+	ANIM_TURN_VISIBLE,
 };
 
 struct Anim
@@ -2999,11 +3107,35 @@ struct Anim
 			f32 start_time;
 			f32 duration;
 		} creature_drop_in;
+		struct {
+			f32 start_time;
+			f32 duration;
+		} turn_invisible;
+		struct {
+			f32 start_time;
+			f32 duration;
+		} turn_visible;
 	};
 	v2 sprite_coords;
 	v2 world_coords;
 	Entity_ID entity_id;
 	f32 depth_offset;
+};
+
+enum Anim_Modifier_Type
+{
+	ANIM_MOD_COLOR,
+};
+
+struct Anim_Modifier
+{
+	Anim_Modifier_Type type;
+	Entity_ID          entity_id;
+	union {
+		struct {
+			v4 color;
+		} color;
+	};
 };
 
 u8 anim_is_active(Anim* anim)
@@ -3035,21 +3167,21 @@ u8 anim_is_active(Anim* anim)
 	case ANIM_FIELD_OF_VISION_CHANGED: return 1;
 	case ANIM_SHOOT_WEB_PARTICLES:     return 1;
 	case ANIM_CREATURE_DROP_IN:        return 1;
+	case ANIM_TURN_INVISIBLE:          return 1;
+	case ANIM_TURN_VISIBLE:            return 1;
 	}
 	ASSERT(0);
 	return 0;
 }
 
 #define MAX_ANIMS (5 * MAX_ENTITIES)
-#define MAX_ANIM_BLOCKS 1024
 
 struct World_Anim_State
 {
-	Max_Length_Array<Anim, MAX_ANIMS> anims;
-	f32                               dynamic_anim_start_time;
-	u32                               event_buffer_idx;
-	Event_Buffer                      events_to_be_animated;
-	v2                                camera_offset;
+	Max_Length_Array<Anim, MAX_ANIMS>          anims;
+	Max_Length_Array<Anim_Modifier, MAX_ANIMS> anim_mods;
+	f32                                        dynamic_anim_start_time;
+	v2                                         camera_offset;
 };
 
 u8 world_anim_is_animating(World_Anim_State *world_anim)
@@ -3281,10 +3413,38 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 	// clear up finished animations
 	// u32 num_anims = world_anim->anims.len;
 	u8 active_anims_remaining = 0;
-	auto& anims = world_anim->anims;
+	auto &anims = world_anim->anims;
+	auto &anim_mods = world_anim->anim_mods;
+
 	for (u32 i = 0; i < anims.len; ) {
 		Anim *anim = &world_anim->anims[i];
 		switch (anim->type) {
+		case ANIM_TURN_INVISIBLE: {
+			if (anim->turn_invisible.start_time + anim->turn_invisible.duration <= dyn_time) {
+				anim->type = ANIM_CREATURE_IDLE;
+				Anim_Modifier anim_mod = {};
+				anim_mod.type = ANIM_MOD_COLOR;
+				anim_mod.entity_id = anim->entity_id;
+				anim_mod.color.color = v4(1.0f, 1.0f, 1.0f, constants.anims.turn_invisible.visibility);
+				anim_mods.append(anim_mod);
+			}
+			break;
+		}
+		case ANIM_TURN_VISIBLE: {
+			if (anim->turn_visible.start_time + anim->turn_visible.duration <= dyn_time) {
+				for (u32 i = 0; i < anim_mods.len; ) {
+					auto anim_mod = &anim_mods[i];
+					if (anim_mod->type == ANIM_MOD_COLOR && anim_mod->entity_id == anim->entity_id) {
+						anim_mods.remove(i);
+						continue;
+					}
+					++i;
+				}
+				anims.remove(i);
+				continue;
+			}
+			break;
+		}
 		case ANIM_ADD_ITEM: {
 			if (anim->add_item.time <= dyn_time) {
 				anim->type = ANIM_TILE_STATIC;
@@ -3607,20 +3767,6 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 		}
 	}
 
-	// prepare next events if we're still animating
-	/*
-	if (!active_anims_remaining) {
-		if (world_anim->event_buffer_idx < world_anim->events_to_be_animated.len) {
-			world_anim_animate_next_event_block(world_anim);
-			world_anim->dynamic_anim_start_time = time;
-			dyn_time = 0.0f;
-		} else {
-			world_anim->event_buffer_idx = 0;
-			world_anim->events_to_be_animated.reset();
-		}
-	}
-	*/
-
 
 	f32 camera_offset_mag = 0.0f;
 	// draw tile animations
@@ -3811,6 +3957,44 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 
 			break;
 		}
+		case ANIM_TURN_INVISIBLE: {
+			f32 dt = (dyn_time - anim->turn_invisible.start_time) / anim->turn_invisible.duration;
+			dt = max(0.0f, dt);
+
+			Sprite_Sheet_Instance ci = {};
+
+			v2 world_pos = anim->world_coords;
+			ci.y_offset = -3.0f;
+			ci.sprite_pos = v2(4.0f, 22.0f);
+			ci.world_pos = world_pos;
+			ci.sprite_id = anim->entity_id;
+			ci.depth_offset = anim->depth_offset;
+			ci.color_mod = v4(1.0f, 1.0f, 1.0f, lerp(1.0f, constants.anims.turn_invisible.visibility, dt));
+			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			v2 sprite_pos = anim->sprite_coords;
+			ci.sprite_pos = sprite_pos;
+			ci.y_offset = -6.0f;
+			ci.world_pos = world_pos;
+			ci.depth_offset += 0.5f;
+
+			sprite_sheet_instances_add(&draw->creatures, ci);
+
+			break;
+		}
+		case ANIM_TURN_VISIBLE: {
+			f32 dt = (dyn_time - anim->turn_visible.start_time) / anim->turn_visible.duration;
+			dt = max(0.0f, dt);
+
+			for (u32 i = 0; i < anim_mods.len; ++i) {
+				auto anim_mod = &anim_mods[i];
+				if (anim_mod->type == ANIM_MOD_COLOR && anim_mod->entity_id == anim->entity_id) {
+					anim_mod->color.color = v4(1.0f, 1.0f, 1.0f, lerp(constants.anims.turn_invisible.visibility, 1.0f, dt));
+				}
+			}
+
+			break;
+		}
 		case ANIM_PROJECTILE_EFFECT_24: {
 			f32 dt = (dyn_time - anim->projectile.start_time) / anim->projectile.duration;
 			if (dt < 0.0f) {
@@ -3934,6 +4118,21 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 			*/
 			break;
 		}
+		}
+	}
+
+	for (u32 i = 0; i < anim_mods.len; ++i) {
+		auto anim_mod = &anim_mods[i];
+		auto &sprite_instances = draw->creatures.instances;
+		switch (anim_mod->type) {
+		case ANIM_MOD_COLOR:
+			for (u32 j = 0; j < sprite_instances.len; ++j) {
+				auto instance = &sprite_instances[j];
+				if (instance->sprite_id == anim_mod->entity_id) {
+					instance->color_mod = anim_mod->color.color;
+				}
+			}
+			break;
 		}
 	}
 
@@ -5147,6 +5346,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Slice<Event> events)
 {
 	auto &anims = world_anim->anims;
+	auto &anim_mods = world_anim->anim_mods;
 	auto &card_anims = card_anim->card_anims;
 	auto &card_anim_modifiers = card_anim->card_anim_modifiers;
 
@@ -5589,6 +5789,35 @@ void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Sl
 			sound.sound.start_time = event->time;
 			sound.sound.sound_id = SOUND_NATURE_SPELL_10;
 			anims.append(sound);
+			break;
+		}
+		case EVENT_TURN_INVISIBLE: {
+			for (u32 i = 0; i < anims.len; ++i) {
+				auto anim = &anims[i];
+				if (anim->entity_id != event->turn_invisible.entity_id) {
+					continue;
+				}
+				anim->type = ANIM_TURN_INVISIBLE;
+				anim->turn_invisible.start_time = event->time;
+				anim->turn_invisible.duration = constants.anims.turn_invisible.duration;
+				break;
+			}
+
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_CARD_GAME_MAGIC_INVISIBLE_01;
+			anims.append(sound);
+
+			break;
+		}
+		case EVENT_TURN_VISIBLE: {
+			Anim anim = {};
+			anim.type = ANIM_TURN_VISIBLE;
+			anim.entity_id = event->turn_visible.entity_id;
+			anim.turn_visible.start_time = event->time;
+			anim.turn_visible.duration = constants.anims.turn_visible.duration;
+			anims.append(anim);
 			break;
 		}
 

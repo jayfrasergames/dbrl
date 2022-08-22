@@ -1,7 +1,3 @@
-* current todo
-  * spider caves
-    * shadow spider attacks
-
 * goals (initial)
   * content
     * 6 enemy groups with at least 3 enemies each (18+ enemies)
@@ -100,6 +96,7 @@
     * test scenario: walk into invisible wall whilst standing on a drop tile
   * enemy abilities
     * some creature with an attack which "pulls" the player towards them (e.g. a frog with a tongue attack)
+  * a spell which leaves an aura on a creature (e.g. particles which follow the creature etc)
 
   * spells/cards
     * magic missile

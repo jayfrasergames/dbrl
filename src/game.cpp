@@ -6,6 +6,7 @@
 Entity* add_entity(Game* game)
 {
 	auto entity = game->entities.append();
+	memset(entity, 0, sizeof(*entity));
 	entity->id = game->next_entity_id++;
 	return entity;
 }
@@ -146,7 +147,7 @@ void update_fov(Game* game)
 
 	auto& entities = game->entities;
 	for (u32 i = 0; i < entities.len; ++i) {
-		if (entities[i].blocks_vision) {
+		if (entities[i].flags & ENTITY_FLAG_BLOCKS_VISION) {
 			map.set(entities[i].pos);
 		}
 	}
@@ -208,6 +209,7 @@ Entity* add_spider_normal(Game* game, Pos pos)
 	e->appearance = APPEARANCE_CREATURE_RED_SPIDER;
 	e->movement_type = BLOCK_WALK;
 	e->pos = pos;
+	e->flags = ENTITY_FLAG_WALK_THROUGH_WEBS;
 
 	auto c = add_controller(game);
 	c->type = CONTROLLER_SPIDER_NORMAL;
@@ -222,6 +224,7 @@ Entity* add_spider_web(Game* game, Pos pos)
 	e->appearance = APPEARANCE_CREATURE_BLACK_SPIDER;
 	e->movement_type = BLOCK_WALK;
 	e->pos = pos;
+	e->flags = ENTITY_FLAG_WALK_THROUGH_WEBS;
 
 	auto c = add_controller(game);
 	c->type = CONTROLLER_SPIDER_WEB;
@@ -237,10 +240,11 @@ Entity* add_spider_poison(Game* game, Pos pos)
 	e->appearance = APPEARANCE_CREATURE_SPIDER_GREEN;
 	e->movement_type = BLOCK_WALK;
 	e->pos = pos;
+	e->flags = ENTITY_FLAG_WALK_THROUGH_WEBS;
 
 	auto c = add_controller(game);
 	c->type = CONTROLLER_SPIDER_POISON;
-	c->spider_normal.entity_id = e->id;
+	c->spider_poison.entity_id = e->id;
 
 	return e;
 }
@@ -251,10 +255,12 @@ Entity* add_spider_shadow(Game* game, Pos pos)
 	e->appearance = APPEARANCE_CREATURE_SPIDER_BLUE;
 	e->movement_type = BLOCK_WALK;
 	e->pos = pos;
+	e->flags = ENTITY_FLAG_WALK_THROUGH_WEBS;
 
 	auto c = add_controller(game);
 	c->type = CONTROLLER_SPIDER_SHADOW;
-	c->spider_normal.entity_id = e->id;
+	c->spider_shadow.entity_id = e->id;
+	c->spider_shadow.invisible_cooldown = 3;
 
 	return e;
 }
@@ -287,7 +293,7 @@ Entity* add_spiderweb(Game* game, Pos pos)
 	e->pos = pos;
 
 	auto mh = add_message_handler(game);
-	mh->type = MESSAGE_HANDLER_PREVENT_EXIT;
+	mh->type = MESSAGE_HANDLER_SPIDER_WEB_PREVENT_EXIT;
 	mh->handle_mask = MESSAGE_MOVE_PRE_EXIT;
 	mh->owner_id = e->id;
 	mh->prevent_exit.pos = pos;
@@ -409,7 +415,13 @@ void make_bump_attacks(Controller* c, Game* game, Output_Buffer<Action> attacks)
 		break;
 	}
 	case CONTROLLER_SPIDER_SHADOW: {
-		bump_attack_player_if_adjacent(game, c->spider_shadow.entity_id, attacks);
+		auto spider_id = c->spider_shadow.entity_id;
+		auto spider = game_get_entity_by_id(game, spider_id);
+		if (spider->flags & ENTITY_FLAG_INVISIBLE) {
+			bump_attack_player_if_adjacent(game, spider_id, attacks, ACTION_BUMP_ATTACK_SNEAK);
+		} else {
+			bump_attack_player_if_adjacent(game, spider_id, attacks);
+		}
 		break;
 	}
 
@@ -589,9 +601,22 @@ void make_moves(Controller* c, Game* game, Output_Buffer<Potential_Move> potenti
 		break;
 	}
 
-	case CONTROLLER_SPIDER_WEB:
-	case CONTROLLER_SPIDER_SHADOW:
+	case CONTROLLER_SPIDER_WEB: {
+		auto spider_id = c->spider_web.entity_id;
+		if (c->spider_web.web_cooldown) {
+			move_toward_player(game, spider_id, potential_moves);
+		}
 		break;
+	}
+
+	case CONTROLLER_SPIDER_SHADOW: {
+		auto spider_id = c->spider_shadow.entity_id;
+		auto spider = game_get_entity_by_id(game, spider_id);
+		if (c->spider_shadow.invisible_cooldown || (spider->flags & ENTITY_FLAG_INVISIBLE)) {
+			move_toward_player(game, spider_id, potential_moves);
+		}
+		break;
+	}
 
 	}
 }
@@ -645,11 +670,13 @@ void make_actions(Controller* c, Game* game, Slice<bool> has_acted, Output_Buffe
 
 	case CONTROLLER_SPIDER_WEB: {
 		auto spider_id = c->spider_web.entity_id;
+		if (c->spider_web.web_cooldown) {
+			--c->spider_web.web_cooldown;
+		}
 		if (has_acted[spider_id]) {
 			return;
 		}
 		if (c->spider_web.web_cooldown) {
-			--c->spider_web.web_cooldown;
 			return;
 		}
 
@@ -688,6 +715,30 @@ void make_actions(Controller* c, Game* game, Slice<bool> has_acted, Output_Buffe
 
 			c->spider_web.web_cooldown = 3;
 		}
+		break;
+	}
+
+	case CONTROLLER_SPIDER_SHADOW: {
+		auto spider_id = c->spider_shadow.entity_id;
+		auto spider = game_get_entity_by_id(game, spider_id);
+
+		if (c->spider_shadow.invisible_cooldown) {
+			--c->spider_shadow.invisible_cooldown;
+		}
+		if (has_acted[spider_id]) {
+			return;
+		}
+		if (c->spider_shadow.invisible_cooldown || (spider->flags & ENTITY_FLAG_INVISIBLE)) {
+			return;
+		}
+
+		Action action = {};
+		action.type = ACTION_TURN_INVISIBLE;
+		action.entity_id = spider_id;
+		actions.append(action);
+
+		c->spider_shadow.invisible_cooldown = 3;
+
 		break;
 	}
 

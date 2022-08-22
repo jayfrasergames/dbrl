@@ -675,7 +675,7 @@ static void from_string(Game* game, char* str)
 			e->pos = cur_pos;
 			e->block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e->appearance = APPEARANCE_DOOR_WOODEN_PLAIN;
-			e->blocks_vision = true;
+			e->flags = ENTITY_FLAG_BLOCKS_VISION;
 			e->default_action = ACTION_OPEN_DOOR;
 
 			break;

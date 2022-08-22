@@ -31,6 +31,7 @@ enum Action_Type
 	ACTION_WAIT,
 	ACTION_BUMP_ATTACK,
 	ACTION_BUMP_ATTACK_POISON,
+	ACTION_BUMP_ATTACK_SNEAK,
 	ACTION_FIREBALL,
 	ACTION_FIRE_BOLT,
 	ACTION_EXCHANGE,
@@ -41,6 +42,7 @@ enum Action_Type
 	ACTION_OPEN_DOOR,
 	ACTION_CLOSE_DOOR,
 	ACTION_SHOOT_WEB,
+	ACTION_TURN_INVISIBLE,
 };
 
 struct Action
@@ -151,6 +153,7 @@ struct Controller
 		} spider_poison;
 		struct {
 			Entity_ID entity_id;
+			u32       invisible_cooldown;
 		} spider_shadow;
 	};
 };
@@ -187,16 +190,23 @@ enum Block_Flag
 	BLOCK_FLY  = 1 << 2,
 };
 
+enum Entity_Flag
+{
+	ENTITY_FLAG_WALK_THROUGH_WEBS = 1 << 0,
+	ENTITY_FLAG_INVISIBLE         = 1 << 1,
+	ENTITY_FLAG_BLOCKS_VISION     = 1 << 2,
+};
+
 struct Entity
 {
 	Entity_ID     id;
+	Entity_Flag   flags;
 	u16           movement_type;
 	u16           block_mask;
 	Pos           pos;
 	Appearance    appearance;
 	i32           hit_points;
 	i32           max_hit_points;
-	bool          blocks_vision;
 	Action_Type   default_action;
 };
 
@@ -274,6 +284,7 @@ enum Message_Handler_Type
 	MESSAGE_HANDLER_SLIME_SPLIT,
 	MESSAGE_HANDLER_LICH_DEATH,
 	MESSAGE_HANDLER_TRAP_SPIDER_CAVE,
+	MESSAGE_HANDLER_SPIDER_WEB_PREVENT_EXIT,
 };
 
 struct Message_Handler
