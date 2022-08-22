@@ -1,6 +1,4 @@
 * current todo
-  * animate
-    * draw poison card (sound/card flashing)
   * spider caves
     * shadow spider attacks
 
@@ -78,6 +76,7 @@
       * separate out anim stuff into their own files
       * separate out process input logic/draw animation logic
       * split out static/dynamic animations
+      * text anims to be collated into streams for entities (make them not overlap)
     * renderer unify texture types (source texture/target texture)
     * deprecate use of assets.bin for non-release candidates
       * load sounds from wave files at run time

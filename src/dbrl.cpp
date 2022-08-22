@@ -70,6 +70,7 @@ enum Event_Type
 	EVENT_FIREBALL_OFFSHOOT,
 	EVENT_FIREBALL_OFFSHOOT_2,
 	EVENT_STUCK,
+	EVENT_POISONED,
 	EVENT_DAMAGED,
 	EVENT_DEATH,
 	EVENT_EXCHANGE,
@@ -86,6 +87,7 @@ enum Event_Type
 	EVENT_CREATURE_DROP_IN,
 	EVENT_ADD_CREATURE,
 	EVENT_ADD_CARD_TO_DISCARD,
+	EVENT_CARD_POISON,
 };
 
 struct Event
@@ -132,6 +134,10 @@ struct Event
 			v2 pos;
 			u32 amount;
 		} damaged;
+		struct {
+			Entity_ID entity_id;
+			v2        pos;
+		} poisoned;
 		struct {
 			Entity_ID entity_id;
 		} death;
@@ -211,6 +217,9 @@ struct Event
 			Card_ID         card_id;
 			Card_Appearance appearance;
 		} add_card_to_discard;
+		struct {
+			Card_ID card_id;
+		} card_poison;
 	};
 };
 
@@ -694,11 +703,13 @@ void game_draw_cards(Game* game, Action_Buffer* action_buffer, u32 num_to_draw, 
 	for (u32 i = 0; i < num_to_draw && card_state->deck; ++i) {
 		Card card = card_state->deck.pop();
 		card_state->hand.append(card);
+
 		Card_Event event = {};
 		event.type = CARD_EVENT_DRAW;
 		event.draw.card_id    = card.id;
 		event.draw.appearance = card.appearance;
 		card_events.append(event);
+
 		switch (card.appearance) {
 		case CARD_APPEARANCE_POISON: {
 			Action action = {};
@@ -707,6 +718,7 @@ void game_draw_cards(Game* game, Action_Buffer* action_buffer, u32 num_to_draw, 
 			ASSERT(c->type == CONTROLLER_PLAYER);
 			action.entity_id = c->player.entity_id;
 			action.poison.target = c->player.entity_id;
+			action.poison.card_id = card.id;
 			actions.append(action);
 			break;
 		}
@@ -811,6 +823,7 @@ struct Transaction
 		} blink;
 		struct {
 			Entity_ID entity_id;
+			Card_ID   card_id;
 		} poison;
 		struct {
 			Entity_ID slime_id;
@@ -1409,6 +1422,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			t.type = TRANSACTION_POISON_CAST;
 			t.start_time = 0.0f;
 			t.poison.entity_id = action.poison.target;
+			t.poison.card_id = action.poison.card_id;
 			transactions.append(t);
 			break;
 		}
@@ -2106,10 +2120,17 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				event.bump_attack.sound = SOUND_STAB_1_2;
 				events.append(event);
 
+				event = {};
+				event.type = EVENT_POISONED;
+				event.time = time;
+				event.poisoned.entity_id = target->id;
+				event.poisoned.pos = (v2)target->pos;
+				events.append(event);
+
 				auto player = get_player(game);
 				if (target->id == player->id) {
 					auto poison_card = add_card(game, CARD_APPEARANCE_POISON);
-					Event add_card_event = {};
+					event = {};
 					event.type = EVENT_ADD_CARD_TO_DISCARD;
 					event.time = time;
 					event.add_card_to_discard.entity_id = player->id;
@@ -2296,6 +2317,12 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				damage.damage = 3;
 				damage.pos = (v2)e->pos;
 				entity_damage.append(damage);
+
+				Event event = {};
+				event.type = EVENT_CARD_POISON;
+				event.time = time;
+				event.card_poison.card_id = t->poison.card_id;
+				events.append(event);
 
 				break;
 			}
@@ -3404,18 +3431,20 @@ void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, S
 			if (anim->exchange_particles.start_time <= dyn_time) {
 				Particle_Instance instance = {};
 				Particles *particles = &draw->renderer.particles;
-				instance.start_time = time;
-				instance.end_time = time + constants.anims.exchange.particle_duration;
 				instance.end_color = v4(1.0f, 1.0f, 1.0f, 1.0f);
 
 				u32 num_particles = constants.anims.exchange.num_particles;
 				for (u32 i = 0; i < num_particles; ++i) {
+					instance.start_time = time + rand_f32() * 0.1f;
+					instance.end_time = time + constants.anims.exchange.particle_duration + rand_f32() * 0.1f;
+					f32 duration = instance.end_time - instance.start_time;
+
 					f32 col = uniform_f32(0.8f, 1.0f);
 					instance.start_color = v4(col, col, col, 1.0f);
 
 					v2 offset = v2(uniform_f32(-0.5f, 0.5f), uniform_f32(0.0f, 0.5f));
 					instance.start_pos = anim->exchange_particles.pos + offset;
-					instance.start_velocity = v2(0.0f, -1.0f / constants.anims.exchange.particle_duration);
+					instance.start_velocity = v2(0.0f, -1.0f / duration);
 					particles_add(particles, instance);
 				}
 
@@ -4157,16 +4186,9 @@ enum Card_Movement_Anim_Type
 	CARD_ANIM_ADD_CARD_TO_DISCARD,
 };
 
-enum Card_Anim_Modifier_Type
-{
-	CARD_ANIM_MOD_NONE,
-	CARD_ANIM_MOD_FLASH,
-};
-
 struct Card_Anim
 {
 	Card_Movement_Anim_Type type;
-	Card_Anim_Modifier_Type mod_type;
 	union {
 		struct {
 			u32 index;
@@ -4204,18 +4226,29 @@ struct Card_Anim
 			f32      duration;
 		} add_to_discard;
 	};
-	union {
-		struct {
-			f32 start_time;
-			f32 duration;
-			f32 interval;
-			v4  color_mod;
-		} flash;
-	};
 	Card_Pos pos;
 	v4 color_mod;
 	u32 card_id;
 	v2 card_face;
+};
+
+enum Card_Anim_Modifier_Type
+{
+	CARD_ANIM_MOD_FLASH,
+};
+
+struct Card_Anim_Modifier
+{
+	Card_Anim_Modifier_Type type;
+	Card_ID card_id;
+	union {
+		struct {
+			v4  color;
+			f32 start_time;
+			f32 duration;
+			f32 flash_duration;
+		} flash;
+	};
 };
 
 enum Card_Anim_State_Type
@@ -4229,11 +4262,12 @@ enum Card_Anim_State_Type
 #define MAX_CARD_ANIMS 1024
 struct Card_Anim_State
 {
-	Card_Anim_State_Type type;
-	Hand_Params          hand_params;
-	u32                  hand_size;
-	u32                  highlighted_card_id;
-	Max_Length_Array<Card_Anim, MAX_CARD_ANIMS> card_anims;
+	Card_Anim_State_Type                                 type;
+	Hand_Params                                          hand_params;
+	u32                                                  hand_size;
+	u32                                                  highlighted_card_id;
+	Max_Length_Array<Card_Anim, MAX_CARD_ANIMS>          card_anims;
+	Max_Length_Array<Card_Anim_Modifier, MAX_CARD_ANIMS> card_anim_modifiers;
 
 	f32 dyn_time_start;
 
@@ -4882,6 +4916,24 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	}
 	num_card_anims = card_anim_state->card_anims.len;
 
+	auto &card_anim_mods = card_anim_state->card_anim_modifiers;
+	f32 dyn_time = time - card_anim_state->dyn_time_start;
+	for (u32 i = 0; i < card_anim_mods.len; ) {
+		auto anim = &card_anim_mods[i];
+		switch (anim->type) {
+		case CARD_ANIM_MOD_FLASH:
+			if (anim->flash.start_time + anim->flash.duration < dyn_time) {
+				card_anim_mods.remove(i);
+				continue;
+			}
+			break;
+		default:
+			ASSERT(0);
+			break;
+		}
+		++i;
+	}
+
 	// process hand to hand anims
 	u32 prev_highlighted_card_id = card_anim_state->highlighted_card_id;
 	u32 prev_highlighted_card = 0, highlighted_card = 0;
@@ -5015,6 +5067,7 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 		case CARD_POS_IN_PLAY:
 			break;
 		}
+
 		switch (anim->type) {
 		case CARD_ANIM_DRAW: {
 			f32 dt = (time - anim->draw.start_time) / anim->draw.duration;
@@ -5028,13 +5081,31 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 				sound_player->play(sound);
 			}
 			instance.horizontal_rotation = (1.0f - dt) * PI_F32;
-			card_render_add_instance(card_render, instance);
 			break;
 		}
 		default:
-			card_render_add_instance(card_render, instance);
 			break;
 		}
+
+		for (u32 i = 0; i < card_anim_mods.len; ++i) {
+			auto card_modifier = &card_anim_mods[i];
+			if (card_modifier->card_id != anim->card_id) {
+				continue;
+			}
+
+			switch (card_modifier->type) {
+			case CARD_ANIM_MOD_FLASH: {
+				f32 dt = (dyn_time - card_modifier->flash.start_time);
+				u32 flash_counter = (u32)floorf(dt / card_modifier->flash.flash_duration);
+				if (flash_counter % 2 == 0) {
+					instance.color_mod = card_modifier->flash.color;
+				}
+				break;
+			}
+			}
+		}
+
+		card_render_add_instance(card_render, instance);
 	}
 
 	// add draw pile card
@@ -5075,8 +5146,9 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 
 void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Slice<Event> events)
 {
-	auto& anims = world_anim->anims;
-	auto& card_anims = card_anim->card_anims;
+	auto &anims = world_anim->anims;
+	auto &card_anims = card_anim->card_anims;
+	auto &card_anim_modifiers = card_anim->card_anim_modifiers;
 
 	for (u32 i = 0; i < events.len; ++i) {
 		Event *event = &events[i];
@@ -5275,6 +5347,19 @@ void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Sl
 			world_anim->anims.append(text_anim);
 			break;
 		}
+		case EVENT_POISONED: {
+			Anim text_anim = {};
+			text_anim.type = ANIM_TEXT;
+			text_anim.text.start_time = event->time;
+			text_anim.text.duration = constants.anims.text_duration;
+			text_anim.text.color = v4(0.0f, 1.0f, 0.0f, 1.0f);
+			for (char *p = "*poisoned*", *q = (char*)text_anim.text.caption; *p; ++p, ++q) {
+				*q = *p;
+			}
+			text_anim.world_coords = event->poisoned.pos;
+			world_anim->anims.append(text_anim);
+			break;
+		}
 		case EVENT_DEATH: {
 			Anim anim = {};
 			anim.type = ANIM_DEATH;
@@ -5284,7 +5369,7 @@ void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Sl
 			break;
 		}
 		case EVENT_EXCHANGE: {
-			// TODO -- add anims for spell casting, sound of spell casting etc
+
 			Anim ex = {};
 			ex.type = ANIM_EXCHANGE;
 			ex.exchange.time = event->time;
@@ -5476,10 +5561,8 @@ void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Sl
 			break;
 		}
 		case EVENT_ADD_CARD_TO_DISCARD: {
-			// card_anim_
 			Card_Anim anim = {};
 			anim.type = CARD_ANIM_ADD_CARD_TO_DISCARD;
-			anim.mod_type = CARD_ANIM_MOD_NONE;
 
 			anim.add_to_discard.start_time = event->time;
 			anim.add_to_discard.duration = constants.cards_ui.add_to_discard_duration;
@@ -5489,6 +5572,23 @@ void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Sl
 			anim.card_face = card_appearance_get_sprite_coords(event->add_card_to_discard.appearance);
 
 			card_anims.append(anim);
+			break;
+		}
+		case EVENT_CARD_POISON: {
+			Card_Anim_Modifier anim = {};
+			anim.type = CARD_ANIM_MOD_FLASH;
+			anim.card_id = event->card_poison.card_id;
+			anim.flash.color = v4(0.0f, 1.0f, 0.0f, 1.0f);
+			anim.flash.start_time = event->time;
+			anim.flash.duration = constants.anims.poison.anim_duration;
+			anim.flash.flash_duration = constants.anims.poison.flash_duration;
+			card_anim_modifiers.append(anim);
+
+			Anim sound = {};
+			sound.type = ANIM_SOUND;
+			sound.sound.start_time = event->time;
+			sound.sound.sound_id = SOUND_NATURE_SPELL_10;
+			anims.append(sound);
 			break;
 		}
 
@@ -6420,49 +6520,6 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		break;
 	}
 
-	// do sprite tooltip
-	if (sprite_id && sprite_id < MAX_ENTITIES) {
-		// XXX
-		program->draw->boxy_bold.instances.reset();
-
-		Entity *e = game_get_entity_by_id(&program->game, sprite_id);
-		if (e) {
-			char *buffer = fmt("%d/%d", e->hit_points, e->max_hit_points);
-
-			u32 width = 1, height = 0;
-			for (u8 *p = (u8*)buffer; *p; ++p) {
-				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
-				width += glyph.dimensions.w - 1;
-				height = max(height, glyph.dimensions.h);
-			}
-
-			Sprite_Sheet_Font_Instance instance = {};
-			instance.world_pos = (v2)e->pos + v2(0.5f, -0.25f);
-			instance.world_offset = { -(f32)(width / 2), -(f32)(height / 2) };
-			instance.zoom = 1.0f;
-			instance.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
-			for (u8 *p = (u8*)buffer; *p; ++p) {
-				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
-				instance.glyph_pos = (v2)glyph.top_left;
-				instance.glyph_size = (v2)glyph.dimensions;
-
-				sprite_sheet_font_instances_add(&program->draw->boxy_bold, instance);
-
-				instance.world_offset.x += (f32)glyph.dimensions.w - 1.0f;
-			}
-		}
-
-		Render_Push_World_Font_Desc desc = {};
-		desc.output_tex_id = TARGET_TEXTURE_WORLD_DYNAMIC;
-		desc.font_tex_id = SOURCE_TEXTURE_BOXY_BOLD;
-		desc.constants.screen_size = v2(256.0f*24.0f, 256.0f*24.0f);
-		desc.constants.sprite_size = v2(24.0f, 24.0f);
-		desc.constants.world_tile_size = v2(24.0f, 24.0f);
-		desc.constants.tex_size = v2(1.0f, 1.0f);
-		desc.instances = program->draw->boxy_bold.instances;
-		push_world_font(&program->render->render_job_buffer, &desc);
-	}
-
 	// imgui
 	IMGUI_Context *ic = &program->draw->imgui;
 	imgui_begin(ic, input);
@@ -6543,6 +6600,49 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		                    TARGET_TEXTURE_SPRITE_ID,
 		                    sprite_id,
 		                    v4(1.0f, 0.0f, 0.0f, 1.0f));
+	}
+
+	// do sprite tooltip
+	if (sprite_id && sprite_id < MAX_ENTITIES) {
+		// XXX
+		program->draw->boxy_bold.instances.reset();
+
+		Entity *e = game_get_entity_by_id(&program->game, sprite_id);
+		if (e) {
+			char *buffer = fmt("%d/%d", e->hit_points, e->max_hit_points);
+
+			u32 width = 1, height = 0;
+			for (u8 *p = (u8*)buffer; *p; ++p) {
+				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
+				width += glyph.dimensions.w - 1;
+				height = max(height, glyph.dimensions.h);
+			}
+
+			Sprite_Sheet_Font_Instance instance = {};
+			instance.world_pos = (v2)e->pos + v2(0.5f, -0.25f);
+			instance.world_offset = { -(f32)(width / 2), -(f32)(height / 2) };
+			instance.zoom = 1.0f;
+			instance.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
+			for (u8 *p = (u8*)buffer; *p; ++p) {
+				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
+				instance.glyph_pos = (v2)glyph.top_left;
+				instance.glyph_size = (v2)glyph.dimensions;
+
+				sprite_sheet_font_instances_add(&program->draw->boxy_bold, instance);
+
+				instance.world_offset.x += (f32)glyph.dimensions.w - 1.0f;
+			}
+		}
+
+		Render_Push_World_Font_Desc desc = {};
+		desc.output_tex_id = TARGET_TEXTURE_WORLD_COMPOSITE;
+		desc.font_tex_id = SOURCE_TEXTURE_BOXY_BOLD;
+		desc.constants.screen_size = v2(256.0f*24.0f, 256.0f*24.0f);
+		desc.constants.sprite_size = v2(24.0f, 24.0f);
+		desc.constants.world_tile_size = v2(24.0f, 24.0f);
+		desc.constants.tex_size = v2(1.0f, 1.0f);
+		desc.instances = program->draw->boxy_bold.instances;
+		push_world_font(&program->render->render_job_buffer, &desc);
 	}
 
 	// debug draw world

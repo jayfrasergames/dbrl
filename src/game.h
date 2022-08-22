@@ -18,6 +18,8 @@
 struct Controller;
 struct Game;
 
+typedef u32 Card_ID;
+
 // =============================================================================
 // Actions
 // =============================================================================
@@ -47,12 +49,10 @@ struct Action
 	Entity_ID   entity_id;
 	union {
 		struct {
-			// Entity_ID entity_id;
 			Pos start;
 			Pos end;
 		} move;
 		struct {
-			// Entity_ID attacker_id;
 			Entity_ID target_id;
 		} bump_attack;
 		struct {
@@ -64,28 +64,24 @@ struct Action
 			Entity_ID b;
 		} exchange;
 		struct {
-			// Entity_ID caster;
 			Pos       target;
 		} blink;
 		struct {
 			Entity_ID target;
+			Card_ID   card_id;
 		} poison;
 		struct {
-			// Entity_ID caster_id;
 			Entity_ID target_id;
 		} fire_bolt;
 		struct {
-			// Entity_ID caster_id;
 			Entity_ID target_id;
 			i32 amount;
 		} heal;
 		struct {
-			// Entity_ID caster_id;
 			Pos start;
 			Pos end;
 		} lightning;
 		struct {
-			// Entity_ID entity_id;
 			Entity_ID door_id;
 		} open_door;
 		struct {
@@ -309,8 +305,6 @@ struct Message_Handler
 // =============================================================================
 // Cards
 // =============================================================================
-
-typedef u32 Card_ID;
 
 struct Card
 {
