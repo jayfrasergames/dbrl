@@ -354,7 +354,8 @@ void game_loop(void *uncast_args)
 
 	v2_u32 mouse_pos = { 0, 0 }, prev_mouse_pos = { 0, 0 };
 
-	if (!dsound_try_load()) {
+	if (dsound_try_load() != JFG_SUCCESS) {
+		MessageBox(window, jfg_get_error(), "DBRL", MB_OK);
 		return;
 	}
 

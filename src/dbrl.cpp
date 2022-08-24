@@ -39,6 +39,7 @@
 
 #include "game.h"
 #include "level_gen.h"
+#include "ui.h"
 
 // =============================================================================
 // type definitions/constants
@@ -56,183 +57,7 @@ void debug_pause();
 typedef Max_Length_Array<Action, GAME_MAX_ACTIONS> Action_Buffer;
 
 // Transactions
-
-enum Event_Type
-{
-	EVENT_NONE,
-	EVENT_MOVE,
-	EVENT_MOVE_BLOCKED,
-	EVENT_BUMP_ATTACK,
-	EVENT_OPEN_DOOR,
-	EVENT_DROP_TILE,
-	EVENT_FIREBALL_HIT,
-	EVENT_FIREBALL_SHOT,
-	EVENT_FIREBALL_OFFSHOOT,
-	EVENT_FIREBALL_OFFSHOOT_2,
-	EVENT_STUCK,
-	EVENT_POISONED,
-	EVENT_DAMAGED,
-	EVENT_DEATH,
-	EVENT_EXCHANGE,
-	EVENT_BLINK,
-	EVENT_SLIME_SPLIT,
-	EVENT_FIRE_BOLT_SHOT,
-	EVENT_POLYMORPH,
-	EVENT_HEAL,
-	EVENT_FIELD_OF_VISION_CHANGED,
-	EVENT_LIGHTNING_BOLT,
-	EVENT_LIGHTNING_BOLT_START,
-	EVENT_SHOOT_WEB_CAST,
-	EVENT_SHOOT_WEB_HIT,
-	EVENT_CREATURE_DROP_IN,
-	EVENT_ADD_CREATURE,
-	EVENT_ADD_CARD_TO_DISCARD,
-	EVENT_CARD_POISON,
-	EVENT_TURN_INVISIBLE,
-	EVENT_TURN_VISIBLE,
-};
-
-struct Event
-{
-	Event_Type type;
-	f32 time;
-	union {
-		struct {
-			Entity_ID entity_id;
-			Pos start, end;
-		} move;
-		struct {
-			Entity_ID attacker_id;
-			Pos       start;
-			Pos       end;
-			Sound_ID  sound;
-		} bump_attack;
-		struct {
-			Entity_ID  door_id;
-			Appearance new_appearance;
-		} open_door;
-		struct {
-			Entity_ID entity_id;
-			Pos pos;
-		} stuck;
-		struct {
-			Pos pos;
-		} drop_tile;
-		struct {
-			f32 duration;
-			Pos start;
-			Pos end;
-		} fireball_shot;
-		struct {
-			Pos pos;
-		} fireball_hit;
-		struct {
-			f32 duration;
-			v2 start;
-			v2 end;
-		} fireball_offshoot_2;
-		struct {
-			Entity_ID entity_id;
-			v2 pos;
-			u32 amount;
-		} damaged;
-		struct {
-			Entity_ID entity_id;
-			v2        pos;
-		} poisoned;
-		struct {
-			Entity_ID entity_id;
-		} death;
-		struct {
-			Entity_ID a;
-			Entity_ID b;
-			Pos       a_pos;
-			Pos       b_pos;
-		} exchange;
-		struct {
-			Entity_ID caster_id;
-			Pos       start;
-			Pos       target;
-		} blink;
-		struct {
-			Entity_ID original_id;
-			Entity_ID new_id;
-			v2 start;
-			v2 end;
-		} slime_split;
-		struct {
-			v2 start;
-			v2 end;
-			f32 duration;
-		} fire_bolt_shot;
-		struct {
-			Entity_ID  entity_id;
-			Appearance new_appearance;
-			Pos        pos;
-		} polymorph;
-		struct {
-			Entity_ID caster_id;
-			Entity_ID target_id;
-			i32 amount;
-			v2 start;
-			v2 end;
-		} heal;
-		struct {
-			f32 duration;
-			Field_Of_Vision *fov;
-		} field_of_vision;
-		struct {
-			Entity_ID caster_id;
-			f32 duration;
-			v2 start;
-			v2 end;
-		} lightning;
-		struct {
-			f32 duration;
-			v2 start;
-			v2 end;
-		} lightning_bolt;
-		struct {
-			v2 pos;
-		} lightning_bolt_start;
-		struct {
-			Entity_ID caster_id;
-			v2        start;
-			v2        end;
-		} shoot_web_cast;
-		struct {
-			Entity_ID  web_id;
-			Appearance appearance;
-			v2         pos;
-		} shoot_web_hit;
-		struct {
-			Appearance appearance;
-			v2         pos;
-		} creature_drop_in;
-		struct {
-			Entity_ID  creature_id;
-			Appearance appearance;
-			v2         pos;
-		} add_creature;
-		struct {
-			Entity_ID       entity_id;
-			Card_ID         card_id;
-			Card_Appearance appearance;
-		} add_card_to_discard;
-		struct {
-			Card_ID card_id;
-		} card_poison;
-		struct {
-			Entity_ID entity_id;
-		} turn_invisible;
-		struct {
-			Entity_ID entity_id;
-		} turn_visible;
-	};
-};
-
 #define MAX_EVENTS 10240
-typedef Max_Length_Array<Event, MAX_EVENTS> Event_Buffer;
 
 // =============================================================================
 // cards
@@ -880,18 +705,14 @@ struct Transaction
 	};
 };
 
-typedef Max_Length_Array<Transaction, GAME_MAX_TRANSACTIONS> Transaction_Buffer;
-
-void game_dispatch_message(Game*               game,
-                           Message             message,
-                           f32                 time,
-                           Transaction_Buffer* transaction_buffer,
-                           Event_Buffer*       event_buffer,
-                           void*               data)
+void game_dispatch_message(Game*                      game,
+                           Message                    message,
+                           f32                        time,
+                           Output_Buffer<Transaction> transactions,
+                           Output_Buffer<Event>       events,
+                           void*                      data)
 {
-	auto& handlers = game->handlers;
-	auto& transactions = *transaction_buffer;
-	auto& events = *event_buffer;
+	auto &handlers = game->handlers;
 	u32 num_handlers = handlers.len;
 	for (u32 i = 0; i < handlers.len; ) {
 		Message_Handler *h = &handlers[i];
@@ -1037,27 +858,27 @@ void game_dispatch_message(Game*               game,
 
 				Transaction t = {};
 				t.type = TRANSACTION_CREATURE_DROP_IN;
-				t.start_time = time + TRANSACTION_EPSILON;
+				t.start_time = time + constants.anims.creature_drop_in.duration;
 
 				t.creature_drop_in.pos = spawn_poss[0];
 				t.creature_drop_in.type = CREATURE_SPIDER_NORMAL;
-				transaction_buffer->append(t);
+				transactions.append(t);
 
 				t.creature_drop_in.pos = spawn_poss[1];
 				t.creature_drop_in.type = CREATURE_SPIDER_NORMAL;
-				transaction_buffer->append(t);
+				transactions.append(t);
 
 				t.creature_drop_in.pos = spawn_poss[2];
 				t.creature_drop_in.type = CREATURE_SPIDER_WEB;
-				transaction_buffer->append(t);
+				transactions.append(t);
 
 				t.creature_drop_in.pos = spawn_poss[3];
 				t.creature_drop_in.type = CREATURE_SPIDER_POISON;
-				transaction_buffer->append(t);
+				transactions.append(t);
 
 				t.creature_drop_in.pos = spawn_poss[4];
 				t.creature_drop_in.type = CREATURE_SPIDER_SHADOW;
-				transaction_buffer->append(t);
+				transactions.append(t);
 
 				handlers.remove(i);
 				continue;
@@ -1074,7 +895,7 @@ void game_dispatch_message(Game*               game,
 // #define DEBUG_SHOW_ACTIONS
 // #define DEBUG_TRANSACTION_PROCESSING
 
-void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* event_buffer)
+void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Event> events)
 {
 	// TODO -- field of vision
 
@@ -1370,7 +1191,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		}
 	}
 
-	Transaction_Buffer transactions;
+	Max_Length_Array<Transaction, GAME_MAX_TRANSACTIONS> transactions;
 	transactions.reset();
 
 	for (u32 i = 0; i < actions.len; ++i) {
@@ -1525,7 +1346,6 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 	// 3. resolve transactions
 
 	auto& handlers = game->handlers;
-	Event_Buffer& events = *event_buffer;
 
 	struct Entity_Damage
 	{
@@ -1922,7 +1742,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				m.move.entity_id = t->move.entity_id;
 				m.move.start = t->move.start;
 				m.move.end = t->move.end;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, &can_exit);
+				game_dispatch_message(game, m, time, transactions, events, &can_exit);
 
 #ifdef DEBUG_TRANSACTION_PROCESSING
 				debug_draw_world_reset();
@@ -1951,7 +1771,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 
 				// post-exit
 				m.type = MESSAGE_MOVE_POST_EXIT;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
+				game_dispatch_message(game, m, time, transactions, events, NULL);
 
 				physics_remove_objects_for_entity(&physics, t->move.entity_id);
 				Physics_Linear_Circle circle = {};
@@ -1987,7 +1807,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				m.move.entity_id = t->move.entity_id;
 				m.move.start = start;
 				m.move.end = end;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, &can_enter);
+				game_dispatch_message(game, m, time, transactions, events, &can_enter);
 
 #ifdef DEBUG_TRANSACTION_PROCESSING
 				debug_draw_world_reset();
@@ -2058,7 +1878,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				m.move.entity_id = t->move.entity_id;
 				m.move.start = start;
 				m.move.end = end;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
+				game_dispatch_message(game, m, time, transactions, events, NULL);
 				t->type = TRANSACTION_REMOVE;
 
 				recompute_physics_collisions = 1;
@@ -2376,10 +2196,10 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				m.move.entity_id = e->id;
 				m.move.start = start;
 				m.move.end = end;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
+				game_dispatch_message(game, m, time, transactions, events, NULL);
 
 				m.type = MESSAGE_MOVE_POST_ENTER;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
+				game_dispatch_message(game, m, time, transactions, events, NULL);
 				break;
 			}
 			case TRANSACTION_POISON_CAST: {
@@ -2616,17 +2436,17 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			}
 
 			case TRANSACTION_CREATURE_DROP_IN: {
+				t->type = TRANSACTION_REMOVE;
+
+				auto entity = add_creature(game, t->creature_drop_in.pos, t->creature_drop_in.type);
+
 				Event e = {};
 				e.type = EVENT_CREATURE_DROP_IN;
 				e.time = t->start_time;
+				e.creature_drop_in.entity_id = entity->id;
 				e.creature_drop_in.pos = (v2)t->creature_drop_in.pos;
 				e.creature_drop_in.appearance = get_creature_appearance(t->creature_drop_in.type);
 				events.append(e);
-
-				t->type = TRANSACTION_ADD_CREATURE;
-				t->start_time += constants.anims.creature_drop_in.duration;
-				t->add_creature.pos = t->creature_drop_in.pos;
-				t->add_creature.type = t->creature_drop_in.type;
 
 				break;
 			}
@@ -2709,7 +2529,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 			m.damage.entity_id = entity_id;
 			m.damage.amount = ed->damage;
 			m.damage.entity_died = entity_died;
-			game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
+			game_dispatch_message(game, m, time, transactions, events, NULL);
 
 			Event event = {};
 			event.type = EVENT_DAMAGED;
@@ -2723,7 +2543,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 				Message m = {};
 				m.type = MESSAGE_PRE_DEATH;
 				m.death.entity_id = entity_id;
-				game_dispatch_message(game, m, time, &transactions, event_buffer, NULL);
+				game_dispatch_message(game, m, time, transactions, events, NULL);
 
 				Event death_event = {};
 				death_event.type = EVENT_DEATH;
@@ -2791,13 +2611,13 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Event_Buffer* even
 		e.time = 0.0f; // XXX
 		e.field_of_vision.duration = constants.anims.move.duration;
 		e.field_of_vision.fov = &game->field_of_vision;
-		event_buffer->append(e);
+		events.append(e);
 	}
 }
 
-void game_do_turn(Game* game, Event_Buffer* event_buffer)
+void game_do_turn(Game* game, Output_Buffer<Event> events)
 {
-	event_buffer->reset();
+	events.reset();
 
 	// =====================================================================
 	// create chosen actions
@@ -2952,1291 +2772,11 @@ void game_do_turn(Game* game, Event_Buffer* event_buffer)
 	debug_pause();
 #endif
 
-	game_simulate_actions(game, actions, event_buffer);
+	game_simulate_actions(game, actions, events);
 }
-
-// =============================================================================
-// anim
-
-enum Anim_Type
-{
-	ANIM_TILE_STATIC,
-	ANIM_TILE_LIQUID,
-	ANIM_WATER_EDGE,
-	ANIM_CREATURE_IDLE,
-	ANIM_ADD_ITEM,
-	ANIM_ADD_CREATURE,
-	ANIM_MOVE,
-	ANIM_MOVE_BLOCKED,
-	ANIM_DROP_TILE,
-	ANIM_PROJECTILE_EFFECT_24,
-	ANIM_PROJECTILE_EFFECT_32,
-	ANIM_TEXT,
-	ANIM_CAMERA_SHAKE,
-	ANIM_SOUND,
-	ANIM_DEATH,
-	ANIM_EXCHANGE,
-	ANIM_EXCHANGE_PARTICLES,
-	ANIM_BLINK,
-	ANIM_BLINK_PARTICLES,
-	ANIM_SLIME_SPLIT,
-	ANIM_POLYMORPH,
-	ANIM_POLYMORPH_PARTICLES,
-	ANIM_HEAL_PARTICLES,
-	ANIM_FIELD_OF_VISION_CHANGED,
-	ANIM_SHOOT_WEB_PARTICLES,
-	ANIM_CREATURE_DROP_IN,
-	ANIM_TURN_INVISIBLE,
-	ANIM_TURN_VISIBLE,
-};
-
-struct Anim
-{
-	Anim_Type type;
-	union {
-		struct {
-			f32 duration;
-			f32 offset;
-		} idle;
-		struct {
-			f32 offset;
-			f32 duration;
-			v2  second_sprite_coords;
-		} tile_liquid;
-		struct {
-			v4_u8 color;
-		} water_edge;
-		struct {
-			f32 time;
-		} add_item;
-		struct {
-			f32 time;
-		} add_creature;
-		struct {
-			f32 duration;
-			f32 start_time;
-			v2 start;
-			v2 end;
-		} move;
-		struct {
-			f32 start_time;
-			f32 duration;
-		} drop_tile;
-		struct {
-			f32 start_time;
-			f32 duration;
-			v2 start;
-			v2 end;
-			v2 sprite_coords;
-		} projectile;
-		struct {
-			f32 start_time;
-			f32 duration;
-			u8 caption[16];
-			v4 color;
-		} text;
-		struct {
-			f32 start_time;
-			f32 duration;
-			f32 power;
-		} camera_shake;
-		struct {
-			f32 start_time;
-			Sound_ID sound_id;
-		} sound;
-		struct {
-			f32 time;
-			Entity_ID entity_id;
-		} death;
-		struct {
-			f32 time;
-			Entity_ID a, b;
-			v2 pos_a;
-			v2 pos_b;
-		} exchange;
-		struct {
-			f32 start_time;
-			v2  pos;
-		} exchange_particles;
-		struct {
-			f32 time;
-			Entity_ID entity_id;
-			v2 target;
-		} blink;
-		struct {
-			f32 time;
-			v2 pos;
-		} blink_particles;
-		struct {
-			f32 time;
-			f32 duration;
-			Entity_ID original_id;
-			Entity_ID new_id;
-			v2 start;
-			v2 end;
-		} slime_split;
-		struct {
-			f32 start_time;
-			Entity_ID entity_id;
-			v2        pos;
-			v2        new_sprite_coords;
-		} polymorph;
-		struct {
-			f32 start_time;
-			v2  pos;
-		} polymorph_particles;
-		struct {
-			f32 start_time;
-			f32 duration;
-			v2 start;
-			v2 end;
-		} heal_particles;
-		struct {
-			f32 start_time;
-			f32 duration;
-			u32 buffer_id;
-			Field_Of_Vision* fov;
-		} field_of_vision;
-		struct {
-			f32 start_time;
-			f32 duration;
-			v2  start;
-			v2  end;
-		} shoot_web_particles;
-		struct {
-			f32 start_time;
-			f32 duration;
-		} creature_drop_in;
-		struct {
-			f32 start_time;
-			f32 duration;
-		} turn_invisible;
-		struct {
-			f32 start_time;
-			f32 duration;
-		} turn_visible;
-	};
-	v2 sprite_coords;
-	v2 world_coords;
-	Entity_ID entity_id;
-	f32 depth_offset;
-};
-
-enum Anim_Modifier_Type
-{
-	ANIM_MOD_COLOR,
-};
-
-struct Anim_Modifier
-{
-	Anim_Modifier_Type type;
-	Entity_ID          entity_id;
-	union {
-		struct {
-			v4 color;
-		} color;
-	};
-};
-
-u8 anim_is_active(Anim* anim)
-{
-	switch (anim->type) {
-	case ANIM_TILE_STATIC:             return 0;
-	case ANIM_TILE_LIQUID:             return 0;
-	case ANIM_WATER_EDGE:              return 0;
-	case ANIM_CREATURE_IDLE:           return 0;
-	case ANIM_ADD_ITEM:                return 1;
-	case ANIM_ADD_CREATURE:            return 1;
-	case ANIM_MOVE:                    return 1;
-	case ANIM_MOVE_BLOCKED:            return 1;
-	case ANIM_DROP_TILE:               return 1;
-	case ANIM_PROJECTILE_EFFECT_24:    return 1;
-	case ANIM_PROJECTILE_EFFECT_32:    return 1;
-	case ANIM_TEXT:                    return 1;
-	case ANIM_CAMERA_SHAKE:            return 1;
-	case ANIM_SOUND:                   return 1;
-	case ANIM_DEATH:                   return 1;
-	case ANIM_EXCHANGE:                return 1;
-	case ANIM_EXCHANGE_PARTICLES:      return 1;
-	case ANIM_BLINK:                   return 1;
-	case ANIM_BLINK_PARTICLES:         return 1;
-	case ANIM_SLIME_SPLIT:             return 1;
-	case ANIM_POLYMORPH:               return 1;
-	case ANIM_POLYMORPH_PARTICLES:     return 1;
-	case ANIM_HEAL_PARTICLES:          return 1;
-	case ANIM_FIELD_OF_VISION_CHANGED: return 1;
-	case ANIM_SHOOT_WEB_PARTICLES:     return 1;
-	case ANIM_CREATURE_DROP_IN:        return 1;
-	case ANIM_TURN_INVISIBLE:          return 1;
-	case ANIM_TURN_VISIBLE:            return 1;
-	}
-	ASSERT(0);
-	return 0;
-}
-
-#define MAX_ANIMS (5 * MAX_ENTITIES)
-
-struct World_Anim_State
-{
-	Max_Length_Array<Anim, MAX_ANIMS>          anims;
-	Max_Length_Array<Anim_Modifier, MAX_ANIMS> anim_mods;
-	f32                                        dynamic_anim_start_time;
-	v2                                         camera_offset;
-};
-
-u8 world_anim_is_animating(World_Anim_State *world_anim)
-{
-	auto& anims = world_anim->anims;
-	for (u32 i = 0; i < anims.len; ++i) {
-		if (anim_is_active(&anims[i])) {
-			return 1;
-		}
-	}
-	return 0;
-}
-
-f32 angle_to_sprite_x_coord(f32 angle)
-{
-	angle /= PI_F32;
-	f32 x;
-	if      (angle < -0.875f) { x = 2.0f; }
-	else if (angle < -0.625f) { x = 5.0f; }
-	else if (angle < -0.375f) { x = 3.0f; }
-	else if (angle < -0.125f) { x = 4.0f; }
-	else if (angle <  0.125f) { x = 0.0f; }
-	else if (angle <  0.375f) { x = 7.0f; }
-	else if (angle <  0.625f) { x = 1.0f; }
-	else if (angle <  0.875f) { x = 6.0f; }
-	else                      { x = 2.0f; }
-	return x;
-}
-
-void world_anim_init(World_Anim_State* world_anim, Game* game)
-{
-	u32 anim_idx = 0;
-	u32 num_entities = game->entities.len;
-
-	for (u32 i = 0; i < num_entities; ++i) {
-		Entity *e = &game->entities[i];
-		Appearance app = e->appearance;
-		if (!app) {
-			continue;
-		}
-		Pos pos = e->pos;
-		if (appearance_is_creature(app)) {
-			Anim ca = {};
-			ca.type = ANIM_CREATURE_IDLE;
-			ca.sprite_coords = appearance_get_creature_sprite_coords(app);
-			ca.world_coords = (v2)pos;
-			ca.entity_id = e->id;
-			ca.depth_offset = constants.z_offsets.character;
-			ca.idle.duration = 0.8f + 0.4f * rand_f32();
-			ca.idle.offset = 0.0f;
-			world_anim->anims.append(ca);
-
-		} else if (appearance_is_floor(app)) {
-			Anim ta = {};
-			ta.type = ANIM_TILE_STATIC;
-			ta.sprite_coords = appearance_get_floor_sprite_coords(app);
-			ta.world_coords = { (f32)pos.x, (f32)pos.y };
-			ta.entity_id = e->id;
-			ta.depth_offset = constants.z_offsets.floor;
-			world_anim->anims.append(ta);
-
-		} else if (appearance_is_liquid(app)) {
-			Anim ta = {};
-			ta.type = ANIM_TILE_LIQUID;
-			ta.sprite_coords = appearance_get_liquid_sprite_coords(app);
-			ta.world_coords = { (f32)pos.x, (f32)pos.y };
-			ta.entity_id = e->id;
-			ta.depth_offset = constants.z_offsets.floor;
-
-			f32 d = uniform_f32(1.2f, 1.8f);
-			ta.tile_liquid.offset = uniform_f32(0.0f, d);
-			ta.tile_liquid.duration = d;
-			ta.tile_liquid.second_sprite_coords = ta.sprite_coords + v2(0.0f, 1.0f);
-
-			world_anim->anims.append(ta);
-
-		} else if (appearance_is_item(app)) {
-			Anim ia = {};
-			ia.type = ANIM_TILE_STATIC;
-			ia.sprite_coords = appearance_get_item_sprite_coords(app);
-			ia.world_coords = (v2)pos;
-			ia.entity_id = e->id;
-			ia.depth_offset = constants.z_offsets.item;
-			world_anim->anims.append(ia);
-
-		} else if (appearance_is_door(app)) {
-			Anim da = {};
-			da.type = ANIM_TILE_STATIC;
-			da.sprite_coords = appearance_get_door_sprite_coords(app);
-			da.world_coords = (v2)pos;
-			da.entity_id = e->id;
-			da.depth_offset = constants.z_offsets.door;
-			world_anim->anims.append(da);
-		}
-	}
-
-	auto& tiles = game->tiles;
-	for (u32 y = 1; y < 255; ++y) {
-		for (u32 x = 1; x < 255; ++x) {
-			Pos p = Pos(x, y);
-			Tile c = tiles[p];
-			switch (c.type) {
-			case TILE_EMPTY:
-				break;
-			case TILE_FLOOR: {
-				v2 sprite_coords = appearance_get_floor_sprite_coords(c.appearance);
-				Anim anim = {};
-				anim.type = ANIM_TILE_STATIC;
-				anim.sprite_coords = sprite_coords;
-				anim.world_coords = (v2)p;
-				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
-				anim.depth_offset = constants.z_offsets.floor;
-				world_anim->anims.append(anim);
-				break;
-			}
-			case TILE_WALL: {
-				Appearance app = c.appearance;
-				u8 tl = tiles[(Pos)((v2_i16)p + v2_i16(-1, -1))].appearance == app;
-				u8 t  = tiles[(Pos)((v2_i16)p + v2_i16( 0, -1))].appearance == app;
-				u8 tr = tiles[(Pos)((v2_i16)p + v2_i16( 1, -1))].appearance == app;
-				u8 l  = tiles[(Pos)((v2_i16)p + v2_i16(-1,  0))].appearance == app;
-				u8 r  = tiles[(Pos)((v2_i16)p + v2_i16( 1,  0))].appearance == app;
-				u8 bl = tiles[(Pos)((v2_i16)p + v2_i16(-1,  1))].appearance == app;
-				u8 b  = tiles[(Pos)((v2_i16)p + v2_i16( 0,  1))].appearance == app;
-				u8 br = tiles[(Pos)((v2_i16)p + v2_i16( 1,  1))].appearance == app;
-
-				u8 connection_mask = 0;
-				if (t && !(tl && tr && l && r)) {
-					connection_mask |= APPEARANCE_N;
-				}
-				if (r && !(t && tr && b && br)) {
-					connection_mask |= APPEARANCE_E;
-				}
-				if (b && !(l && r && bl && br)) {
-					connection_mask |= APPEARANCE_S;
-				}
-				if (l && !(t && b && tl && bl)) {
-					connection_mask |= APPEARANCE_W;
-				}
-
-				Anim anim = {};
-				anim.type = ANIM_TILE_STATIC;
-				anim.sprite_coords = appearance_get_wall_sprite_coords(app, connection_mask);
-				anim.world_coords = (v2)p;
-				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
-				anim.depth_offset = constants.z_offsets.wall;
-				world_anim->anims.append(anim);
-
-				if (tiles[(Pos)((v2_i16)p + v2_i16( 0,  1))].type != TILE_WALL) {
-					anim.sprite_coords = { 30.0f, 36.0f };
-					anim.world_coords = (v2)p + v2(0.0f, 1.0f);
-					anim.depth_offset = constants.z_offsets.wall_shadow;
-					world_anim->anims.append(anim);
-				}
-
-				break;
-			}
-			case TILE_WATER: {
-				v2 sprite_coords = appearance_get_liquid_sprite_coords(c.appearance);
-
-				Anim anim = {};
-				anim.type = ANIM_TILE_LIQUID;
-				anim.sprite_coords = sprite_coords;
-				anim.world_coords = (v2)p;
-				anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
-				anim.depth_offset = constants.z_offsets.floor;
-
-				f32 d = uniform_f32(0.8f, 1.2f);
-				anim.tile_liquid.offset = uniform_f32(0.0f, d);
-				anim.tile_liquid.duration = d;
-				anim.tile_liquid.second_sprite_coords = sprite_coords + v2(0.0f, 1.0f);
-
-				world_anim->anims.append(anim);
-
-
-				Tile_Type t = c.type;
-				u8 mask = 0;
-				if (tiles[(Pos)((v2_i16)p + v2_i16( 0, -1))].type == t) { mask |= 0x01; }
-				if (tiles[(Pos)((v2_i16)p + v2_i16( 1, -1))].type == t) { mask |= 0x02; }
-				if (tiles[(Pos)((v2_i16)p + v2_i16( 1,  0))].type == t) { mask |= 0x04; }
-				if (tiles[(Pos)((v2_i16)p + v2_i16( 1,  1))].type == t) { mask |= 0x08; }
-				if (tiles[(Pos)((v2_i16)p + v2_i16( 0,  1))].type == t) { mask |= 0x10; }
-				if (tiles[(Pos)((v2_i16)p + v2_i16(-1,  1))].type == t) { mask |= 0x20; }
-				if (tiles[(Pos)((v2_i16)p + v2_i16(-1,  0))].type == t) { mask |= 0x40; }
-				if (tiles[(Pos)((v2_i16)p + v2_i16(-1, -1))].type == t) { mask |= 0x80; }
-
-				if (~mask & 0xFF) {
-					Anim anim = {};
-					anim.type = ANIM_WATER_EDGE;
-					anim.sprite_coords = { (f32)(mask % 16), (f32)(15 - mask / 16) };
-					anim.world_coords = (v2)p;
-					anim.entity_id = MAX_ENTITIES + pos_to_u16(p);
-					anim.depth_offset = constants.z_offsets.water_edge;
-					anim.water_edge.color = { 0x58, 0x80, 0xC0, 0xFF };
-					world_anim->anims.append(anim);
-				}
-			}
-			}
-
-		}
-	}
-
-	// add field of vision
-	{
-		Anim a = {};
-		a.type = ANIM_FIELD_OF_VISION_CHANGED;
-		a.field_of_vision.start_time = 0.0f;
-		a.field_of_vision.duration = constants.anims.move.duration;
-		a.field_of_vision.buffer_id = 0;
-		a.field_of_vision.fov = &game->field_of_vision;
-		world_anim->anims.append(a);
-	}
-}
-
-void world_anim_draw(World_Anim_State* world_anim, Draw* draw, Render* render, Sound_Player* sound_player, f32 time)
-{
-	auto r = &render->render_job_buffer;
-
-	// reset draw state
-	sprite_sheet_instances_reset(&draw->tiles);
-	sprite_sheet_instances_reset(&draw->creatures);
-	sprite_sheet_instances_reset(&draw->water_edges);
-	sprite_sheet_instances_reset(&draw->effects_24);
-	sprite_sheet_instances_reset(&draw->effects_32);
-	sprite_sheet_font_instances_reset(&draw->boxy_bold);
-
-	f32 dyn_time = time - world_anim->dynamic_anim_start_time;
-
-	// clear up finished animations
-	// u32 num_anims = world_anim->anims.len;
-	u8 active_anims_remaining = 0;
-	auto &anims = world_anim->anims;
-	auto &anim_mods = world_anim->anim_mods;
-
-	for (u32 i = 0; i < anims.len; ) {
-		Anim *anim = &world_anim->anims[i];
-		switch (anim->type) {
-		case ANIM_TURN_INVISIBLE: {
-			if (anim->turn_invisible.start_time + anim->turn_invisible.duration <= dyn_time) {
-				anim->type = ANIM_CREATURE_IDLE;
-				Anim_Modifier anim_mod = {};
-				anim_mod.type = ANIM_MOD_COLOR;
-				anim_mod.entity_id = anim->entity_id;
-				anim_mod.color.color = v4(1.0f, 1.0f, 1.0f, constants.anims.turn_invisible.visibility);
-				anim_mods.append(anim_mod);
-			}
-			break;
-		}
-		case ANIM_TURN_VISIBLE: {
-			if (anim->turn_visible.start_time + anim->turn_visible.duration <= dyn_time) {
-				for (u32 i = 0; i < anim_mods.len; ) {
-					auto anim_mod = &anim_mods[i];
-					if (anim_mod->type == ANIM_MOD_COLOR && anim_mod->entity_id == anim->entity_id) {
-						anim_mods.remove(i);
-						continue;
-					}
-					++i;
-				}
-				anims.remove(i);
-				continue;
-			}
-			break;
-		}
-		case ANIM_ADD_ITEM: {
-			if (anim->add_item.time <= dyn_time) {
-				anim->type = ANIM_TILE_STATIC;
-			}
-			break;
-		}
-		case ANIM_ADD_CREATURE: {
-			if (anim->add_creature.time <= dyn_time) {
-				anim->type = ANIM_CREATURE_IDLE;
-			}
-			break;
-		}
-		case ANIM_MOVE:
-			if (anim->move.start_time + anim->move.duration <= dyn_time) {
-				anim->world_coords = anim->move.end;
-				anim->type = ANIM_CREATURE_IDLE;
-				anim->idle.offset = time;
-				anim->idle.duration = uniform_f32(0.8f, 1.2f);
-			}
-			break;
-		case ANIM_MOVE_BLOCKED:
-			if (anim->move.start_time + anim->move.duration <= dyn_time) {
-				anim->world_coords = anim->move.start;
-				anim->type = ANIM_CREATURE_IDLE;
-				anim->idle.offset = time;
-				anim->idle.duration = uniform_f32(0.8f, 1.2f);
-			}
-			break;
-		case ANIM_CREATURE_DROP_IN:
-			if (anim->creature_drop_in.start_time + anim->creature_drop_in.duration <= dyn_time) {
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_DROP_TILE:
-			if (anim->drop_tile.start_time + anim->drop_tile.duration <= dyn_time) {
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_PROJECTILE_EFFECT_24:
-		case ANIM_PROJECTILE_EFFECT_32:
-			if (anim->projectile.start_time + anim->projectile.duration <= dyn_time) {
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_TEXT:
-			if (anim->text.start_time + anim->text.duration <= dyn_time) {
-				anims.remove(i);
-				continue;
-			}
-		case ANIM_CAMERA_SHAKE:
-			if (anim->camera_shake.start_time + anim->camera_shake.duration <= dyn_time) {
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_SOUND:
-			if (anim->sound.start_time <= dyn_time) {
-				sound_player->play(anim->sound.sound_id);
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_DEATH:
-			if (anim->death.time <= dyn_time) {
-				Entity_ID entity_id = anim->death.entity_id;
-				anims.remove(i);
-				for (u32 i = 0; i < anims.len; ) {
-					if (anims[i].entity_id == entity_id) {
-						anims.remove(i);
-						continue;
-					}
-					++i;
-				}
-				continue;
-			}
-			break;
-		case ANIM_EXCHANGE:
-			if (anim->exchange.time <= dyn_time) {
-				Entity_ID a_id = anim->exchange.a;
-				Entity_ID b_id = anim->exchange.b;
-				Anim *a = NULL, *b = NULL;
-				for (u32 i = 0; i < anims.len; ++i) {
-					Anim *anim = &anims[i];
-					if (anim->entity_id == a_id) {
-						a = anim;
-					}
-					if (anim->entity_id == b_id) {
-						b = anim;
-					}
-				}
-				ASSERT(a && b);
-				// XXX - not sure what to do about this
-				ASSERT(a->type == ANIM_CREATURE_IDLE);
-				ASSERT(b->type == ANIM_CREATURE_IDLE);
-				v2 tmp = a->world_coords;
-				a->world_coords = b->world_coords;
-				b->world_coords = tmp;
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_BLINK:
-			if (anim->blink.time <= dyn_time) {
-				Entity_ID e_id = anim->blink.entity_id;
-				Anim *caster_anim = anims.items;
-				for (u32 i = 0; i < anims.len; ++i, ++caster_anim) {
-					if (caster_anim->entity_id == e_id) {
-						break;
-					}
-				}
-				ASSERT(caster_anim->entity_id == e_id);
-				caster_anim->world_coords = anim->blink.target;
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_BLINK_PARTICLES:
-			if (anim->blink_particles.time <= dyn_time) {
-				Particle_Instance instance = {};
-				Particles *particles = &draw->renderer.particles;
-				instance.start_time = time;
-				instance.end_time = instance.start_time + constants.anims.blink.particle_duration;
-				instance.start_pos = anim->blink_particles.pos;
-				instance.start_color = { 0.0f, 1.0f, 1.0f, 1.0f };
-				instance.end_color = { 1.0f, 1.0f, 1.0f, 1.0f };
-
-				u32 num_particles = constants.anims.blink.num_particles;
-				for (u32 i = 0; i < num_particles; ++i) {
-					f32 speed = rand_f32() + 1.0f;
-					f32 angle = 2.0f * PI_F32 * rand_f32();
-					v2 v = { cosf(angle), sinf(angle) };
-					instance.start_velocity = speed * v;
-					particles_add(particles, instance);
-				}
-
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_EXCHANGE_PARTICLES:
-			if (anim->exchange_particles.start_time <= dyn_time) {
-				Particle_Instance instance = {};
-				Particles *particles = &draw->renderer.particles;
-				instance.end_color = v4(1.0f, 1.0f, 1.0f, 1.0f);
-
-				u32 num_particles = constants.anims.exchange.num_particles;
-				for (u32 i = 0; i < num_particles; ++i) {
-					instance.start_time = time + rand_f32() * 0.1f;
-					instance.end_time = time + constants.anims.exchange.particle_duration + rand_f32() * 0.1f;
-					f32 duration = instance.end_time - instance.start_time;
-
-					f32 col = uniform_f32(0.8f, 1.0f);
-					instance.start_color = v4(col, col, col, 1.0f);
-
-					v2 offset = v2(uniform_f32(-0.5f, 0.5f), uniform_f32(0.0f, 0.5f));
-					instance.start_pos = anim->exchange_particles.pos + offset;
-					instance.start_velocity = v2(0.0f, -1.0f / duration);
-					particles_add(particles, instance);
-				}
-
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_SLIME_SPLIT:
-			if (anim->slime_split.time + anim->slime_split.duration <= dyn_time) {
-				anim->entity_id = anim->slime_split.new_id;
-				anim->world_coords = anim->slime_split.end;
-				anim->type = ANIM_CREATURE_IDLE;
-				anim->idle.offset = time;
-				anim->idle.duration = uniform_f32(0.8f, 1.2f);
-			}
-			break;
-		case ANIM_POLYMORPH:
-			if (anim->polymorph.start_time <= dyn_time) {
-				Entity_ID e_id = anim->polymorph.entity_id;
-				for (u32 i = 0; i < anims.len; ++i) {
-					Anim *a = &anims[i];
-					if (a->entity_id == e_id) {
-						a->sprite_coords = anim->polymorph.new_sprite_coords;
-					}
-				}
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_POLYMORPH_PARTICLES:
-			if (anim->polymorph_particles.start_time <= dyn_time) {
-				u32 num_particles = constants.anims.polymorph.num_particles;
-
-				Particles *particles = &draw->renderer.particles;
-				Particle_Instance instance = {};
-				instance.start_pos = anim->polymorph_particles.pos;
-				instance.start_time = time;
-				instance.end_time = time + constants.anims.polymorph.duration;
-				f32 sin_inner_coeff = constants.anims.polymorph.rotation_speed;
-				sin_inner_coeff /= (PI_F32 / 2.0f);
-				instance.sin_inner_coeff = v2(sin_inner_coeff, sin_inner_coeff);
-
-				for (u32 i = 0; i < num_particles; ++i) {
-					instance.start_color = {
-						uniform_f32(0.8f, 1.0f),
-						uniform_f32(0.8f, 1.0f),
-						uniform_f32(0.8f, 1.0f),
-						1.0f
-					};
-					instance.end_color = {
-						uniform_f32(0.8f, 1.0f),
-						uniform_f32(0.8f, 1.0f),
-						uniform_f32(0.8f, 1.0f),
-						1.0f
-					};
-					f32 angle = 2.0f * PI_F32 * rand_f32();
-					instance.sin_phase_offset = v2(PI_F32 / 2.0f, 0.0f) + angle;
-					f32 radius = uniform_f32(constants.anims.polymorph.min_radius,
-					                         constants.anims.polymorph.max_radius);
-					instance.sin_outer_coeff = v2(radius, radius);
-					particles_add(particles, instance);
-				}
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_SHOOT_WEB_PARTICLES:
-			if (anim->shoot_web_particles.start_time <= dyn_time) {
-				u32 num_particles = constants.anims.shoot_web.num_particles;
-
-				v2 start = anim->shoot_web_particles.start;
-				v2 end = anim->shoot_web_particles.end;
-				v2 velocity = (end - start) / constants.anims.shoot_web.shot_duration;
-
-				Particles *particles = &draw->renderer.particles;
-				Particle_Instance instance = {};
-				instance.start_time = time;
-				instance.end_time = time + constants.anims.shoot_web.shot_duration;
-
-				for (u32 i = 0; i < num_particles; ++i) {
-					f32 color = uniform_f32(0.8f, 1.0f);
-					instance.start_color = v4(color, color, color, 1.0f);
-					color = uniform_f32(0.8f, 1.0f);
-					instance.end_color = v4(color, color, color, 1.0f);
-
-					f32 h = 1.0f;
-					f32 d = constants.anims.shoot_web.shot_duration;
-					f32 v = - (4.0f*h) / d;
-					f32 a = (8.0f*h) / (d*d);
-
-					instance.acceleration = v2(0.0f, a);
-					instance.start_velocity = velocity + v2(0.0f, v);
-
-					f32 angle = 2.0f * PI_F32 * rand_f32();
-					f32 mag = 0.5f * rand_f32();
-
-					instance.start_pos = start + v2(cosf(angle), sinf(angle)) * mag;
-					particles_add(particles, instance);
-				}
-				anims.remove(i);
-			}
-			break;
-		case ANIM_HEAL_PARTICLES:
-			if (anim->heal_particles.start_time <= dyn_time) {
-				u32 num_particles = constants.anims.heal.num_particles;
-
-				Particles *particles = &draw->renderer.particles;
-				Particle_Instance instance = {};
-				v2 start = anim->heal_particles.start;
-				v2 velocity = anim->heal_particles.end - start;
-				f32 dist = sqrtf(velocity.x*velocity.x + velocity.y*velocity.y);
-				velocity = velocity / constants.anims.heal.cast_time;
-				instance.start_color = { 1.0f, 1.0f, 1.0f, 1.0f };
-				instance.end_color = { 1.0f, 0.0f, 0.0f, 1.0f };
-				f32 start_time = time;
-				f32 end_time = time + constants.anims.heal.cast_time;
-
-				for (u32 i = 0; i < num_particles; ++i) {
-					f32 radius = uniform_f32(0.1f, 0.5f);
-					f32 angle = rand_f32() * PI_F32 / 2.0f;
-					v2 offset = radius * v2(cosf(angle), sinf(angle));
-					f32 time_offset = rand_f32() * 0.1f;
-					instance.start_velocity = velocity;
-					instance.start_pos = start + offset;
-					instance.start_time= start_time + time_offset;
-					instance.end_time = end_time + time_offset;
-					particles_add(particles, instance);
-				}
-
-				anims.remove(i);
-				continue;
-			}
-			break;
-		case ANIM_FIELD_OF_VISION_CHANGED:
-			if (anim->field_of_vision.buffer_id
-			 && anim->field_of_vision.start_time
-			  + anim->field_of_vision.duration <= dyn_time) {
-				/*
-				fov_render_set_alpha(&draw->fov_render,
-				                     anim->field_of_vision.buffer_id,
-				                     1.0f);
-				*/
-				anims.remove(i);
-				continue;
-			} else if (!anim->field_of_vision.buffer_id
-			        && anim->field_of_vision.start_time <= dyn_time) {
-				/*
-				u32 buffer_id = fov_render_add_fov(&draw->fov_render,
-				                                   anim->field_of_vision.fov);
-				*/
-				// XXX -- TODO, change this properly
-				anim->field_of_vision.buffer_id = 1;
-				// anim->field_of_vision.buffer_id = buffer_id;
-			}
-			break;
-		}
-		++i;
-		if (anim_is_active(anim)) {
-			active_anims_remaining = 1;
-		}
-	}
-
-
-	f32 camera_offset_mag = 0.0f;
-	// draw tile animations
-	for (u32 i = 0; i < anims.len; ++i) {
-		Anim *anim = &world_anim->anims[i];
-		switch (anim->type) {
-		case ANIM_TILE_STATIC: {
-			Sprite_Sheet_Instance ti = {};
-			ti.sprite_pos = anim->sprite_coords;
-			ti.world_pos = anim->world_coords;
-			ti.sprite_id = anim->entity_id;
-			ti.depth_offset = anim->depth_offset;
-			ti.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
-			sprite_sheet_instances_add(&draw->tiles, ti);
-			break;
-		}
-		case ANIM_TILE_LIQUID: {
-			Sprite_Sheet_Instance ti = {};
-
-			f32 dt = time + anim->tile_liquid.offset;
-			dt = fmodf(dt, anim->tile_liquid.duration) / anim->tile_liquid.duration;
-			if (dt > 0.5f) {
-				ti.sprite_pos = anim->sprite_coords;
-			} else {
-				ti.sprite_pos = anim->tile_liquid.second_sprite_coords;
-			}
-			ti.world_pos = anim->world_coords;
-			ti.sprite_id = anim->entity_id;
-			ti.depth_offset = anim->depth_offset;
-			ti.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
-			sprite_sheet_instances_add(&draw->tiles, ti);
-
-			break;
-		}
-		case ANIM_CREATURE_IDLE: {
-			Sprite_Sheet_Instance ci = {};
-
-			v2 world_pos = anim->world_coords;
-			ci.y_offset = -3.0f;
-			ci.sprite_pos = { 4.0f, 22.0f };
-			ci.world_pos = world_pos;
-			ci.sprite_id = anim->entity_id;
-			ci.depth_offset = anim->depth_offset;
-			ci.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			v2 sprite_pos = anim->sprite_coords;
-			f32 dt = time + anim->idle.offset;
-			dt = fmodf(dt, anim->idle.duration) / anim->idle.duration;
-			if (dt > 0.5f) {
-				sprite_pos.y += 1.0f;
-			}
-			ci.sprite_pos = sprite_pos;
-			ci.y_offset = -6.0f;
-			ci.world_pos = world_pos;
-			ci.depth_offset += 0.5f;
-
-			sprite_sheet_instances_add(&draw->creatures, ci);
-			break;
-		}
-		case ANIM_WATER_EDGE: {
-			Sprite_Sheet_Instance water_edge = {};
-			water_edge.sprite_pos = anim->sprite_coords;
-			water_edge.world_pos = anim->world_coords;
-			water_edge.sprite_id = anim->entity_id;
-			water_edge.depth_offset = anim->depth_offset;
-			v4_u8 c = anim->water_edge.color;
-			water_edge.color_mod = {
-				(f32)c.r / 256.0f,
-				(f32)c.g / 256.0f,
-				(f32)c.b / 256.0f,
-				(f32)c.a / 256.0f,
-			};
-			sprite_sheet_instances_add(&draw->water_edges, water_edge);
-			break;
-		}
-		case ANIM_MOVE: {
-			f32 dt = (dyn_time - anim->move.start_time) / anim->move.duration;
-			if (dt < 0.0f) {
-				dt = 0.0f;
-			}
-			v2 start = anim->move.start;
-			v2 end = anim->move.end;
-			v2 world_pos = {};
-			world_pos.x = start.x + (end.x - start.x) * dt;
-			world_pos.y = start.y + (end.y - start.y) * dt;
-
-			Sprite_Sheet_Instance ci = {};
-
-			// draw shadow
-			ci.y_offset = -3.0f;
-			ci.sprite_pos = { 4.0f, 22.0f };
-			ci.world_pos = world_pos;
-			ci.sprite_id = anim->entity_id;
-			ci.depth_offset = anim->depth_offset;
-			ci.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			v2 sprite_pos = anim->sprite_coords;
-			if (dt > 0.5f) {
-				sprite_pos.y += 1.0f;
-			}
-			ci.sprite_pos = sprite_pos;
-			ci.y_offset = -6.0f - constants.anims.move.jump_height * 4.0f * dt*(1.0f - dt);
-			ci.world_pos = world_pos;
-			ci.depth_offset += 0.5f;
-
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			break;
-		}
-		case ANIM_MOVE_BLOCKED: {
-			f32 dt = (dyn_time - anim->move.start_time) / anim->move.duration;
-			v2 start = anim->move.start;
-			v2 end = anim->move.end;
-			v2 world_pos = {};
-			f32 w = dt;
-			if (dt > 0.5f) {
-				w = 1.0f - dt;
-			}
-			world_pos.x = start.x + (end.x - start.x) * w;
-			world_pos.y = start.y + (end.y - start.y) * w;
-
-			Sprite_Sheet_Instance ci = {};
-
-			// draw shadow
-			ci.y_offset = -3.0f;
-			ci.sprite_pos = { 4.0f, 22.0f };
-			ci.world_pos = world_pos;
-			ci.sprite_id = anim->entity_id;
-			ci.depth_offset = anim->depth_offset;
-			ci.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			v2 sprite_pos = anim->sprite_coords;
-			if (dt > 0.5f) {
-				sprite_pos.y += 1.0f;
-			}
-			ci.sprite_pos = sprite_pos;
-			ci.y_offset = -6.0f - constants.anims.move.jump_height * 4.0f * dt*(1.0f - dt);
-			ci.world_pos = world_pos;
-			ci.depth_offset += 0.5f;
-
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			break;
-		}
-		case ANIM_CREATURE_DROP_IN: {
-			f32 dt = (dyn_time - anim->creature_drop_in.start_time) / anim->creature_drop_in.duration;
-
-			Sprite_Sheet_Instance ci = {};
-
-			ci.color_mod = v4(1.0f, 1.0f, 1.0f, dt);
-
-			v2 world_pos = anim->world_coords;
-			ci.y_offset = -3.0f;
-			ci.sprite_pos = v2(4.0f, 22.0f);
-			ci.world_pos = world_pos;
-			ci.sprite_id = anim->entity_id;
-			ci.depth_offset = anim->depth_offset;
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			v2 sprite_pos = anim->sprite_coords;
-			ci.sprite_pos = sprite_pos;
-			ci.y_offset = -6.0f - (1.0f - dt) * constants.anims.creature_drop_in.drop_height * 24.0f;
-			ci.world_pos = world_pos;
-			ci.depth_offset += 0.5f;
-
-			sprite_sheet_instances_add(&draw->creatures, ci);
-			break;
-		}
-		case ANIM_DROP_TILE: {
-			f32 dt = (dyn_time - anim->drop_tile.start_time) / anim->drop_tile.duration;
-			dt = max(0.0f, dt);
-
-			f32 dy = dt*dt;
-
-			Sprite_Sheet_Instance ti = {};
-			ti.sprite_pos = anim->sprite_coords;
-			ti.world_pos = anim->world_coords;
-			ti.y_offset = 24.0f * dy * constants.anims.drop_tile.drop_distance;
-			ti.sprite_id = anim->entity_id;
-			ti.depth_offset = anim->depth_offset;
-
-			f32 c = 1.0f - dt;
-			ti.color_mod = { c, c, c, 1.0f };
-			sprite_sheet_instances_add(&draw->tiles, ti);
-
-			break;
-		}
-		case ANIM_TURN_INVISIBLE: {
-			f32 dt = (dyn_time - anim->turn_invisible.start_time) / anim->turn_invisible.duration;
-			dt = max(0.0f, dt);
-
-			Sprite_Sheet_Instance ci = {};
-
-			v2 world_pos = anim->world_coords;
-			ci.y_offset = -3.0f;
-			ci.sprite_pos = v2(4.0f, 22.0f);
-			ci.world_pos = world_pos;
-			ci.sprite_id = anim->entity_id;
-			ci.depth_offset = anim->depth_offset;
-			ci.color_mod = v4(1.0f, 1.0f, 1.0f, lerp(1.0f, constants.anims.turn_invisible.visibility, dt));
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			v2 sprite_pos = anim->sprite_coords;
-			ci.sprite_pos = sprite_pos;
-			ci.y_offset = -6.0f;
-			ci.world_pos = world_pos;
-			ci.depth_offset += 0.5f;
-
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			break;
-		}
-		case ANIM_TURN_VISIBLE: {
-			f32 dt = (dyn_time - anim->turn_visible.start_time) / anim->turn_visible.duration;
-			dt = max(0.0f, dt);
-
-			for (u32 i = 0; i < anim_mods.len; ++i) {
-				auto anim_mod = &anim_mods[i];
-				if (anim_mod->type == ANIM_MOD_COLOR && anim_mod->entity_id == anim->entity_id) {
-					anim_mod->color.color = v4(1.0f, 1.0f, 1.0f, lerp(constants.anims.turn_invisible.visibility, 1.0f, dt));
-				}
-			}
-
-			break;
-		}
-		case ANIM_PROJECTILE_EFFECT_24: {
-			f32 dt = (dyn_time - anim->projectile.start_time) / anim->projectile.duration;
-			if (dt < 0.0f) {
-				break;
-			}
-			// dt = dt * dt;
-
-			Sprite_Sheet_Instance instance = {};
-			instance.sprite_pos = anim->sprite_coords;
-			instance.world_pos = lerp(anim->projectile.start, anim->projectile.end, dt);
-			instance.sprite_id = 0;
-			instance.depth_offset = 2.0f;
-			instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
-			instance.sprite_pos = anim->projectile.sprite_coords;
-
-			sprite_sheet_instances_add(&draw->effects_24, instance);
-			break;
-		}
-		case ANIM_PROJECTILE_EFFECT_32: {
-			f32 dt = (dyn_time - anim->projectile.start_time) / anim->projectile.duration;
-			if (dt < 0.0f) {
-				break;
-			}
-			// dt = dt * dt;
-
-			Sprite_Sheet_Instance instance = {};
-			instance.sprite_pos = anim->sprite_coords;
-			instance.world_pos = lerp(anim->projectile.start, anim->projectile.end, dt);
-			instance.sprite_id = 0;
-			instance.depth_offset = 2.0f;
-			instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
-			instance.sprite_pos = anim->projectile.sprite_coords;
-
-			sprite_sheet_instances_add(&draw->effects_32, instance);
-			break;
-		}
-		case ANIM_TEXT: {
-			f32 dt = (dyn_time - anim->text.start_time) / anim->text.duration;
-			if (dt < 0.0f) {
-				break;
-			}
-
-			u32 width = 1, height = 0;
-			for (u8 *p = anim->text.caption; *p; ++p) {
-				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
-				width += glyph.dimensions.w - 1;
-				height = max(height, glyph.dimensions.h);
-			}
-
-			Sprite_Sheet_Font_Instance instance = {};
-			instance.world_pos = anim->world_coords + 0.5f;
-			instance.world_pos.y -= dt;
-			instance.world_offset = { -(f32)(width / 2), -(f32)(height / 2) };
-			instance.zoom = 1.0f;
-			instance.color_mod = anim->text.color;
-			for (u8 *p = anim->text.caption; *p; ++p) {
-				Boxy_Bold_Glyph_Pos glyph = boxy_bold_glyph_poss[*p];
-				instance.glyph_pos = (v2)glyph.top_left;
-				instance.glyph_size = (v2)glyph.dimensions;
-
-				sprite_sheet_font_instances_add(&draw->boxy_bold, instance);
-
-				instance.world_offset.x += (f32)glyph.dimensions.w - 1.0f;
-			}
-
-			break;
-		}
-		case ANIM_CAMERA_SHAKE: {
-			f32 dt = (dyn_time - anim->camera_shake.start_time) / anim->camera_shake.duration;
-			if (dt < 0.0f) {
-				break;
-			}
-
-			f32 power = anim->camera_shake.power * (dt - 1.0f) * (dt - 1.0f);
-			camera_offset_mag = max(camera_offset_mag, power);
-
-			break;
-		}
-		case ANIM_SLIME_SPLIT: {
-			f32 dt = (dyn_time - anim->slime_split.time) / anim->slime_split.duration;
-			if (dt < 0.0f) {
-				break;
-			}
-			v2 start = anim->slime_split.start;
-			v2 end = anim->slime_split.end;
-			v2 world_pos = lerp(start, end, dt);
-
-			Sprite_Sheet_Instance ci = {};
-
-			// draw shadow
-			ci.y_offset = -3.0f;
-			ci.sprite_pos = { 4.0f, 22.0f };
-			ci.world_pos = world_pos;
-			ci.sprite_id = anim->entity_id;
-			ci.depth_offset = anim->depth_offset;
-			ci.color_mod = { 1.0f, 1.0f, 1.0f, 1.0f };
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			v2 sprite_pos = anim->sprite_coords;
-			if (dt > 0.5f) {
-				sprite_pos.y += 1.0f;
-			}
-			ci.sprite_pos = sprite_pos;
-			ci.y_offset = -6.0f - constants.anims.move.jump_height * 4.0f * dt*(1.0f - dt);
-			ci.world_pos = world_pos;
-			ci.depth_offset += 0.5f;
-
-			sprite_sheet_instances_add(&draw->creatures, ci);
-
-			break;
-		}
-		case ANIM_FIELD_OF_VISION_CHANGED: {
-			u32 buffer_id = anim->field_of_vision.buffer_id;
-			f32 start_time = anim->field_of_vision.start_time;
-			f32 duration = anim->field_of_vision.duration;
-			f32 dt = (dyn_time - start_time) / duration;
-			/*
-			if (buffer_id && 0 < dt && dt <= 1.0f) {
-				fov_render_set_alpha(&draw->fov_render, buffer_id, dt);
-			}
-			*/
-			break;
-		}
-		}
-	}
-
-	for (u32 i = 0; i < anim_mods.len; ++i) {
-		auto anim_mod = &anim_mods[i];
-		auto &sprite_instances = draw->creatures.instances;
-		switch (anim_mod->type) {
-		case ANIM_MOD_COLOR:
-			for (u32 j = 0; j < sprite_instances.len; ++j) {
-				auto instance = &sprite_instances[j];
-				if (instance->sprite_id == anim_mod->entity_id) {
-					instance->color_mod = anim_mod->color.color;
-				}
-			}
-			break;
-		}
-	}
-
-	if (camera_offset_mag > 0.0f) {
-		f32 theta = uniform_f32(0.0f, 2.0f * PI_F32);
-		m2 m = m2::rotation(theta);
-		v2 v = m * v2(camera_offset_mag, 0.0f);
-		world_anim->camera_offset = v;
-	}
-
-	// Do render job with new abstracted renderer
-	{
-		begin(r, RENDER_EVENT_WORLD);
-
-		clear_uint(r, TARGET_TEXTURE_SPRITE_ID);
-		clear_rtv(r, TARGET_TEXTURE_WORLD_STATIC,  v4(0.0f, 0.0f, 0.0f, 0.0f));
-		clear_rtv(r, TARGET_TEXTURE_WORLD_DYNAMIC, v4(0.0f, 0.0f, 0.0f, 0.0f));
-		clear_depth(r, TARGET_TEXTURE_SPRITE_DEPTH, 0.0f);
-
-		Render_Push_World_Sprites_Desc desc = {};
-		desc.output_sprite_id_tex_id = TARGET_TEXTURE_SPRITE_ID;
-		desc.depth_tex_id = TARGET_TEXTURE_SPRITE_DEPTH;
-		desc.constants.screen_size = v2(256.0f*24.0f, 256.0f*24.0f);
-		desc.constants.sprite_size = v2(24.0f, 24.0f);
-		desc.constants.world_tile_size = v2(24.0f, 24.0f);
-		desc.constants.tex_size = v2(1.0f, 1.0f);
-
-		begin(r, RENDER_EVENT_WORLD_STATIC);
-
-		desc.output_tex_id = TARGET_TEXTURE_WORLD_STATIC;
-		desc.sprite_tex_id = SOURCE_TEXTURE_TILES;
-		desc.instances = draw->tiles.instances;
-		push_world_sprites(r, &desc);
-
-		desc.sprite_tex_id = SOURCE_TEXTURE_EDGES;
-		desc.instances = draw->water_edges.instances;
-		push_world_sprites(r, &desc);
-
-		end(r, RENDER_EVENT_WORLD_STATIC);
-		begin(r, RENDER_EVENT_WORLD_DYNAMIC);
-
-		desc.output_tex_id = TARGET_TEXTURE_WORLD_DYNAMIC;
-		desc.sprite_tex_id = SOURCE_TEXTURE_CREATURES;
-		desc.instances = draw->creatures.instances;
-		push_world_sprites(r, &desc);
-
-		desc.sprite_tex_id = SOURCE_TEXTURE_EFFECTS_24;
-		desc.instances = draw->effects_24.instances;
-		push_world_sprites(r, &desc);
-
-		desc.constants.sprite_size = v2(32.0f, 32.0f);
-		desc.sprite_tex_id = SOURCE_TEXTURE_EFFECTS_32;
-		desc.instances = draw->effects_32.instances;
-		push_world_sprites(r, &desc);
-		desc.constants.sprite_size = v2(24.0f, 24.0f);
-
-		Render_Push_World_Particles_Desc particles_desc = {};
-		particles_desc.output_tex_id = TARGET_TEXTURE_WORLD_DYNAMIC;
-		particles_desc.world_size = v2(256.0f, 256.0f);
-		particles_desc.tile_size = v2(24.0f, 24.0f);
-		particles_desc.time = time;
-		particles_desc.instances = draw->renderer.particles.particles;
-		push_world_particles(r, &particles_desc);
-
-		Render_Push_World_Font_Desc font_desc = {};
-		font_desc.output_tex_id = TARGET_TEXTURE_WORLD_DYNAMIC;
-		font_desc.font_tex_id = SOURCE_TEXTURE_BOXY_BOLD;
-		font_desc.constants.screen_size = v2(256.0f*24.0f, 256.0f*24.0f);
-		font_desc.constants.sprite_size = v2(24.0f, 24.0f);
-		font_desc.constants.world_tile_size = v2(24.0f, 24.0f);
-		font_desc.constants.tex_size = v2(1.0f, 1.0f);
-		font_desc.instances = draw->boxy_bold.instances;
-		push_world_font(r, &font_desc);
-
-		end(r, RENDER_EVENT_WORLD_DYNAMIC);
-		end(r, RENDER_EVENT_WORLD);
-	}
-
-	// sprite_sheet_font_instances_reset(&draw->boxy_bold);
-}
-
 
 // =============================================================================
 // card anim
-
-struct Hand_Params
-{
-	// in
-	f32 screen_width; // x in range [-screen_width, screen_width]
-	f32 height;
-	f32 border;
-	f32 bottom;
-	f32 top;
-	f32 separation;
-	f32 num_cards;
-	f32 highlighted_zoom;
-	v2 card_size;
-
-	// out
-	f32 radius;
-	f32 theta;
-	v2  center;
-};
-
 void hand_params_calc(Hand_Params* params)
 {
 	f32 h = params->top - params->bottom;
@@ -4333,159 +2873,6 @@ void hand_calc_deltas(f32* deltas, Hand_Params* params, u32 selected_card)
 		acc *= right_ratio;
 	}
 }
-
-struct Card_Hand_Pos
-{
-	f32 angle;
-	f32 zoom;
-	f32 radius;
-	f32 angle_speed;
-	f32 zoom_speed;
-	f32 radius_speed;
-};
-
-enum Card_Pos_Type
-{
-	CARD_POS_DECK,
-	CARD_POS_DISCARD,
-	CARD_POS_HAND,
-	CARD_POS_ABSOLUTE,
-	CARD_POS_IN_PLAY,
-};
-
-struct Card_Pos
-{
-	Card_Pos_Type type;
-	union {
-		struct {
-			f32 angle;
-			f32 zoom;
-			f32 radius;
-		} hand;
-		struct {
-			v2 pos;
-			f32 angle;
-			f32 zoom;
-		} absolute;
-	};
-	f32 z_offset;
-};
-
-enum Card_Movement_Anim_Type
-{
-	CARD_ANIM_DECK,
-	CARD_ANIM_DISCARD,
-	CARD_ANIM_DRAW,
-	CARD_ANIM_IN_HAND,
-	CARD_ANIM_IN_PLAY,
-	CARD_ANIM_HAND_TO_HAND,
-	CARD_ANIM_HAND_TO_IN_PLAY,
-	CARD_ANIM_HAND_TO_DISCARD,
-	CARD_ANIM_IN_PLAY_TO_DISCARD,
-	CARD_ANIM_ADD_CARD_TO_DISCARD,
-};
-
-struct Card_Anim
-{
-	Card_Movement_Anim_Type type;
-	union {
-		struct {
-			u32 index;
-		} hand;
-		struct {
-			f32 start_time;
-			f32 duration;
-			Card_Hand_Pos start;
-			Card_Hand_Pos end;
-			u32 index;
-		} hand_to_hand;
-		struct {
-			f32 start_time;
-			f32 duration;
-			u32 hand_index;
-			u8 played_sound;
-		} draw;
-		struct {
-			f32 start_time;
-			f32 duration;
-			Card_Hand_Pos start;
-		} hand_to_in_play;
-		struct {
-			f32 start_time;
-			f32 duration;
-			Card_Hand_Pos start;
-		} hand_to_discard;
-		struct {
-			f32 start_time;
-			f32 duration;
-			Card_Pos start;
-		} in_play_to_discard;
-		struct {
-			f32      start_time;
-			f32      duration;
-		} add_to_discard;
-	};
-	Card_Pos pos;
-	v4 color_mod;
-	u32 card_id;
-	v2 card_face;
-};
-
-enum Card_Anim_Modifier_Type
-{
-	CARD_ANIM_MOD_FLASH,
-};
-
-struct Card_Anim_Modifier
-{
-	Card_Anim_Modifier_Type type;
-	Card_ID card_id;
-	union {
-		struct {
-			v4  color;
-			f32 start_time;
-			f32 duration;
-			f32 flash_duration;
-		} flash;
-	};
-};
-
-enum Card_Anim_State_Type
-{
-	CARD_ANIM_STATE_NORMAL,
-	CARD_ANIM_STATE_NORMAL_TO_SELECTED,
-	CARD_ANIM_STATE_SELECTED,
-	CARD_ANIM_STATE_SELECTED_TO_NORMAL,
-};
-
-#define MAX_CARD_ANIMS 1024
-struct Card_Anim_State
-{
-	Card_Anim_State_Type                                 type;
-	Hand_Params                                          hand_params;
-	u32                                                  hand_size;
-	u32                                                  highlighted_card_id;
-	Max_Length_Array<Card_Anim, MAX_CARD_ANIMS>          card_anims;
-	Max_Length_Array<Card_Anim_Modifier, MAX_CARD_ANIMS> card_anim_modifiers;
-
-	f32 dyn_time_start;
-
-	union {
-		struct {
-			f32 start_time;
-			f32 duration;
-			u32 selected_card_id;
-		} normal_to_selected;
-		struct {
-			u32 selected_card_id;
-		} selected;
-		struct {
-			f32 start_time;
-			f32 duration;
-		} selected_to_normal;
-	};
-};
-
 enum Card_UI_Event_Type
 {
 	CARD_UI_EVENT_NONE,
@@ -5343,495 +3730,6 @@ Card_UI_Event card_anim_draw(Card_Anim_State* card_anim_state,
 	return event;
 }
 
-void animate_events(World_Anim_State* world_anim, Card_Anim_State* card_anim, Slice<Event> events)
-{
-	auto &anims = world_anim->anims;
-	auto &anim_mods = world_anim->anim_mods;
-	auto &card_anims = card_anim->card_anims;
-	auto &card_anim_modifiers = card_anim->card_anim_modifiers;
-
-	for (u32 i = 0; i < events.len; ++i) {
-		Event *event = &events[i];
-		switch (event->type) {
-		case EVENT_MOVE: {
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->move.entity_id) {
-					anim->type = ANIM_MOVE;
-					anim->move.duration = constants.anims.move.duration;
-					anim->move.start_time = event->time;
-					anim->move.start.x = (f32)event->move.start.x;
-					anim->move.start.y = (f32)event->move.start.y;
-					anim->move.end.x   = (f32)event->move.end.x;
-					anim->move.end.y   = (f32)event->move.end.y;
-				}
-			}
-			break;
-		}
-		case EVENT_MOVE_BLOCKED:
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->move.entity_id) {
-					anim->type = ANIM_MOVE_BLOCKED;
-					anim->move.duration = constants.anims.move.duration;
-					anim->move.start_time = event->time;
-					anim->move.start.x = (f32)event->move.start.x;
-					anim->move.start.y = (f32)event->move.start.y;
-					anim->move.end.x   = (f32)event->move.end.x;
-					anim->move.end.y   = (f32)event->move.end.y;
-				}
-			}
-			break;
-		case EVENT_OPEN_DOOR: {
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->open_door.door_id) {
-					ASSERT(anim->type == ANIM_TILE_STATIC);
-					ASSERT(appearance_is_door(event->open_door.new_appearance));
-					anim->sprite_coords = appearance_get_door_sprite_coords(event->open_door.new_appearance);
-				}
-			}
-			Anim open_sound = {};
-			open_sound.type = ANIM_SOUND;
-			open_sound.sound.start_time = event->time;
-			open_sound.sound.sound_id = SOUND_FANTASY_GAME_DOOR_OPEN;
-			anims.append(open_sound);
-			break;
-		}
-		case EVENT_BUMP_ATTACK: {
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == event->bump_attack.attacker_id) {
-					anim->type = ANIM_MOVE_BLOCKED;
-					anim->move.duration = constants.anims.bump_attack.duration;
-					anim->move.start_time = event->time;
-					anim->move.start = (v2)event->bump_attack.start;
-					anim->move.end   = (v2)event->bump_attack.end;
-				}
-			}
-			Anim bump_sound = {};
-			bump_sound.type = ANIM_SOUND;
-			bump_sound.sound.start_time = event->time;
-			bump_sound.sound.sound_id = event->bump_attack.sound;
-			anims.append(bump_sound);
-			break;
-		}
-
-		case EVENT_CREATURE_DROP_IN: {
-			Anim drop_in = {};
-			drop_in.type = ANIM_CREATURE_DROP_IN;
-			drop_in.sprite_coords = appearance_get_creature_sprite_coords(event->creature_drop_in.appearance);
-			drop_in.world_coords = (v2)event->creature_drop_in.pos;
-			drop_in.depth_offset = constants.z_offsets.character;
-			drop_in.creature_drop_in.start_time = event->time;
-			drop_in.creature_drop_in.duration = constants.anims.creature_drop_in.duration;
-			anims.append(drop_in);
-
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_SPIDER_RUNNING_01_LOOP;
-			anims.append(sound);
-			break;
-		}
-
-		case EVENT_DROP_TILE: {
-			u32 tile_id = MAX_ENTITIES + pos_to_u16(event->drop_tile.pos);
-			for (u32 i = 0; i < anims.len; ++i) {
-				Anim *anim = &world_anim->anims[i];
-				if (anim->entity_id == tile_id) {
-					anim->type = ANIM_DROP_TILE;
-					anim->drop_tile.duration = constants.anims.drop_tile.duration;
-					anim->drop_tile.start_time = event->time;
-				}
-			}
-			break;
-		}
-		case EVENT_FIREBALL_SHOT: {
-			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_32;
-			a.projectile.start_time = event->time;
-			a.projectile.duration = constants.anims.fireball.shot_duration;
-			a.projectile.start = (v2)event->fireball_shot.start;
-			a.projectile.end = (v2)event->fireball_shot.end;
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_FIRE_SPELL_02;
-			anims.append(a);
-
-			break;
-		}
-		case EVENT_FIREBALL_HIT: {
-			Anim shake = {};
-			shake.type = ANIM_CAMERA_SHAKE;
-			shake.camera_shake.start_time = event->time;
-			shake.camera_shake.duration = constants.anims.fireball.shake_duration;
-			shake.camera_shake.power = constants.anims.fireball.shake_power;
-			anims.append(shake);
-
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_FIRE_SPELL_13;
-			anims.append(sound);
-			break;
-		}
-		case EVENT_FIREBALL_OFFSHOOT_2: {
-			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_24;
-			a.projectile.start_time = event->time;
-			a.projectile.duration = event->fireball_offshoot_2.duration;
-			a.projectile.start = event->fireball_offshoot_2.start;
-			a.projectile.end = event->fireball_offshoot_2.end;
-			v2 dir = a.projectile.end - a.projectile.start;
-			f32 angle = atan2f(-dir.y, dir.x);
-			a.projectile.sprite_coords = { angle_to_sprite_x_coord(angle), 11.0f };
-			anims.append(a);
-			break;
-		}
-		case EVENT_LIGHTNING_BOLT: {
-			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_24;
-			a.projectile.start_time = event->time;
-			a.projectile.duration = event->lightning_bolt.duration;
-			a.projectile.start = event->lightning_bolt.start;
-			a.projectile.end = event->lightning_bolt.end;
-			a.projectile.sprite_coords = { 0.0f, 9.0f };
-			anims.append(a);
-			break;
-		}
-		case EVENT_LIGHTNING_BOLT_START: {
-			Anim a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_LIGHTNING_SPELL_03;
-			anims.append(a);
-			break;
-		}
-		case EVENT_STUCK: {
-			Anim text_anim = {};
-			text_anim.type = ANIM_TEXT;
-			text_anim.text.start_time = event->time;
-			text_anim.text.duration = constants.anims.text_duration;
-			text_anim.text.color = v4(1.0f, 1.0f, 1.0f, 1.0f);
-			text_anim.text.caption[0] = '*';
-			text_anim.text.caption[1] = 's';
-			text_anim.text.caption[2] = 't';
-			text_anim.text.caption[3] = 'u';
-			text_anim.text.caption[4] = 'c';
-			text_anim.text.caption[5] = 'k';
-			text_anim.text.caption[6] = '*';
-			text_anim.text.caption[7] = 0;
-			text_anim.world_coords = (v2)event->stuck.pos;
-			world_anim->anims.append(text_anim);
-			break;
-		}
-		case EVENT_DAMAGED: {
-			Anim text_anim = {};
-			text_anim.type = ANIM_TEXT;
-			text_anim.text.start_time = event->time;
-			text_anim.text.duration = constants.anims.text_duration;
-			text_anim.text.color = v4(1.0f, 0.0f, 0.0f, 1.0f);
-
-			char *buffer = fmt("-%u", event->damaged.amount);
-			u32 i = 0;
-			for (char *p = buffer; *p; ++p, ++i) {
-				text_anim.text.caption[i] = (u8)*p;
-			}
-			ASSERT(i < ARRAY_SIZE(text_anim.text.caption));
-			text_anim.text.caption[i] = 0;
-			text_anim.world_coords = event->damaged.pos;
-			world_anim->anims.append(text_anim);
-			break;
-		}
-		case EVENT_POISONED: {
-			Anim text_anim = {};
-			text_anim.type = ANIM_TEXT;
-			text_anim.text.start_time = event->time;
-			text_anim.text.duration = constants.anims.text_duration;
-			text_anim.text.color = v4(0.0f, 1.0f, 0.0f, 1.0f);
-			for (char *p = "*poisoned*", *q = (char*)text_anim.text.caption; *p; ++p, ++q) {
-				*q = *p;
-			}
-			text_anim.world_coords = event->poisoned.pos;
-			world_anim->anims.append(text_anim);
-			break;
-		}
-		case EVENT_DEATH: {
-			Anim anim = {};
-			anim.type = ANIM_DEATH;
-			anim.death.time = event->time;
-			anim.death.entity_id = event->death.entity_id;
-			world_anim->anims.append(anim);
-			break;
-		}
-		case EVENT_EXCHANGE: {
-
-			Anim ex = {};
-			ex.type = ANIM_EXCHANGE;
-			ex.exchange.time = event->time;
-			ex.exchange.a = event->exchange.a;
-			ex.exchange.b = event->exchange.b;
-			world_anim->anims.append(ex);
-
-			Anim particles = {};
-			particles.type = ANIM_EXCHANGE_PARTICLES;
-			particles.exchange_particles.start_time = event->time - constants.anims.exchange.particle_start;
-			particles.exchange_particles.pos = (v2)event->exchange.a_pos;
-			world_anim->anims.append(particles);
-
-			particles.exchange_particles.pos = (v2)event->exchange.b_pos;
-			world_anim->anims.append(particles);
-
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_CAST_03;
-			world_anim->anims.append(sound);
-
-			break;
-		}
-		case EVENT_BLINK: {
-			// TODO -- spell casting sounds/anims/particle effect stuff
-			Anim anim = {};
-			anim.type = ANIM_BLINK;
-			anim.blink.time = event->time;
-			anim.blink.entity_id = event->blink.caster_id;
-			anim.blink.target = (v2)event->blink.target;
-			world_anim->anims.append(anim);
-
-			f32 particle_start = event->time - constants.anims.blink.particle_start;
-			anim = {};
-			anim.type = ANIM_BLINK_PARTICLES;
-			anim.blink_particles.time = particle_start;
-			anim.blink_particles.pos = (v2)event->blink.start;
-			world_anim->anims.append(anim);
-
-			anim = {};
-			anim.type = ANIM_BLINK_PARTICLES;
-			anim.blink_particles.time = event->time;
-			anim.blink_particles.pos = (v2)event->blink.target;
-			world_anim->anims.append(anim);
-
-			anim = {};
-			anim.type = ANIM_SOUND;
-			anim.sound.start_time = particle_start;
-			anim.sound.sound_id = SOUND_CARD_GAME_ABILITIES_POOF_02;
-			world_anim->anims.append(anim);
-
-			break;
-		}
-		case EVENT_SLIME_SPLIT: {
-			Anim anim = {};
-			anim.depth_offset = constants.z_offsets.character;
-			anim.type = ANIM_SLIME_SPLIT;
-			anim.slime_split.time = event->time;
-			anim.slime_split.duration = constants.anims.slime_split.duration;
-			anim.slime_split.original_id = event->slime_split.original_id;
-			anim.slime_split.new_id = event->slime_split.new_id;
-			anim.slime_split.start = event->slime_split.start;
-			anim.slime_split.end = event->slime_split.end;
-			anim.world_coords = event->slime_split.end;
-			anim.entity_id = event->slime_split.new_id;
-			anim.sprite_coords = appearance_get_creature_sprite_coords(
-				APPEARANCE_CREATURE_GREEN_SLIME);
-			world_anim->anims.append(anim);
-			break;
-		}
-		case EVENT_SHOOT_WEB_CAST: {
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_SHADOW_ATTACK_4;
-
-			Anim particles = {};
-			particles.type = ANIM_SHOOT_WEB_PARTICLES;
-			particles.shoot_web_particles.start_time = event->time;
-			particles.shoot_web_particles.duration = constants.anims.shoot_web.shot_duration;
-			particles.shoot_web_particles.start = event->shoot_web_cast.start;
-			particles.shoot_web_particles.end = event->shoot_web_cast.end;
-
-			world_anim->anims.append(sound);
-			world_anim->anims.append(particles);
-			break;
-		}
-		case EVENT_SHOOT_WEB_HIT: {
-			Anim anim = {};
-			anim.type = ANIM_ADD_ITEM;
-			anim.sprite_coords = appearance_get_item_sprite_coords(event->shoot_web_hit.appearance);
-			anim.world_coords = event->shoot_web_hit.pos;
-			anim.entity_id = event->shoot_web_hit.web_id;
-			anim.depth_offset = constants.z_offsets.item;
-			anim.add_item.time = event->time;
-			world_anim->anims.append(anim);
-			break;
-		}
-		case EVENT_FIRE_BOLT_SHOT: {
-			Anim a = {};
-			a.type = ANIM_PROJECTILE_EFFECT_32;
-			a.projectile.start_time = event->time;
-			a.projectile.duration = event->fire_bolt_shot.duration;
-			v2 start = event->fire_bolt_shot.start;
-			v2 end = event->fire_bolt_shot.end;
-			a.projectile.start = start;
-			a.projectile.end = end;
-			v2 dir = end - start;
-			f32 angle = atan2f(-dir.y, dir.x);
-			a.projectile.sprite_coords = { angle_to_sprite_x_coord(angle), 5.0f };
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_FIRE_SPELL_04;
-			anims.append(a);
-			break;
-		}
-		case EVENT_POLYMORPH: {
-			Anim a = {};
-			a.type = ANIM_POLYMORPH;
-			a.polymorph.start_time = event->time;
-			a.polymorph.entity_id = event->polymorph.entity_id;
-			a.polymorph.new_sprite_coords = appearance_get_creature_sprite_coords(
-				event->polymorph.new_appearance);
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_POLYMORPH_PARTICLES;
-			a.polymorph_particles.start_time = event->time;
-			a.polymorph_particles.pos = (v2)event->polymorph.pos;
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_SHADOW_SPELL_01;
-			anims.append(a);
-		}
-		case EVENT_HEAL: {
-			Anim a = {};
-			a.type = ANIM_HEAL_PARTICLES;
-			a.heal_particles.start_time = event->time;
-			a.heal_particles.duration = constants.anims.heal.cast_time;
-			// a.heal_particles.amount = event->heal.amount;
-			a.heal_particles.start = (v2)event->heal.start;
-			a.heal_particles.end = (v2)event->heal.end;
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_TEXT;
-			a.text.start_time = event->time + constants.anims.heal.cast_time;
-			a.text.duration = 1.0f;
-			a.text.color = v4(0.0f, 1.0f, 1.0f, 1.0f);
-			snprintf((char*)a.text.caption,
-			         ARRAY_SIZE(a.text.caption),
-			         "%d",
-			         event->heal.amount);
-			a.world_coords = (v2)event->heal.end;
-			anims.append(a);
-
-			a = {};
-			a.type = ANIM_SOUND;
-			a.sound.start_time = event->time;
-			a.sound.sound_id = SOUND_HEALING_01;
-			anims.append(a);
-			break;
-		}
-		case EVENT_FIELD_OF_VISION_CHANGED: {
-			Anim a = {};
-			a.type = ANIM_FIELD_OF_VISION_CHANGED;
-			a.field_of_vision.start_time = event->time;
-			a.field_of_vision.duration = event->field_of_vision.duration;
-			a.field_of_vision.fov = event->field_of_vision.fov;
-			anims.append(a);
-			break;
-		}
-		case EVENT_ADD_CREATURE: {
-			Anim a = {};
-			a.type = ANIM_ADD_CREATURE;
-			a.sprite_coords = appearance_get_creature_sprite_coords(event->add_creature.appearance);
-			a.world_coords = event->add_creature.pos;
-			a.entity_id = event->add_creature.creature_id;
-			a.depth_offset = constants.z_offsets.character;
-			a.add_creature.time = event->time;
-			anims.append(a);
-			break;
-		}
-		case EVENT_ADD_CARD_TO_DISCARD: {
-			Card_Anim anim = {};
-			anim.type = CARD_ANIM_ADD_CARD_TO_DISCARD;
-
-			anim.add_to_discard.start_time = event->time;
-			anim.add_to_discard.duration = constants.cards_ui.add_to_discard_duration;
-
-			anim.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
-			anim.card_id = event->add_card_to_discard.card_id;
-			anim.card_face = card_appearance_get_sprite_coords(event->add_card_to_discard.appearance);
-
-			card_anims.append(anim);
-			break;
-		}
-		case EVENT_CARD_POISON: {
-			Card_Anim_Modifier anim = {};
-			anim.type = CARD_ANIM_MOD_FLASH;
-			anim.card_id = event->card_poison.card_id;
-			anim.flash.color = v4(0.0f, 1.0f, 0.0f, 1.0f);
-			anim.flash.start_time = event->time;
-			anim.flash.duration = constants.anims.poison.anim_duration;
-			anim.flash.flash_duration = constants.anims.poison.flash_duration;
-			card_anim_modifiers.append(anim);
-
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_NATURE_SPELL_10;
-			anims.append(sound);
-			break;
-		}
-		case EVENT_TURN_INVISIBLE: {
-			for (u32 i = 0; i < anims.len; ++i) {
-				auto anim = &anims[i];
-				if (anim->entity_id != event->turn_invisible.entity_id) {
-					continue;
-				}
-				anim->type = ANIM_TURN_INVISIBLE;
-				anim->turn_invisible.start_time = event->time;
-				anim->turn_invisible.duration = constants.anims.turn_invisible.duration;
-				break;
-			}
-
-			Anim sound = {};
-			sound.type = ANIM_SOUND;
-			sound.sound.start_time = event->time;
-			sound.sound.sound_id = SOUND_CARD_GAME_MAGIC_INVISIBLE_01;
-			anims.append(sound);
-
-			break;
-		}
-		case EVENT_TURN_VISIBLE: {
-			Anim anim = {};
-			anim.type = ANIM_TURN_VISIBLE;
-			anim.entity_id = event->turn_visible.entity_id;
-			anim.turn_visible.start_time = event->time;
-			anim.turn_visible.duration = constants.anims.turn_visible.duration;
-			anims.append(anim);
-			break;
-		}
-
-		}
-	}
-}
-
-void world_anim_build_events_to_be_animated(World_Anim_State* world_anim, Card_Anim_State* card_anim, Event_Buffer* event_buffer, f32 time)
-{
-	animate_events(world_anim, card_anim, *event_buffer);
-	world_anim->dynamic_anim_start_time = time;
-	card_anim->dyn_time_start = time;
-}
-
 // =============================================================================
 // program
 
@@ -5915,7 +3813,7 @@ struct Program
 	Stack<Card_Param, MAX_CARD_PARAMS> card_params_stack;
 	Action                             action_being_built;
 
-	World_Anim_State                   world_anim;
+	Anim_State                         anim_state;
 	Render                            *render;
 	Draw                              *draw;
 	Sound_Player                       sound;
@@ -5927,8 +3825,6 @@ struct Program
 	MT19937 random_state;
 
 	u32 prev_card_id;
-
-	Card_Anim_State card_anim_state;
 
 	Assets_Header assets_header;
 	u8 assets_data[ASSETS_DATA_MAX_SIZE];
@@ -5955,7 +3851,7 @@ void build_deck_random_n(Program *program, u32 n)
 {
 	// cards
 	Card_State *card_state = &program->game.card_state;
-	Card_Anim_State *card_anim_state = &program->card_anim_state;
+	Card_Anim_State *card_anim_state = &program->anim_state.card_anim_state;
 	memset(card_state, 0, sizeof(*card_state));
 	memset(card_anim_state, 0, sizeof(*card_anim_state));
 
@@ -5968,7 +3864,7 @@ void build_deck_random_n(Program *program, u32 n)
 void build_lightning_deck(Program *program)
 {
 	Card_State *card_state = &program->game.card_state;
-	Card_Anim_State *card_anim_state = &program->card_anim_state;
+	Card_Anim_State *card_anim_state = &program->anim_state.card_anim_state;
 	memset(card_state, 0, sizeof(*card_state));
 	memset(card_anim_state, 0, sizeof(*card_anim_state));
 
@@ -5983,7 +3879,7 @@ void build_lightning_deck(Program *program)
 void build_deck_poison(Program *program)
 {
 	Card_State *card_state = &program->game.card_state;
-	Card_Anim_State *card_anim_state = &program->card_anim_state;
+	Card_Anim_State *card_anim_state = &program->anim_state.card_anim_state;
 	memset(card_state, 0, sizeof(*card_state));
 	memset(card_anim_state, 0, sizeof(*card_anim_state));
 
@@ -6012,8 +3908,9 @@ void program_init_level(Program* program, Build_Level_Function build, Log* log)
 	Pos player_pos = game_get_player_pos(&program->game);
 	program->draw->camera.world_center = (v2)player_pos;
 
-	memset(&program->world_anim, 0, sizeof(program->world_anim));
-	world_anim_init(&program->world_anim, &program->game);
+	memset(&program->anim_state, 0, sizeof(program->anim_state));
+	program->anim_state.draw = program->draw;
+	init(&program->anim_state, &program->game);
 }
 
 static int l_build_level(lua_State* lua_state)
@@ -6104,6 +4001,7 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 
 	program->render = render;
 	program->draw = draw;
+	program->anim_state.draw = draw;
 
 	lua_State *lua_state = luaL_newstate();
 	program->lua_state = lua_state;
@@ -6255,11 +4153,10 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 
 	f32 time = (f32)program->frame_number / 60.0f;
 	program->draw->renderer.time = time;
-	world_anim_draw(&program->world_anim, program->draw, program->render, &program->sound, time);
-	program->draw->camera.offset = program->world_anim.camera_offset;
+	draw(&program->anim_state, program->render, &program->sound, time);
+	program->draw->camera.offset = program->anim_state.camera_offset;
 
-	if (program->program_input_state_stack.peek() == GIS_ANIMATING
-	 && !world_anim_is_animating(&program->world_anim)) {
+	if (program->program_input_state_stack.peek() == GIS_ANIMATING && !is_animating(&program->anim_state)) {
 		program->program_input_state_stack.pop();
 	}
 
@@ -6280,21 +4177,22 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 	}
 
-	Event_Buffer event_buffer = {};
+	Max_Length_Array<Event, MAX_EVENTS> event_buffer;
+	event_buffer.reset();
 
 	// program->card_anim_state.hand_params.screen_width = ratio;
-	program->card_anim_state.hand_params.height = constants.cards_ui.height;
-	program->card_anim_state.hand_params.border = constants.cards_ui.border;
-	program->card_anim_state.hand_params.top    = constants.cards_ui.top;
-	program->card_anim_state.hand_params.bottom = constants.cards_ui.bottom;
+	program->anim_state.card_anim_state.hand_params.height = constants.cards_ui.height;
+	program->anim_state.card_anim_state.hand_params.border = constants.cards_ui.border;
+	program->anim_state.card_anim_state.hand_params.top    = constants.cards_ui.top;
+	program->anim_state.card_anim_state.hand_params.bottom = constants.cards_ui.bottom;
 	// XXX - ugh
-	program->card_anim_state.hand_params.card_size = { 0.5f*0.4f*48.0f/80.0f, 0.5f*0.4f*1.0f };
+	program->anim_state.card_anim_state.hand_params.card_size = { 0.5f*0.4f*48.0f/80.0f, 0.5f*0.4f*1.0f };
 
 	debug_line_reset(&program->draw->card_debug_line);
 	// card_anim_update_anims
 	u8 allow_highlight_card = program->program_input_state_stack.peek() == GIS_NONE;
 	allow_highlight_card |= program->program_input_state_stack.peek() == GIS_PLAYING_CARDS;
-	Card_UI_Event card_event = card_anim_draw(&program->card_anim_state,
+	Card_UI_Event card_event = card_anim_draw(&program->anim_state.card_anim_state,
 	                                          &program->game.card_state,
 	                                          &program->draw->card_render,
 	                                          &program->sound,
@@ -6491,14 +4389,15 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			ASSERT(c->type == CONTROLLER_PLAYER);
 			player_action.entity_id = c->player.entity_id;
 			c->player.action = player_action;
-			Event_Buffer event_buffer;
-			game_do_turn(&program->game, &event_buffer);
-			world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &event_buffer, time);
+			// Event_Buffer event_buffer;
+			event_buffer.reset();
+			game_do_turn(&program->game, event_buffer);
+			build_animations(&program->anim_state, event_buffer, time);
 			program->program_input_state_stack.pop();
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
 
-		card_anim_update_anims(&program->card_anim_state, card_events, time);
+		card_anim_update_anims(&program->anim_state.card_anim_state, card_events, time);
 
 		sprite_sheet_renderer_highlight_sprite(&program->draw->renderer, sprite_id);
 
@@ -6520,10 +4419,10 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			Action_Buffer actions;
 			game_draw_cards(&program->game, &actions, 5, card_events);
 			if (actions) {
-				Event_Buffer events;
-				events.reset();
-				game_simulate_actions(&program->game, actions, &events);
-				world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &events, time);
+				// Event_Buffer events;
+				event_buffer.reset();
+				game_simulate_actions(&program->game, actions, event_buffer);
+				build_animations(&program->anim_state, event_buffer, time);
 				program->program_input_state_stack.push(GIS_ANIMATING);
 			}
 			program->program_input_state_stack.push(GIS_PLAYING_CARDS);
@@ -6533,10 +4432,10 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			Action_Buffer actions;
 			game_draw_cards(&program->game, &actions, 5, card_events);
 			if (actions) {
-				Event_Buffer events;
-				events.reset();
-				game_simulate_actions(&program->game, actions, &events);
-				world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &events, time);
+				// Event_Buffer events;
+				event_buffer.reset();
+				game_simulate_actions(&program->game, actions, event_buffer);
+				build_animations(&program->anim_state, event_buffer, time);
 				program->program_input_state_stack.push(GIS_ANIMATING);
 			}
 			program->program_input_state_stack.push(GIS_PLAYING_CARDS);
@@ -6544,7 +4443,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 		}
 
-		card_anim_update_anims(&program->card_anim_state, card_events, time);
+		card_anim_update_anims(&program->anim_state.card_anim_state, card_events, time);
 
 		if (sprite_id && input->num_presses(INPUT_BUTTON_MOUSE_LEFT)) {
 			Controller *c = &program->game.controllers.items[0];
@@ -6611,9 +4510,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			Controller *c = &program->game.controllers.items[0];
 			ASSERT(c->type == CONTROLLER_PLAYER);
 			c->player.action = player_action;
-			Event_Buffer event_buffer;
-			game_do_turn(&program->game, &event_buffer);
-			world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &event_buffer, time);
+			event_buffer.reset();
+			game_do_turn(&program->game, event_buffer);
+			build_animations(&program->anim_state, event_buffer, time);
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}
 
@@ -6685,7 +4584,7 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 
 		if (!program->card_params_stack) {
-			Card_Anim_State *card_anim_state = &program->card_anim_state;
+			Card_Anim_State *card_anim_state = &program->anim_state.card_anim_state;
 			ASSERT(card_anim_state->type == CARD_ANIM_STATE_SELECTED
 			    || card_anim_state->type == CARD_ANIM_STATE_NORMAL_TO_SELECTED);
 
@@ -6729,16 +4628,11 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 			Controller *c = &program->game.controllers.items[0];
 			ASSERT(c->type == CONTROLLER_PLAYER);
 			c->player.action = program->action_being_built;
-			Event_Buffer event_buffer;
 			event_buffer.reset();
-			// game_do_turn(&program->game, &event_buffer);
 			game_simulate_actions(&program->game,
 			                      slice_one(&program->action_being_built),
-			                      &event_buffer);
-			world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &event_buffer, time);
-			// c->player.action.type = ACTION_WAIT;
-			// game_do_turn(&program->game, &event_buffer);
-			// world_anim_build_events_to_be_animated(&program->world_anim, &program->card_anim_state, &event_buffer, time);
+			                      event_buffer);
+			build_animations(&program->anim_state, event_buffer, time);
 			program->program_input_state_stack.pop();
 			program->program_input_state_stack.push(GIS_ANIMATING);
 		}

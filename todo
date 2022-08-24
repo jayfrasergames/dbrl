@@ -1,12 +1,20 @@
+* current todo
+  * refactor anim
+    * separate out UI/anim
+      * world_anim
+        * static_anim
+        * dynamic_anim
+        * modifier_anim
+      * card_anim
+        * same as world? static/dynamic/modifier?
+      * sound_anim
+      * reading input
+      * game loop: read_input -> simulate -> render
+
 * goals (initial)
   * content
     * 6 enemy groups with at least 3 enemies each (18+ enemies)
       * early enemies (rats/bats/wolves/bears)
-      * spiders
-        * normal spider - just does normal attacks
-        * web spider - shoots webs
-        * poison spider - attacks have a chance to give the player a poison card
-        * shadow spider - can turn invisible
       * goblins (melee/archer/shaman/king)
       * trolls/ogres/ettin/whatever teh grey things are :/
       * undead (late game) (zombie/skeleton/skeleton archer/skeleton warrior/wrath/ghost/mummy/mummy lord/lich/vampire)
@@ -77,6 +85,7 @@
     * deprecate use of assets.bin for non-release candidates
       * load sounds from wave files at run time
       * deprecate gigabyte asset buffer *barf*
+    * make a header file with forward declarations. work to eliminate header file dependencies
 
     * console
       * command history

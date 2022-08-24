@@ -1,7 +1,7 @@
-#ifndef JFG_DSOUND_H
-#define JFG_DSOUND_H
+#pragma once
 
 #include "prelude.h"
+#include "jfg_error.h"
 
 // XXX - maybe it would be nice to not rely on this header at all?
 // the way it is all done is kind of crazy and unnecessary for what
@@ -24,27 +24,4 @@
 DSOUND_FUNCTIONS
 #undef DSOUND_FUNCTION
 
-u8 dsound_try_load();
-
-#ifndef JFG_HEADER_ONLY
-
-#define DSOUND_FUNCTION(return_type, name, ...) return_type (WINAPI *name)(__VA_ARGS__) = NULL;
-DSOUND_FUNCTIONS
-#undef DSOUND_FUNCTION
-
-u8 dsound_try_load()
-{
-	HMODULE dsound_library = LoadLibraryA("dsound.dll");
-	if (!dsound_library) {
-		return 0;
-	}
-#define DSOUND_FUNCTION(return_type, name, ...) \
-		name = (return_type (WINAPI *)(__VA_ARGS__))GetProcAddress(dsound_library, #name);
-	DSOUND_FUNCTIONS
-#undef DSOUND_FUNCTION
-	return 1;
-}
-
-#endif
-
-#endif
+JFG_Error dsound_try_load();

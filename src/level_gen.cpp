@@ -557,6 +557,7 @@ static void from_string(Game* game, char* str)
 			e->appearance = APPEARANCE_CREATURE_NECROMANCER;
 			e->block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e->movement_type = BLOCK_WALK;
+			e->default_action = ACTION_BUMP_ATTACK;
 
 			lich_controller = add_controller(game);
 			memcpy(lich_controller, &lich_controller_tmp, sizeof(lich_controller_tmp));
@@ -581,6 +582,7 @@ static void from_string(Game* game, char* str)
 			e->appearance = APPEARANCE_CREATURE_SKELETON;
 			e->block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e->movement_type = BLOCK_WALK;
+			e->default_action = ACTION_BUMP_ATTACK;
 
 			lich_controller->lich.skeleton_ids.append(e->id);
 			break;
@@ -596,6 +598,7 @@ static void from_string(Game* game, char* str)
 			e->appearance = APPEARANCE_CREATURE_RED_DRAGON;
 			e->block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
 			e->movement_type = BLOCK_WALK;
+			e->default_action = ACTION_BUMP_ATTACK;
 
 			auto c = add_controller(game);
 			c->type = CONTROLLER_DRAGON;
@@ -612,6 +615,7 @@ static void from_string(Game* game, char* str)
 			e->max_hit_points = 1;
 			e->pos = cur_pos;
 			e->appearance = APPEARANCE_ITEM_TRAP_HEX;
+			e->default_action = ACTION_BUMP_ATTACK;
 
 			auto mh = add_message_handler(game);
 			mh->type = MESSAGE_HANDLER_TRAP_FIREBALL;

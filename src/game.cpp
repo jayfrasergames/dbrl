@@ -317,31 +317,25 @@ Message_Handler* add_trap_spider_cave(Game* game, Pos pos, u32 radius)
 
 Entity_ID add_slime(Game *game, Pos pos, u32 hit_points)
 {
-	Entity_ID entity_id = game->next_entity_id++;
-
-	Entity e = {};
-	e.hit_points = min_u32(hit_points, 5);
-	e.max_hit_points = 5;
-	e.id = entity_id;
-	e.pos = pos;
-	e.appearance = APPEARANCE_CREATURE_GREEN_SLIME;
-	e.block_mask = BLOCK_WALK | BLOCK_SWIM | BLOCK_FLY;
-	e.movement_type = BLOCK_WALK;
-	game->entities.append(e);
+	auto e = add_enemy(game, 5);
+	e->hit_points = min_u32(hit_points, 5);
+	e->pos = pos;
+	e->appearance = APPEARANCE_CREATURE_GREEN_SLIME;
+	e->movement_type = BLOCK_WALK;
 
 	Controller c = {};
 	c.type = CONTROLLER_SLIME;
-	c.slime.entity_id = entity_id;
+	c.slime.entity_id = e->id;
 	c.slime.split_cooldown = 5;
 	game->controllers.append(c);
 
 	Message_Handler mh = {};
 	mh.type = MESSAGE_HANDLER_SLIME_SPLIT;
 	mh.handle_mask = MESSAGE_DAMAGE;
-	mh.owner_id = entity_id;
+	mh.owner_id = e->id;
 	game->handlers.append(mh);
 
-	return entity_id;
+	return e->id;
 }
 
 // =============================================================================

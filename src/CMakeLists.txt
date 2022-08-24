@@ -34,12 +34,14 @@ set(headers
 
 set(object_sources
 	console.cpp
+	constants.cpp
 	appearance.cpp
 	assets.cpp
 	card_render.cpp
 	debug_draw_world.cpp
 	debug_line_draw.cpp
 	jfg_error.cpp
+	jfg_dsound.cpp
 	sprite_sheet.cpp
 	field_of_vision_render.cpp
 	fov.cpp
@@ -58,6 +60,8 @@ set(object_sources
 	random.cpp
 	texture.cpp
 	render.cpp
+	sound.cpp
+	ui.cpp
 )
 
 set(program_sources

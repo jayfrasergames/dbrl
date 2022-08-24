@@ -7,7 +7,6 @@
 #include "draw.h"
 #include "render.h"
 
-#include "jfg_d3d11.h"
 #include "jfg_dsound.h"
 
 #include "platform_functions.h"

@@ -6,6 +6,7 @@
 
 #include "fov.h"
 #include "appearance.h"
+#include "assets.h"
 
 #define JFG_HEADER_ONLY
 #include "gen/cards.data.h"
@@ -333,12 +334,191 @@ struct Card_State
 	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        in_play;
 };
 
-#define GAME_MAX_CONTROLLERS 1024
-#define GAME_MAX_MESSAGE_HANDLERS 1024
+// =============================================================================
+// Events
+// =============================================================================
+
+enum Event_Type
+{
+	EVENT_NONE,
+	EVENT_MOVE,
+	EVENT_MOVE_BLOCKED,
+	EVENT_BUMP_ATTACK,
+	EVENT_OPEN_DOOR,
+	EVENT_DROP_TILE,
+	EVENT_FIREBALL_HIT,
+	EVENT_FIREBALL_SHOT,
+	EVENT_FIREBALL_OFFSHOOT,
+	EVENT_FIREBALL_OFFSHOOT_2,
+	EVENT_STUCK,
+	EVENT_POISONED,
+	EVENT_DAMAGED,
+	EVENT_DEATH,
+	EVENT_EXCHANGE,
+	EVENT_BLINK,
+	EVENT_SLIME_SPLIT,
+	EVENT_FIRE_BOLT_SHOT,
+	EVENT_POLYMORPH,
+	EVENT_HEAL,
+	EVENT_FIELD_OF_VISION_CHANGED,
+	EVENT_LIGHTNING_BOLT,
+	EVENT_LIGHTNING_BOLT_START,
+	EVENT_SHOOT_WEB_CAST,
+	EVENT_SHOOT_WEB_HIT,
+	EVENT_CREATURE_DROP_IN,
+	EVENT_ADD_CREATURE,
+	EVENT_ADD_CARD_TO_DISCARD,
+	EVENT_CARD_POISON,
+	EVENT_TURN_INVISIBLE,
+	EVENT_TURN_VISIBLE,
+};
+
+struct Event
+{
+	Event_Type type;
+	f32 time;
+	union {
+		struct {
+			Entity_ID entity_id;
+			Pos start, end;
+		} move;
+		struct {
+			Entity_ID attacker_id;
+			Pos       start;
+			Pos       end;
+			Sound_ID  sound;
+		} bump_attack;
+		struct {
+			Entity_ID  door_id;
+			Appearance new_appearance;
+		} open_door;
+		struct {
+			Entity_ID entity_id;
+			Pos pos;
+		} stuck;
+		struct {
+			Pos pos;
+		} drop_tile;
+		struct {
+			f32 duration;
+			Pos start;
+			Pos end;
+		} fireball_shot;
+		struct {
+			Pos pos;
+		} fireball_hit;
+		struct {
+			f32 duration;
+			v2 start;
+			v2 end;
+		} fireball_offshoot_2;
+		struct {
+			Entity_ID entity_id;
+			v2 pos;
+			u32 amount;
+		} damaged;
+		struct {
+			Entity_ID entity_id;
+			v2        pos;
+		} poisoned;
+		struct {
+			Entity_ID entity_id;
+		} death;
+		struct {
+			Entity_ID a;
+			Entity_ID b;
+			Pos       a_pos;
+			Pos       b_pos;
+		} exchange;
+		struct {
+			Entity_ID caster_id;
+			Pos       start;
+			Pos       target;
+		} blink;
+		struct {
+			Entity_ID original_id;
+			Entity_ID new_id;
+			v2 start;
+			v2 end;
+		} slime_split;
+		struct {
+			v2 start;
+			v2 end;
+			f32 duration;
+		} fire_bolt_shot;
+		struct {
+			Entity_ID  entity_id;
+			Appearance new_appearance;
+			Pos        pos;
+		} polymorph;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			i32 amount;
+			v2 start;
+			v2 end;
+		} heal;
+		struct {
+			f32 duration;
+			Field_Of_Vision *fov;
+		} field_of_vision;
+		struct {
+			Entity_ID caster_id;
+			f32 duration;
+			v2 start;
+			v2 end;
+		} lightning;
+		struct {
+			f32 duration;
+			v2 start;
+			v2 end;
+		} lightning_bolt;
+		struct {
+			v2 pos;
+		} lightning_bolt_start;
+		struct {
+			Entity_ID caster_id;
+			v2        start;
+			v2        end;
+		} shoot_web_cast;
+		struct {
+			Entity_ID  web_id;
+			Appearance appearance;
+			v2         pos;
+		} shoot_web_hit;
+		struct {
+			Entity_ID  entity_id;
+			Appearance appearance;
+			v2         pos;
+		} creature_drop_in;
+		struct {
+			Entity_ID  creature_id;
+			Appearance appearance;
+			v2         pos;
+		} add_creature;
+		struct {
+			Entity_ID       entity_id;
+			Card_ID         card_id;
+			Card_Appearance appearance;
+		} add_card_to_discard;
+		struct {
+			Card_ID card_id;
+		} card_poison;
+		struct {
+			Entity_ID entity_id;
+		} turn_invisible;
+		struct {
+			Entity_ID entity_id;
+		} turn_visible;
+	};
+};
 
 // =============================================================================
 // Game
 // =============================================================================
+
+#define GAME_MAX_CONTROLLERS 1024
+#define GAME_MAX_MESSAGE_HANDLERS 1024
 
 struct Game
 {

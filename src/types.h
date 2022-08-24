@@ -37,7 +37,7 @@ struct Map_Cache_Bool
 
 #define MAX_ENTITIES 10240
 
-typedef u16 Entity_ID;
+typedef u32 Entity_ID;
 
 // Forward declarations
 
