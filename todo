@@ -73,6 +73,12 @@
     * opens but gets stuck/doesn't close
     * opens but breaks
     * opens but becomes portal
+  * introduce concept of "phases" for actions/transactions
+    * draw cards phase
+    * bump attack phase
+    * movement phase
+    * special actions phase
+  * deprecate "physics" in favour of simpler tile based logic for explosions/lightning etc (???)
 
   * refactor
     * anim

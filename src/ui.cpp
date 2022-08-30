@@ -10,6 +10,774 @@
 #include "gen/boxy_bold.data.h"
 #undef JFG_HEADER_ONLY
 
+const u32 DISCARD_ID = (u32)-1;
+const u32 DECK_ID    = (u32)-2;
+
+// =============================================================================
+// useful functions
+// =============================================================================
+
+static v2 screen_pos_to_world_pos(Camera* camera, v2_u32 screen_size, v2_u32 screen_pos)
+{
+	v2 p = (v2)screen_pos - ((v2)screen_size / 2.0f);
+	f32 raw_zoom = (f32)screen_size.y / (camera->zoom * 24.0f);
+	v2 world_pos = p / raw_zoom + 24.0f * (camera->world_center + camera->offset);
+	return world_pos;
+}
+
+// =============================================================================
+// cards
+// =============================================================================
+
+// TODO -- finish hand to hand animations
+struct Hand_To_Hand_Anim_Params
+{
+	Hand_Params hand_params;
+	u32 highlighted_card_id;
+	u32 selected_card_index;
+};
+
+void hand_params_calc(Hand_Params* params)
+{
+	f32 h = params->top - params->bottom;
+	f32 target = ((params->num_cards - 1.0f) * params->separation) / h;
+
+	f32 max_width = params->screen_width - params->border;
+	f32 origin_separation = params->separation;
+
+	f32 theta;
+	f32 radius;
+
+	if (params->num_cards <= 1.0f) {
+		theta = 0.0f;
+		radius = 1.0f;
+	} else {
+		f32 theta_low = 0;
+		f32 theta_high = PI_F32 / 2.0f;
+		while (theta_high - theta_low > 1e-6f) {
+			f32 theta_mid = (theta_high + theta_low) / 2.0f;
+			f32 val = theta_mid / (1.0f - cosf(theta_mid / 2.0f));
+			if (val < target) {
+				theta_high = theta_mid;
+			} else {
+				theta_low = theta_mid;
+			}
+		}
+		theta = (theta_low + theta_high) / 2.0f;
+		radius = ((params->num_cards - 1.0f) * params->separation) / theta;
+
+		f32 card_diagonal, psi;
+		{
+			f32 w = params->card_size.w, h = params->card_size.h;
+			card_diagonal = sqrtf(w*w + h*h);
+
+			psi = atanf(w / h);
+		}
+
+		if (radius * sinf(theta / 2.0f) + card_diagonal * sinf(theta / 2.0f + psi) > max_width) {
+			target = max_width / h;
+			theta_low = 0;
+			theta_high = PI_F32 / 2.0f;
+			while (theta_high - theta_low > 1e-6f) {
+				f32 theta_mid = (theta_high + theta_low) / 2.0f;
+				f32 val = sinf(theta_mid / 2.0f) / (1.0f - cosf(theta_mid / 2.0f))
+					+ (card_diagonal / h) * sinf(theta_mid / 2.0f + psi);
+				if (val < target) {
+					theta_high = theta_mid;
+				} else {
+					theta_low = theta_mid;
+				}
+			}
+			theta = (theta_high + theta_low) / 2.0f;
+			// radius = max_width / sinf(theta / 2.0f);
+			radius = h / (1 - cosf(theta / 2.0f));
+			params->separation = radius * theta / (params->num_cards - 1.0f);
+		}
+	}
+
+	if (radius < constants.cards_ui.min_radius) {
+		radius = constants.cards_ui.min_radius;
+		theta = params->separation * (params->num_cards - 1.0f) / radius;
+	}
+
+	v2 center = {};
+	center.x = 0.0f;
+	center.y = params->top - radius;
+
+	params->radius = radius;
+	params->theta  = theta;
+	params->center = center;
+}
+
+void hand_calc_deltas(f32* deltas, Hand_Params* params, u32 selected_card)
+{
+	deltas[selected_card] = 0.0f;
+
+	f32 min_left_separation = (params->highlighted_zoom - 0.4f) * params->card_size.w;
+	f32 left_delta = max(min_left_separation - params->separation, 0.0f);
+	f32 left_ratio = max(1.0f - 0.5f * params->separation / left_delta, 0.4f);
+
+	f32 acc = left_delta / params->radius;
+	for (u32 i = selected_card; i; --i) {
+		deltas[i - 1] = acc;
+		acc *= left_ratio;
+	}
+
+	f32 min_right_separation = (0.7f + params->highlighted_zoom) * params->card_size.w;
+	f32 right_delta = max(min_right_separation - params->separation, 0.0f);
+	f32 right_ratio = 1.0f - 0.5f * params->separation / right_delta;
+
+	acc = right_delta / params->radius;
+	for (u32 i = selected_card + 1; i < params->num_cards; ++i) {
+		deltas[i] = -acc;
+		acc *= right_ratio;
+	}
+}
+
+void card_anim_write_poss(Card_Anim_State* card_anim_state, f32 time)
+{
+	f32 deltas[100];
+
+	Hand_Params hand_params = card_anim_state->hand_params;
+	u32 highlighted_card_id = card_anim_state->prev_highlighted_card_id;
+	u32 num_card_anims = card_anim_state->card_anims.len;
+	u32 selected_card_index = card_anim_state->hand_size;
+	Card_Anim *anim = card_anim_state->card_anims.items;
+	// log(debug_log, "highlighted_card_id = %u", highlighted_card_id);
+	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
+		if (anim->card_id == highlighted_card_id) {
+			switch (anim->type) {
+			case CARD_ANIM_IN_HAND:
+				selected_card_index = anim->hand.index;
+				// log(debug_log, "set selected_card_index 1");
+				break;
+			case CARD_ANIM_HAND_TO_HAND:
+				// log(debug_log, "set selected_card_index 2");
+				selected_card_index = anim->hand_to_hand.index;
+				break;
+			default:
+				break;
+			}
+			break;
+		}
+	}
+	if (selected_card_index < card_anim_state->hand_size) {
+		hand_calc_deltas(deltas, &hand_params, selected_card_index);
+	} else {
+		highlighted_card_id = 0;
+		memset(deltas, 0, selected_card_index * sizeof(deltas[0]));
+	}
+
+	f32 base_delta = 0.0f;
+	if (hand_params.num_cards > 1.0f) {
+		base_delta = 1.0f / (hand_params.num_cards - 1.0f);
+	}
+
+	f32 ratio = hand_params.screen_width;
+
+	anim = card_anim_state->card_anims.items;
+	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
+		anim->color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+		switch (anim->type) {
+		case CARD_ANIM_DECK:
+			anim->pos.type = CARD_POS_DECK;
+			break;
+		case CARD_ANIM_DISCARD:
+			anim->pos.type = CARD_POS_DISCARD;
+			break;
+		case CARD_ANIM_DRAW: {
+			v2 start_pos = v2(-ratio + hand_params.border / 2.0f,
+			                      -1.0f  + hand_params.height / 2.0f);
+			f32 start_rotation = 0.0f;
+
+			u32 hand_index = anim->draw.hand_index;
+			f32 theta = hand_params.theta;
+			f32 base_angle = PI_F32 / 2.0f + theta * (0.5f - (f32)hand_index * base_delta);
+
+			f32 a = base_angle + deltas[hand_index];
+			f32 r = hand_params.radius;
+
+			v2 end_pos = r * v2(cosf(a), sinf(a)) + hand_params.center;
+			f32 end_rotation = a - PI_F32 / 2.0f;
+
+			f32 dt = (time - anim->draw.start_time) / anim->draw.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+			f32 jump = dt * (1.0f - dt) * 4.0f;
+			f32 smooth = (3.0f - 2.0f * dt) * dt * dt;
+
+			if (dt < 0.5f) {
+				anim->pos.z_offset = 2.0f - (f32)anim->draw.hand_index / hand_params.num_cards;
+			} else {
+				anim->pos.z_offset = (f32)anim->draw.hand_index / hand_params.num_cards;
+			}
+
+			anim->pos.type = CARD_POS_ABSOLUTE;
+			anim->pos.absolute.pos   = lerp(start_pos,      end_pos,      smooth);
+			anim->pos.absolute.pos.y += jump * constants.cards_ui.draw_jump_height;
+			anim->pos.absolute.angle = lerp(start_rotation, end_rotation, smooth);
+			anim->pos.absolute.zoom = 1.0f;
+			break;
+		}
+		case CARD_ANIM_IN_HAND: {
+			u32 hand_index = anim->hand.index;
+			f32 theta = hand_params.theta;
+			f32 base_angle = PI_F32 / 2.0f + theta * (0.5f - (f32)hand_index * base_delta);
+
+			anim->pos.z_offset = (f32)anim->hand.index / hand_params.num_cards;
+			anim->pos.type = CARD_POS_HAND;
+			anim->pos.hand.angle = base_angle + deltas[hand_index];
+			anim->pos.hand.radius = hand_params.radius;
+			anim->pos.hand.zoom = hand_index == selected_card_index && highlighted_card_id
+			                    ? hand_params.highlighted_zoom : 1.0f;
+			break;
+		}
+		case CARD_ANIM_HAND_TO_HAND: {
+			f32 dt = (time - anim->hand_to_hand.start_time) / anim->hand_to_hand.duration;
+			Card_Hand_Pos *s = &anim->hand_to_hand.start;
+			Card_Hand_Pos *e = &anim->hand_to_hand.end;
+			dt = clamp(dt, 0.0f, 1.0f);
+			anim->pos.type = CARD_POS_HAND;
+			anim->pos.hand.angle  = lerp(s->angle,  e->angle,  dt);
+			anim->pos.hand.zoom   = lerp(s->zoom,   e->zoom,   dt);
+			anim->pos.hand.radius = lerp(s->radius, e->radius, dt);
+			anim->pos.z_offset = (f32)anim->hand_to_hand.index / hand_params.num_cards;
+			break;
+		}
+		case CARD_ANIM_HAND_TO_IN_PLAY: {
+			anim->pos.type = CARD_POS_ABSOLUTE;
+
+			f32 a = anim->hand_to_in_play.start.angle;
+			f32 r = anim->hand_to_in_play.start.radius;
+			f32 z = anim->hand_to_in_play.start.zoom;
+			f32 r2 = r + (z - 1.0f) * hand_params.card_size.h;
+
+			v2 start_pos = r2 * v2(cosf(a), sinf(a));
+			start_pos.x += hand_params.center.x;
+			start_pos.y += hand_params.top - r;
+			f32 start_angle = a - PI_F32 / 2.0f;
+			f32 start_zoom = z;
+
+			v2 end_pos = v2(ratio - hand_params.border / 2.0f,
+			                    -1.0f + 3.0f * hand_params.height / 2.0f);
+			f32 end_angle = 0.0f;
+			f32 end_zoom = 1.0f;
+
+			f32 dt = (time - anim->hand_to_in_play.start_time) / anim->hand_to_in_play.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+			anim->pos.absolute.pos   = lerp(start_pos,   end_pos,   dt);
+			anim->pos.absolute.angle = lerp(start_angle, end_angle, dt);
+			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
+			break;
+		}
+		case CARD_ANIM_IN_PLAY:
+			anim->pos.type = CARD_POS_ABSOLUTE;
+			anim->pos.absolute.pos = v2(ratio - hand_params.border / 2.0f,
+			                                -1.0f + 3.0f * hand_params.height / 2.0f);
+			anim->pos.absolute.angle = 0.0f;
+			anim->pos.absolute.zoom = 1.0f;
+			break;
+		case CARD_ANIM_HAND_TO_DISCARD: {
+			anim->pos.type = CARD_POS_ABSOLUTE;
+
+			f32 a = anim->hand_to_discard.start.angle;
+			f32 r = anim->hand_to_discard.start.radius;
+			f32 z = anim->hand_to_discard.start.zoom;
+			f32 r2 = r + (z - 1.0f) * hand_params.card_size.h;
+
+			v2 start_pos = r2 * v2(cosf(a), sinf(a));
+			start_pos.x += hand_params.center.x;
+			start_pos.y += hand_params.top - r;
+			f32 start_angle = a - PI_F32 / 2.0f;
+			f32 start_zoom = z;
+
+			v2 end_pos = v2(ratio - hand_params.border / 2.0f,
+			                    -1.0f + hand_params.height / 2.0f);
+			f32 end_angle = 0.0f;
+			f32 end_zoom = 1.0f;
+
+			f32 dt = (time - anim->hand_to_in_play.start_time) / anim->hand_to_in_play.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+			anim->pos.absolute.pos   = lerp(start_pos,   end_pos,   dt);
+			anim->pos.absolute.angle = lerp(start_angle, end_angle, dt);
+			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
+			break;
+		}
+		case CARD_ANIM_IN_PLAY_TO_DISCARD: {
+			anim->pos.type = CARD_POS_ABSOLUTE;
+
+			v2  start_pos   = anim->in_play_to_discard.start.absolute.pos;
+			f32 start_angle = anim->in_play_to_discard.start.absolute.angle;
+			f32 start_zoom  = anim->in_play_to_discard.start.absolute.zoom;
+
+			v2 end_pos = v2(ratio - hand_params.border / 2.0f,
+			                    -1.0f + hand_params.height / 2.0f);
+			f32 end_angle = 0.0f;
+			f32 end_zoom = 1.0f;
+
+			f32 dt = (time - anim->in_play_to_discard.start_time) / anim->in_play_to_discard.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+			anim->pos.absolute.pos   = lerp(start_pos,   end_pos,   dt);
+			anim->pos.absolute.angle = lerp(start_angle, end_angle, dt);
+			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
+
+			break;
+		}
+
+		case CARD_ANIM_ADD_CARD_TO_DISCARD: {
+			f32 t = time - anim->add_to_discard.start_time;
+			f32 dt = t / anim->add_to_discard.duration;
+			dt = clamp(dt, 0.0f, 1.0f);
+
+			v2 start_pos = v2(ratio - hand_params.border / 2.0f, -1.0f - hand_params.height);
+			f32 start_angle = 0.0f;
+			f32 start_zoom = 1.0f;
+
+			v2 end_pos = v2(ratio - hand_params.border / 2.0f, -1.0f + hand_params.height / 2.0f);
+			f32 end_angle = 0.0f;
+			f32 end_zoom = 1.0f;
+
+			anim->pos.type = CARD_POS_ABSOLUTE;
+			anim->pos.absolute.pos   = lerp(start_pos,   end_pos,   dt);
+			anim->pos.absolute.angle = lerp(start_angle, end_angle, dt);
+			anim->pos.absolute.zoom  = lerp(start_zoom,  end_zoom,  dt);
+			anim->pos.z_offset = 0.1f;
+
+			break;
+		}
+
+		}
+	}
+}
+
+void card_anim_create_hand_to_hand_anims(Card_Anim_State* card_anim_state,
+                                         Hand_To_Hand_Anim_Params* params,
+                                         f32 time)
+{
+	f32 deltas[100];
+
+	u32 highlighted_card_id = params->highlighted_card_id;
+	u32 highlighted_card = params->selected_card_index;
+
+	if (highlighted_card_id) {
+		hand_calc_deltas(deltas, &params->hand_params, params->selected_card_index);
+	} else {
+		memset(deltas, 0, (u32)params->hand_params.num_cards * sizeof(deltas[0]));
+	}
+
+	f32 base_delta;
+	if (params->hand_params.num_cards > 1.0f) {
+		base_delta = 1.0f / (params->hand_params.num_cards - 1.0f);
+	} else {
+		base_delta = 0.0f;
+	}
+
+	u32 num_card_anims = card_anim_state->card_anims.len;
+	for (u32 i = 0; i < num_card_anims; ++i) {
+		Card_Anim *anim = &card_anim_state->card_anims[i];
+		if (anim->pos.type != CARD_POS_HAND) {
+			continue;
+		}
+		u32 hand_index;
+		switch (anim->type) {
+		case CARD_ANIM_IN_HAND:
+			hand_index = anim->hand.index;
+			break;
+		case CARD_ANIM_HAND_TO_HAND:
+			hand_index = anim->hand_to_hand.index;
+			break;
+		default:
+			// ASSERT(0);
+			continue;
+		}
+		Card_Hand_Pos before_pos = {};
+		before_pos.radius = anim->pos.hand.radius;
+		before_pos.angle = anim->pos.hand.angle;
+		before_pos.zoom = anim->pos.hand.zoom;
+
+		f32 base_angle = PI_F32 / 2.0f + params->hand_params.theta
+		               * (0.5f - (f32)hand_index * base_delta);
+		Card_Hand_Pos after_pos = {};
+		after_pos.angle = base_angle + deltas[hand_index];
+		after_pos.zoom = hand_index == highlighted_card && highlighted_card_id
+		               ? params->hand_params.highlighted_zoom : 1.0f;
+		after_pos.radius = params->hand_params.radius;
+		anim->type = CARD_ANIM_HAND_TO_HAND;
+		anim->hand_to_hand.start_time = time;
+		anim->hand_to_hand.duration = constants.cards_ui.hand_to_hand_time;
+		anim->hand_to_hand.start = before_pos;
+		anim->hand_to_hand.end = after_pos;
+		anim->hand_to_hand.index = hand_index;
+	}
+}
+
+void card_anim_init(Card_Anim_State* card_anim_state, Card_State* card_state)
+{
+	auto &deck = card_state->deck;
+	auto &hand = card_state->hand;
+	auto &in_play = card_state->in_play;
+	auto &discard = card_state->discard;
+	auto &card_anims = card_anim_state->card_anims;
+	auto &card_dynamic_anims = card_anim_state->card_dynamic_anims;
+
+	card_dynamic_anims.reset();
+
+	for (u32 i = 0; i < deck.len; ++i) {
+		auto card = deck[i];
+		auto card_anim = card_anims.append();
+		card_anim->type = CARD_ANIM_DECK;
+		card_anim->pos.type = CARD_POS_DECK;
+		card_anim->color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+		card_anim->card_id = card.id;
+		card_anim->card_face = card_appearance_get_sprite_coords(card.appearance);
+	}
+
+	for (u32 i = 0; i < discard.len; ++i) {
+		auto card = discard[i];
+		auto card_anim = card_anims.append();
+		card_anim->type = CARD_ANIM_DISCARD;
+		card_anim->pos.type = CARD_POS_DISCARD;
+		card_anim->color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+		card_anim->card_id = card.id;
+		card_anim->card_face = card_appearance_get_sprite_coords(card.appearance);
+		card_anim->discard.index = i;
+	}
+}
+
+void card_anim_draw(Card_Anim_State* card_anim_state,
+                    Card_Render*     card_render,
+                    Sound_Player*    sound_player,
+                    v2_u32           screen_size,
+                    f32              time)
+{
+	card_anim_state->hand_params.height = constants.cards_ui.height;
+	card_anim_state->hand_params.border = constants.cards_ui.border;
+	card_anim_state->hand_params.top    = constants.cards_ui.top;
+	card_anim_state->hand_params.bottom = constants.cards_ui.bottom;
+	card_anim_state->hand_params.card_size = 0.5f * 0.4f * v2(48.0f/80.0f, 1.0f);
+
+
+	u32 num_card_anims = card_anim_state->card_anims.len;
+
+	card_anim_write_poss(card_anim_state, time);
+
+	u32 highlighted_card_id = 0;
+	switch (card_anim_state->type) {
+	case CARD_ANIM_STATE_SELECTED:
+		highlighted_card_id = card_anim_state->selected.selected_card_id;
+		break;
+	case CARD_ANIM_STATE_NORMAL_TO_SELECTED:
+		highlighted_card_id = card_anim_state->normal_to_selected.selected_card_id;
+		break;
+	default:
+		highlighted_card_id = card_anim_state->highlighted_card_id;
+		break;
+	}
+
+	card_render_reset(card_render);
+
+	float ratio = (f32)screen_size.x / (f32)screen_size.y;
+
+	u32 hand_size = card_anim_state->hand_size;
+	Hand_Params *params = &card_anim_state->hand_params;
+	params->screen_width = ratio;
+	params->num_cards = (f32)hand_size;
+	params->separation = params->card_size.w;
+	params->highlighted_zoom = 1.2f;
+	hand_params_calc(params);
+
+	// update state if necessary
+	switch (card_anim_state->type) {
+	case CARD_ANIM_STATE_NORMAL:
+	case CARD_ANIM_STATE_SELECTED:
+		break;
+	case CARD_ANIM_STATE_NORMAL_TO_SELECTED:
+		if (card_anim_state->normal_to_selected.start_time
+		  + card_anim_state->normal_to_selected.duration <= time) {
+			u32 card_id = card_anim_state->normal_to_selected.selected_card_id;
+			card_anim_state->selected.selected_card_id = card_id;
+			card_anim_state->type = CARD_ANIM_STATE_SELECTED;
+		}
+		break;
+	case CARD_ANIM_STATE_SELECTED_TO_NORMAL:
+		if (card_anim_state->selected_to_normal.start_time
+		  + card_anim_state->selected_to_normal.duration <= time) {
+			card_anim_state->type = CARD_ANIM_STATE_NORMAL;
+		}
+		break;
+	}
+
+	// convert finished card anims
+	for (u32 i = 0; i < card_anim_state->card_anims.len; ++i) {
+		Card_Anim *anim = &card_anim_state->card_anims[i];
+		switch (anim->type) {
+		case CARD_ANIM_DECK:
+		case CARD_ANIM_DISCARD:
+		case CARD_ANIM_IN_HAND:
+		case CARD_ANIM_IN_PLAY:
+			break;
+		case CARD_ANIM_DRAW:
+			if (anim->draw.start_time + anim->draw.duration <= time) {
+				anim->hand.index = anim->draw.hand_index;
+				anim->type = CARD_ANIM_IN_HAND;
+			}
+			break;
+		case CARD_ANIM_HAND_TO_HAND:
+			if (anim->hand_to_hand.start_time + anim->hand_to_hand.duration <= time) {
+				anim->hand.index = anim->hand_to_hand.index;
+				anim->type = CARD_ANIM_IN_HAND;
+			}
+			break;
+		case CARD_ANIM_HAND_TO_IN_PLAY:
+			if (anim->hand_to_in_play.start_time + anim->hand_to_in_play.duration <= time) {
+				anim->type = CARD_ANIM_IN_PLAY;
+			}
+			break;
+		case CARD_ANIM_IN_PLAY_TO_DISCARD:
+			if (anim->in_play_to_discard.start_time + anim->in_play_to_discard.duration <= time) {
+				anim->type = CARD_ANIM_DISCARD;
+				anim->discard.index = anim->in_play_to_discard.discard_index;
+			}
+			break;
+		case CARD_ANIM_HAND_TO_DISCARD:
+			if (anim->hand_to_discard.start_time + anim->hand_to_discard.duration <= time) {
+				anim->type = CARD_ANIM_DISCARD;
+				anim->discard.index = anim->hand_to_discard.discard_index;
+			}
+			break;
+		case CARD_ANIM_ADD_CARD_TO_DISCARD: {
+			f32 t = time - anim->add_to_discard.start_time;
+			if (anim->add_to_discard.duration <= t) {
+				anim->type = CARD_ANIM_DISCARD;
+			}
+			break;
+		}
+		default:
+			ASSERT(0);
+			break;
+		}
+	}
+	num_card_anims = card_anim_state->card_anims.len;
+
+	auto &card_anim_mods = card_anim_state->card_anim_modifiers;
+	for (u32 i = 0; i < card_anim_mods.len; ) {
+		auto anim = &card_anim_mods[i];
+		switch (anim->type) {
+		case CARD_ANIM_MOD_FLASH:
+			if (anim->flash.start_time + anim->flash.duration < time) {
+				card_anim_mods.remove(i);
+				continue;
+			}
+			break;
+		default:
+			ASSERT(0);
+			break;
+		}
+		++i;
+	}
+
+	// process hand to hand anims
+	u32 prev_highlighted_card_id = card_anim_state->prev_highlighted_card_id;
+	u32 highlighted_card = 0;
+
+	// get highlighted card positions
+	for (u32 i = 0; i < num_card_anims; ++i) {
+		Card_Anim *anim = &card_anim_state->card_anims[i];
+		u32 hand_index;
+		switch (anim->type) {
+		case CARD_ANIM_IN_HAND:
+			hand_index = anim->hand.index;
+			break;
+		case CARD_ANIM_HAND_TO_HAND:
+			hand_index = anim->hand_to_hand.index;
+			break;
+		default:
+			continue;
+		}
+		if (anim->card_id == highlighted_card_id) {
+			highlighted_card = hand_index;
+		}
+	}
+	card_anim_state->prev_highlighted_card_id = highlighted_card_id;
+
+	u8 hi_or_prev_hi_was_hand = 0;
+	{
+		Card_Anim *anim = card_anim_state->card_anims.items;
+		for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
+			if (anim->card_id == highlighted_card_id
+			 || anim->card_id == prev_highlighted_card_id) {
+				switch (anim->type) {
+				case CARD_ANIM_HAND_TO_HAND:
+				case CARD_ANIM_IN_HAND:
+					hi_or_prev_hi_was_hand = 1;
+					goto break_loop;
+				}
+			}
+		}
+	break_loop: ;
+	}
+
+	if (prev_highlighted_card_id != highlighted_card_id && hi_or_prev_hi_was_hand) {
+		Hand_To_Hand_Anim_Params after_params = {};
+		after_params.hand_params = *params;
+		after_params.highlighted_card_id = highlighted_card_id;
+		after_params.selected_card_index = highlighted_card;
+
+		card_anim_create_hand_to_hand_anims(card_anim_state,
+		                                    &after_params,
+		                                    time);
+	}
+
+	u8 is_a_card_highlighted = card_anim_state->highlighted_card_id
+	                        && card_anim_state->highlighted_card_id < (u32)-2;
+	f32 deltas[100];
+	if (is_a_card_highlighted) {
+		hand_calc_deltas(deltas, params, highlighted_card);
+	} else {
+		memset(deltas, 0, (u32)params->num_cards * sizeof(deltas[0]));
+	}
+
+	v4 hand_color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+	switch (card_anim_state->type) {
+	case CARD_ANIM_STATE_NORMAL:
+		break;
+	case CARD_ANIM_STATE_SELECTED:
+		hand_color_mod *= constants.cards_ui.selection_fade;
+		break;
+	case CARD_ANIM_STATE_NORMAL_TO_SELECTED: {
+		f32 dt = (time - card_anim_state->normal_to_selected.start_time)
+		         / card_anim_state->normal_to_selected.duration;
+		dt = clamp(dt, 0.0f, 1.0f);
+		hand_color_mod *= lerp(1.0f, constants.cards_ui.selection_fade, dt);
+		break;
+	}
+	case CARD_ANIM_STATE_SELECTED_TO_NORMAL: {
+		f32 dt = (time - card_anim_state->selected_to_normal.start_time)
+		         / card_anim_state->selected_to_normal.duration;
+		dt = clamp(dt, 0.0f, 1.0f);
+		hand_color_mod *= lerp(constants.cards_ui.selection_fade, 1.0f, dt);
+		break;
+	}
+	}
+
+	bool draw_deck = false;
+	u32 top_of_discard_index = 0;
+	Card_Anim *top_of_discard = NULL;
+
+	Card_Anim *anim = card_anim_state->card_anims.items;
+	for (u32 i = 0; i < num_card_anims; ++i, ++anim) {
+		Card_Render_Instance instance = {};
+		switch (anim->pos.type) {
+		case CARD_POS_DECK:
+			draw_deck = true;
+			continue;
+		case CARD_POS_DISCARD:
+			if (anim->discard.index >= top_of_discard_index) {
+				top_of_discard = anim;
+				top_of_discard_index = anim->discard.index;
+			}
+			continue;
+		case CARD_POS_HAND: {
+			f32 a = anim->pos.hand.angle;
+			f32 r = anim->pos.hand.radius;
+			f32 z = anim->pos.hand.zoom;
+			f32 r2 = r + (z - 1.0f) * params->card_size.h;
+
+			v2 pos = r2 * v2(cosf(a), sinf(a));
+			pos.y += params->top - r;
+
+			instance.screen_rotation = anim->pos.hand.angle - PI_F32 / 2.0f;
+			instance.screen_pos = pos;
+			instance.card_pos = anim->card_face;
+			instance.card_id = anim->card_id;
+			instance.z_offset = anim->pos.z_offset;
+			instance.zoom = z;
+			instance.color_mod = anim->color_mod;
+			if (anim->card_id != highlighted_card_id) {
+				instance.color_mod = hand_color_mod;
+			}
+			break;
+		}
+		case CARD_POS_ABSOLUTE:
+			instance.screen_rotation = anim->pos.absolute.angle;
+			instance.screen_pos = anim->pos.absolute.pos;
+			instance.card_pos = anim->card_face;
+			instance.card_id = anim->card_id;
+			instance.z_offset = anim->pos.z_offset;
+			instance.zoom = anim->pos.absolute.zoom;
+			instance.color_mod = anim->color_mod;
+			break;
+		case CARD_POS_IN_PLAY:
+			break;
+		}
+
+		switch (anim->type) {
+		case CARD_ANIM_DRAW: {
+			f32 dt = (time - anim->draw.start_time) / anim->draw.duration;
+			if (dt < 0.0f) {
+				break;
+			}
+			instance.horizontal_rotation = (1.0f - dt) * PI_F32;
+			break;
+		}
+		default:
+			break;
+		}
+
+		for (u32 i = 0; i < card_anim_mods.len; ++i) {
+			auto card_modifier = &card_anim_mods[i];
+			if (card_modifier->card_id != anim->card_id) {
+				continue;
+			}
+
+			switch (card_modifier->type) {
+			case CARD_ANIM_MOD_FLASH: {
+				f32 dt = (time - card_modifier->flash.start_time);
+				u32 flash_counter = (u32)floorf(dt / card_modifier->flash.flash_duration);
+				if (flash_counter % 2 == 0) {
+					instance.color_mod = card_modifier->flash.color;
+				}
+				break;
+			}
+			}
+		}
+
+		card_render_add_instance(card_render, instance);
+	}
+
+	// add draw pile card
+	if (draw_deck) {
+		Card_Render_Instance instance = {};
+		instance.screen_rotation = 0.0f;
+		instance.screen_pos = v2(-ratio + params->border / 2.0f, -1.0f  + params->height / 2.0f);
+		instance.card_pos = v2(0.0f, 0.0f);
+		instance.zoom = 1.0f;
+		instance.card_id = DECK_ID;
+		instance.z_offset = 0.0f;
+		instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+		card_render_add_instance(card_render, instance);
+	}
+
+	// add discard pile card
+	if (top_of_discard) {
+		Card_Render_Instance instance = {};
+		instance.screen_rotation = 0.0f;
+		instance.screen_pos = v2(ratio - params->border / 2.0f, -1.0f + params->height / 2.0f);
+		instance.card_pos = v2(1.0f, 0.0f);
+		instance.zoom = 1.0f;
+		instance.card_id = DISCARD_ID;
+		instance.z_offset = 0.0f;
+		instance.card_pos = top_of_discard->card_face;
+		instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+		card_render_add_instance(card_render, instance);
+	}
+
+	card_render_z_sort(card_render);
+}
+
+// =============================================================================
+// world
+// =============================================================================
+
 static f32 angle_to_sprite_x_coord(f32 angle)
 {
 	angle /= PI_F32;
@@ -210,13 +978,20 @@ void world_anim_init(Anim_State* anim_state, Game* game)
 		// a.field_of_vision.fov = &game->field_of_vision;
 		anim_state->world_dynamic_anims.append(a);
 	}
+
+	// center camera on player
+	{
+		auto player = get_player(game);
+		anim_state->camera.world_center = (v2)player->pos;
+		anim_state->camera.offset = v2(0.0f, 0.0f);
+		anim_state->camera.zoom = 14.0f;
+	}
 }
 
 
 void init(Anim_State* anim_state, Game* game)
 {
 	anim_state->dyn_time_start = 0.0f;
-	anim_state->camera_offset = v2(0.0f, 0.0f);
 
 	anim_state->world_static_anims.reset();
 	anim_state->world_dynamic_anims.reset();
@@ -224,6 +999,7 @@ void init(Anim_State* anim_state, Game* game)
 	anim_state->sound_anims.reset();
 
 	world_anim_init(anim_state, game);
+	card_anim_init(&anim_state->card_anim_state, &game->card_state);
 }
 
 void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
@@ -231,6 +1007,8 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 	// XXX -- need to get rid of this, make a proper particle system
 	anim_state->draw->renderer.particles.particles.reset();
 	anim_state->dyn_time_start = time;
+	// XXX
+	anim_state->card_anim_state.dyn_time_start = time;
 
 	// auto &world_static_anims =  anim_state->world_static_anims;
 	auto &world_dynamic_anims = anim_state->world_dynamic_anims;
@@ -238,6 +1016,7 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 	auto &sound_anims = anim_state->sound_anims;
 	auto &card_anims = anim_state->card_anim_state.card_anims;
 	auto &card_anim_modifiers = anim_state->card_anim_state.card_anim_modifiers;
+	auto &card_dynamic_anims = anim_state->card_anim_state.card_dynamic_anims;
 
 	for (u32 i = 0; i < events.len; ++i) {
 		Event *event = &events[i];
@@ -266,10 +1045,11 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 		}
 		case EVENT_OPEN_DOOR: {
 			World_Anim_Dynamic anim = {};
+			anim.type = ANIM_OPEN_DOOR;
 			anim.start_time = event->time;
 			anim.duration = 0.0f;
 			anim.open_door.entity_id = event->open_door.door_id;
-			anim.open_door.spirte_coords = appearance_get_item_sprite_coords(event->open_door.new_appearance);
+			anim.open_door.spirte_coords = appearance_get_door_sprite_coords(event->open_door.new_appearance);
 			world_dynamic_anims.append(anim);
 
 			Sound_Anim open_sound = {};
@@ -678,6 +1458,90 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 			break;
 		}
 
+		case EVENT_DRAW_CARD: {
+			// XXX
+			++anim_state->card_anim_state.hand_size;
+			f32 anim_start_time = event->time - constants.cards_ui.draw_duration;
+			for (u32 i = 0; i < card_anims.len; ++i) {
+				auto card_anim = &card_anims[i];
+				if (card_anim->card_id != event->card_draw.card_id) {
+					continue;
+				}
+				card_anim->type = CARD_ANIM_DRAW;
+				card_anim->draw.start_time = anim_start_time;
+				card_anim->draw.duration = constants.cards_ui.draw_duration;
+				card_anim->draw.hand_index = event->card_draw.hand_index;
+			}
+			auto sound = sound_anims.append();
+			sound->sound_id = (Sound_ID)(SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_01 + (rand_u32() % 3));
+			sound->start_time = anim_start_time;
+			break;
+		}
+		case EVENT_SHUFFLE_DISCARD_TO_DECK: {
+			auto anim = card_dynamic_anims.append();
+			anim->type = CARD_ANIM_DISCARD_TO_DECK;
+			anim->start_time = event->time;
+			anim->duration = constants.cards_ui.discard_to_deck_duration;
+			break;
+		}
+		case EVENT_DISCARD: {
+			for (u32 i = 0; i < card_anims.len; ++i) {
+				auto card_anim = &card_anims[i];
+				if (card_anim->card_id == event->discard.card_id) {
+					switch (card_anim->type) {
+					case CARD_ANIM_IN_HAND: {
+						--anim_state->card_anim_state.hand_size;
+
+						auto card_pos = card_anim->pos;
+						card_anim->type = CARD_ANIM_HAND_TO_DISCARD;
+
+						card_anim->hand_to_discard.start = {};
+						card_anim->hand_to_discard.start.angle = card_pos.hand.angle;
+						card_anim->hand_to_discard.start.radius = card_pos.hand.radius;
+						card_anim->hand_to_discard.start.zoom = card_pos.hand.zoom;
+
+						card_anim->hand_to_discard.start_time = event->time - constants.cards_ui.hand_to_discard_time;
+						card_anim->hand_to_discard.duration = constants.cards_ui.hand_to_discard_time;
+						card_anim->hand_to_discard.discard_index = event->discard.discard_index;
+						break;
+					}
+					case CARD_ANIM_IN_PLAY: {
+						auto card_pos = card_anim->pos;
+						card_anim->type = CARD_ANIM_IN_PLAY_TO_DISCARD;
+
+						card_anim->in_play_to_discard.start = card_anim->pos;
+						card_anim->in_play_to_discard.start_time = event->time - constants.cards_ui.hand_to_discard_time;
+						card_anim->in_play_to_discard.duration = constants.cards_ui.hand_to_discard_time;
+						card_anim->in_play_to_discard.discard_index = event->discard.discard_index;
+						break;
+					}
+					default:
+						ASSERT(0);
+						break;
+					}
+					break;
+				}
+			}
+			break;
+		}
+		case EVENT_DISCARD_HAND: {
+			auto anim = card_dynamic_anims.append();
+			anim->type = CARD_ANIM_DISCARD_HAND;
+			anim->start_time = event->time;
+			anim->duration = 0.0f;
+			anim->started = false;
+			break;
+		}
+		case EVENT_PLAY_CARD: {
+			auto anim = card_dynamic_anims.append();
+			anim->type = CARD_ANIM_PLAY_CARD;
+			anim->start_time = event->time;
+			anim->duration = constants.cards_ui.hand_to_in_play_time;
+			anim->started = false;
+			anim->play_card.card_id = event->play_card.card_id;
+			break;
+		}
+
 		}
 	}
 }
@@ -694,7 +1558,7 @@ static World_Static_Anim* get_static_anim(Anim_State* anim_state, Entity_ID enti
 	return NULL;
 }
 
-void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, f32 time)
+void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2_u32 screen_size, f32 time)
 {
 	auto r = &render->render_job_buffer;
 
@@ -713,6 +1577,88 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, f3
 	auto &world_static_anims = anim_state->world_static_anims;
 	auto &world_dynamic_anims = anim_state->world_dynamic_anims;
 	// auto &world_anim_mods = anim_state->world_modifier_anims;
+	auto &card_anims = anim_state->card_anim_state.card_anims;
+	auto &card_dynamic_anims = anim_state->card_anim_state.card_dynamic_anims;
+
+	// start card dynamic anims
+	for (u32 i = 0; i < card_dynamic_anims.len; ++i) {
+		auto anim = &card_dynamic_anims[i];
+		if (anim->start_time > dyn_time || anim->started) {
+			continue;
+		}
+		anim->started = true;
+		switch (anim->type) {
+		case CARD_ANIM_DISCARD_TO_DECK:
+		case CARD_ANIM_DISCARD_HAND:
+			break;
+		case CARD_ANIM_PLAY_CARD: {
+			anim_state->card_anim_state.highlighted_card_id = 0;
+			anim_state->card_anim_state.type = CARD_ANIM_STATE_SELECTED_TO_NORMAL;
+			anim_state->card_anim_state.selected_to_normal.start_time = anim->start_time;
+			anim_state->card_anim_state.selected_to_normal.duration = anim->duration;
+			u32 hand_index = (u32)-1;
+			for (u32 i = 0; i < card_anims.len; ++i) {
+				auto card_anim = &card_anims[i];
+				if (card_anim->card_id == anim->play_card.card_id) {
+					ASSERT(card_anim->pos.type == CARD_POS_HAND);
+					hand_index = card_anim->hand.index;
+					card_anim->type = CARD_ANIM_HAND_TO_IN_PLAY;
+					card_anim->hand_to_in_play.start = {};
+					card_anim->hand_to_in_play.start.angle = card_anim->pos.hand.angle;
+					card_anim->hand_to_in_play.start.zoom = card_anim->pos.hand.zoom;
+					card_anim->hand_to_in_play.start.radius = card_anim->pos.hand.radius;
+					card_anim->hand_to_in_play.start_time = anim->start_time;
+					card_anim->hand_to_in_play.duration = anim->duration;
+					break;
+				}
+			}
+			--anim_state->card_anim_state.hand_size;
+			ASSERT(hand_index != (u32)-1);
+			for (u32 i = 0; i < card_anims.len; ++i) {
+				auto card_anim = &card_anims[i];
+				if (card_anim->type == CARD_ANIM_IN_HAND && card_anim->hand.index > hand_index) {
+					--card_anim->hand.index;
+				}
+			}
+			// card_anim_create_hand_to_hand_anims()
+			break;
+		}
+		default:
+			ASSERT(0);
+			break;
+		}
+	}
+
+	// clean up finished card dynamic anims
+	for (u32 i = 0; i < card_dynamic_anims.len; ) {
+		auto anim = &card_dynamic_anims[i];
+		if (anim->start_time + anim->duration > dyn_time) {
+			++i;
+			continue;
+		}
+
+		switch (anim->type) {
+		case CARD_ANIM_DISCARD_TO_DECK:
+			for (u32 i = 0; i < card_anims.len; ++i) {
+				auto card_anim = &card_anims[i];
+				if (card_anim->type == CARD_ANIM_DISCARD) {
+					card_anim->type = CARD_ANIM_DECK;
+				}
+			}
+			break;
+		case CARD_ANIM_DISCARD_HAND:
+			anim_state->card_anim_state.type = CARD_ANIM_STATE_NORMAL;
+			break;
+		case CARD_ANIM_PLAY_CARD:
+			anim_state->card_anim_state.type = CARD_ANIM_STATE_NORMAL;
+			break;
+		default:
+			ASSERT(0);
+			break;
+		}
+
+		card_dynamic_anims.remove(i);
+	}
 
 	// start new dynamic animations
 	for (u32 i = 0; i < world_dynamic_anims.len; ++i) {
@@ -1128,6 +2074,13 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, f3
 			static_anim->depth_offset = constants.z_offsets.character;
 			break;
 		}
+		case ANIM_OPEN_DOOR: {
+			auto static_anim = get_static_anim(anim_state, anim->open_door.entity_id);
+			ASSERT(static_anim);
+			ASSERT(static_anim->type == ANIM_TILE_STATIC);
+			static_anim->sprite_coords = anim->open_door.spirte_coords;
+			break;
+		}
 		// TODO -- clean up particles
 		case ANIM_EXCHANGE_PARTICLES:
 		case ANIM_BLINK_PARTICLES:
@@ -1523,6 +2476,13 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, f3
 		}
 		++i;
 	}
+
+	// draw card ui
+	card_anim_draw(&anim_state->card_anim_state,
+	               &anim_state->draw->card_render,
+		       sound_player,
+		       screen_size,
+		       dyn_time);
 }
 
 bool is_animating(Anim_State* anim_state)
@@ -1531,4 +2491,77 @@ bool is_animating(Anim_State* anim_state)
 		return true;
 	}
 	return false;
+}
+
+UI_Mouse_Over get_mouse_over(Anim_State* anim_state, v2_u32 mouse_pos, v2_u32 screen_size)
+{
+	UI_Mouse_Over result = {};
+	result.type = UI_MOUSE_OVER_NOTHING;
+
+	v2 world_pos = screen_pos_to_world_pos(&anim_state->camera, screen_size, mouse_pos);
+
+	result.world_pos_pixels = world_pos;
+	result.world_pos = (Pos)(world_pos / 24.0f);
+
+	v2 card_mouse_pos = (v2)mouse_pos / (v2)screen_size;
+	card_mouse_pos.x = (card_mouse_pos.x * 2.0f - 1.0f) * ((f32)screen_size.x / (f32)screen_size.y);
+	card_mouse_pos.y = 1.0f - 2.0f * card_mouse_pos.y;
+	u32 selected_card_id = card_render_get_card_id_from_mouse_pos(&anim_state->draw->card_render, card_mouse_pos);
+
+	if (selected_card_id) {
+		switch (selected_card_id) {
+		case DISCARD_ID:
+			result.type = UI_MOUSE_OVER_DISCARD;
+			break;
+		case DECK_ID:
+			result.type = UI_MOUSE_OVER_DECK;
+			break;
+		default:
+			result.type = UI_MOUSE_OVER_CARD;
+			result.card.card_id = selected_card_id;
+			break;
+		}
+		return result;
+	}
+
+	u32 sprite_id = sprite_sheet_renderer_id_in_pos(&anim_state->draw->renderer, (v2_u32)result.world_pos_pixels);
+	if (sprite_id) {
+		result.type = UI_MOUSE_OVER_ENTITY;
+		result.entity.entity_id = sprite_id;
+		return result;
+	}
+
+	return result;
+}
+
+void highlight_card(Card_Anim_State* card_anim_state, Card_ID card_id)
+{
+	card_anim_state->highlighted_card_id = card_id;
+}
+
+void select_card(Card_Anim_State* card_anim_state, Card_ID card_id)
+{
+	ASSERT(card_anim_state->type == CARD_ANIM_STATE_NORMAL);
+	card_anim_state->type = CARD_ANIM_STATE_NORMAL_TO_SELECTED;
+	card_anim_state->normal_to_selected.selected_card_id = card_id;
+	card_anim_state->normal_to_selected.start_time = 0.0f;
+	card_anim_state->normal_to_selected.duration = constants.cards_ui.normal_to_selected_duration;
+}
+
+void unselect_card(Card_Anim_State* card_anim_state)
+{
+	ASSERT(card_anim_state->type == CARD_ANIM_STATE_SELECTED);
+	card_anim_state->type = CARD_ANIM_STATE_SELECTED_TO_NORMAL;
+	card_anim_state->selected_to_normal.start_time = 0.0f;
+	card_anim_state->selected_to_normal.duration = constants.cards_ui.normal_to_selected_duration;
+}
+
+void highlight_entity(Anim_State* anim_state, Entity_ID entity_id, v4 color)
+{
+
+}
+
+void highlight_pos(Anim_State* anim_state, Pos pos, v4 color)
+{
+
 }

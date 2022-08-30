@@ -43,3 +43,6 @@ typedef u32 Entity_ID;
 
 struct Render;
 struct Log;
+
+// XXX -- should get rid of this
+void debug_pause();

@@ -34,6 +34,7 @@ struct Output_Buffer
 
 	void reset()        { *len = 0; }
 	void append(T item) { ASSERT(*len < size); base[(*len)++] = item; }
+	T*   append()       { ASSERT(*len < size); return &base[(*len)++]; }
 
 	Output_Buffer(T* base, u32* len, u32 size) : base(base), len(len), size(size) { }
 };

@@ -302,7 +302,6 @@ struct Card_Anim
 			f32 start_time;
 			f32 duration;
 			u32 hand_index;
-			u8 played_sound;
 		} draw;
 		struct {
 			f32 start_time;
@@ -310,24 +309,49 @@ struct Card_Anim
 			Card_Hand_Pos start;
 		} hand_to_in_play;
 		struct {
-			f32 start_time;
-			f32 duration;
+			f32           start_time;
+			f32           duration;
 			Card_Hand_Pos start;
+			u32           discard_index;
 		} hand_to_discard;
 		struct {
-			f32 start_time;
-			f32 duration;
+			f32      start_time;
+			f32      duration;
 			Card_Pos start;
+			u32      discard_index;
 		} in_play_to_discard;
 		struct {
 			f32      start_time;
 			f32      duration;
 		} add_to_discard;
+		struct {
+			u32 index;
+		} discard;
 	};
 	Card_Pos pos;
 	v4 color_mod;
 	u32 card_id;
 	v2 card_face;
+};
+
+enum Card_Dynamic_Anim_Type
+{
+	CARD_ANIM_DISCARD_TO_DECK,
+	CARD_ANIM_DISCARD_HAND,
+	CARD_ANIM_PLAY_CARD,
+};
+
+struct Card_Dynamic_Anim
+{
+	Card_Dynamic_Anim_Type type;
+	f32 start_time;
+	f32 duration;
+	bool started;
+	union {
+		struct {
+			Card_ID card_id;
+		} play_card;
+	};
 };
 
 enum Card_Anim_Modifier_Type
@@ -364,8 +388,10 @@ struct Card_Anim_State
 	Hand_Params                                          hand_params;
 	u32                                                  hand_size;
 	u32                                                  highlighted_card_id;
+	u32                                                  prev_highlighted_card_id;
 	Max_Length_Array<Card_Anim, MAX_CARD_ANIMS>          card_anims;
 	Max_Length_Array<Card_Anim_Modifier, MAX_CARD_ANIMS> card_anim_modifiers;
+	Max_Length_Array<Card_Dynamic_Anim, MAX_CARD_ANIMS>  card_dynamic_anims;
 
 	union {
 		struct {
@@ -398,8 +424,9 @@ struct Card_Anim_State
 
 struct Anim_State
 {
-	f32 dyn_time_start;
-	v2  camera_offset;
+	f32    dyn_time_start;
+	v2     camera_offset;
+	Camera camera;
 
 	Max_Length_Array<World_Static_Anim, MAX_WORLD_STATIC_ANIMS>     world_static_anims;
 	Max_Length_Array<World_Anim_Dynamic, MAX_WORLD_DYNAMIC_ANIMS>   world_dynamic_anims;
@@ -411,10 +438,53 @@ struct Anim_State
 
 	// XXX -- temporary
 	Draw *draw;
+	Card_Render *card_render;
 };
 
 
+// =============================================================================
+// UI State
+// =============================================================================
+
+enum UI_Mouse_Over_Type
+{
+	UI_MOUSE_OVER_NOTHING,
+	UI_MOUSE_OVER_ENTITY,
+	UI_MOUSE_OVER_CARD,
+	UI_MOUSE_OVER_DECK,
+	UI_MOUSE_OVER_DISCARD,
+};
+
+struct UI_Mouse_Over
+{
+	UI_Mouse_Over_Type type;
+	union {
+		struct {
+			Entity_ID entity_id;
+		} entity;
+		struct {
+			Card_ID card_id;
+		} card;
+	};
+	v2  world_pos_pixels;
+	Pos world_pos;
+};
+
+struct Entity_Highlight
+{
+	Entity_ID entity_id;
+	v4        color;
+};
+
+void highlight_card(Card_Anim_State* card_anim_state, Card_ID card_id);
+void select_card(Card_Anim_State* card_anim_state, Card_ID card_id);
+void unselect_card(Card_Anim_State* card_anim_state);
+void highlight_entity(Anim_State* anim_state, Entity_ID entity_id, v4 color);
+void highlight_pos(Anim_State* anim_state, Pos pos, v4 color);
+
 void init(Anim_State* anim_state, Game* game);
 void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time);
-void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, f32 time);
+void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2_u32 screen_size, f32 time);
+// void highlight_entities(Anim_State* anim_state, Render* render, Slice<Entity_Highlight> highlights);
 bool is_animating(Anim_State* anim_state);
+UI_Mouse_Over get_mouse_over(Anim_State* anim_state, v2_u32 mouse_pos, v2_u32 screen_size);

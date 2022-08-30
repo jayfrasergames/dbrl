@@ -22,6 +22,35 @@ struct Game;
 typedef u32 Card_ID;
 
 // =============================================================================
+// Card params
+// =============================================================================
+
+#define MAX_CARD_PARAMS 32
+enum Card_Param_Type
+{
+	CARD_PARAM_TARGET,
+	CARD_PARAM_CREATURE,
+	CARD_PARAM_AVAILABLE_TILE,
+};
+
+struct Card_Param
+{
+	Card_Param_Type type;
+	size_t          offset;
+	union {
+		struct {
+			Pos dest;
+		} target;
+		struct {
+			Entity_ID id;
+		} creature;
+		struct {
+			Pos       dest;
+		} available_tile;
+	};
+};
+
+// =============================================================================
 // Actions
 // =============================================================================
 
@@ -44,6 +73,10 @@ enum Action_Type
 	ACTION_CLOSE_DOOR,
 	ACTION_SHOOT_WEB,
 	ACTION_TURN_INVISIBLE,
+
+	ACTION_DRAW_CARDS,
+	ACTION_DISCARD_HAND,
+	ACTION_PLAY_CARD,
 };
 
 struct Action
@@ -52,6 +85,12 @@ struct Action
 	Entity_ID   entity_id;
 	union {
 		struct {
+			Card_ID           card_id;
+			Action_Type       action_type;
+			Slice<Card_Param> params;
+		} play_card;
+
+		struct {
 			Pos start;
 			Pos end;
 		} move;
@@ -59,7 +98,6 @@ struct Action
 			Entity_ID target_id;
 		} bump_attack;
 		struct {
-			Pos start;
 			Pos end;
 		} fireball;
 		struct {
@@ -81,7 +119,6 @@ struct Action
 			i32 amount;
 		} heal;
 		struct {
-			Pos start;
 			Pos end;
 		} lightning;
 		struct {
@@ -328,10 +365,11 @@ struct Card
 
 struct Card_State
 {
-	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        deck;
-	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        discard;
-	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        hand;
-	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>        in_play;
+	u32                                           hand_size;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>  deck;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>  discard;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>  hand;
+	Max_Length_Array<Card, CARD_STATE_MAX_CARDS>  in_play;
 };
 
 // =============================================================================
@@ -371,6 +409,20 @@ enum Event_Type
 	EVENT_CARD_POISON,
 	EVENT_TURN_INVISIBLE,
 	EVENT_TURN_VISIBLE,
+
+	EVENT_DRAW_CARD,
+	EVENT_SHUFFLE_DISCARD_TO_DECK,
+	EVENT_DISCARD,
+	EVENT_DISCARD_HAND,
+	EVENT_PLAY_CARD,
+
+	// XXX
+	EVENT_CARD_DRAW,
+	EVENT_CARD_HAND_TO_IN_PLAY,
+	EVENT_CARD_HAND_TO_DISCARD,
+	EVENT_CARD_IN_PLAY_TO_DISCARD,
+	EVENT_CARD_SELECT,
+	EVENT_CARD_UNSELECT,
 };
 
 struct Event
@@ -378,6 +430,32 @@ struct Event
 	Event_Type type;
 	f32 time;
 	union {
+		struct {
+			Card_ID         card_id;
+			u32             hand_index;
+		} card_draw;
+		struct {
+			Card_ID card_id;
+			u32     discard_index;
+		} discard;
+		struct {
+			Card_ID card_id;
+		} play_card;
+
+
+		struct {
+			u32 card_id;
+		} card_hand_to_in_play;
+		struct {
+			Card_ID card_id;
+		} card_in_play_to_discard;
+		struct {
+			Card_ID card_id;
+		} card_hand_to_discard;
+		struct {
+			Card_ID card_id;
+		} card_select;
+
 		struct {
 			Entity_ID entity_id;
 			Pos start, end;
@@ -549,6 +627,7 @@ void             init(Game* game);
 void             update_fov(Game* game);
 
 Entity*          get_player(Game* game);
+Entity*          get_entity_by_id(Game* game, Entity_ID entity_id);
 Entity*          add_entity(Game* game);
 Controller*      add_controller(Game* game);
 Message_Handler* add_message_handler(Game* game);
@@ -567,9 +646,13 @@ Message_Handler* add_trap_spider_cave(Game* game, Pos pos, u32 radius);
 
 Entity_ID        add_slime(Game* game, Pos pos, u32 hit_points);
 
+void             do_action(Game* game, Action action, Output_Buffer<Event> events);
+void             get_card_params(Game* game, Card_ID card_id, Action_Type* action_type, Output_Buffer<Card_Param> card_params);
+
 // These functions should probably become internal
-Entity*          game_get_entity_by_id(Game* game, Entity_ID entity_id);
+void             game_do_turn(Game* game, Output_Buffer<Event> events);
 bool             game_is_pos_opaque(Game* game, Pos pos);
 bool             tile_is_passable(Tile tile, u16 move_mask);
 
 bool is_pos_passable(Game* game, Pos pos, u16 move_mask);
+Pos get_pos(Game* game, Entity_ID entity_id);

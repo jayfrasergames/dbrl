@@ -20,7 +20,7 @@ struct Camera
 
 struct Draw
 {
-	Camera camera;
+	// Camera camera;
 	Field_Of_Vision_Render fov_render;
 	Sprite_Sheet_Renderer renderer;
 	Sprite_Sheet_Instances tiles;
