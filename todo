@@ -1,15 +1,12 @@
 * current todo
-  * refactor anim
-    * separate out UI/anim
-      * world_anim
-        * static_anim
-        * dynamic_anim
-        * modifier_anim
-      * card_anim
-        * same as world? static/dynamic/modifier?
-      * sound_anim
-      * reading input
-      * game loop: read_input -> simulate -> render
+  * phases
+    * update transactions to be simulated in phases
+    * update controller function to be "get_action(Game*, Controller*, Phase, has_acted)"
+    * fix slime splitting bug (i.e. slime splits during bump_attack phase, then moves to same square as another
+      slime moves to in the movement phase)
+    * poison card draw/poison player
+  * close door
+  * disease (card can't be discarded)
 
 * goals (initial)
   * content
@@ -65,28 +62,20 @@
       that summons more webs and more spiders :-D!)
   * field of vision
     * transition between fovs
+      * event represents when FOV changed
+      * have a blend time for FOV change animations (blend starts at t - anim_time and ends at t + anim_time)
+      * simultaneous FOV anims get blended together
   * doors
-    * close
     * field of vision
     * trapped
     * locked
     * opens but gets stuck/doesn't close
     * opens but breaks
     * opens but becomes portal
-  * introduce concept of "phases" for actions/transactions
-    * draw cards phase
-    * bump attack phase
-    * movement phase
-    * special actions phase
   * deprecate "physics" in favour of simpler tile based logic for explosions/lightning etc (???)
 
   * refactor
     * anim
-      * make an "anim" struct with Card_Anim_State/World_Anim_State
-      * separate out anim stuff into their own files
-      * separate out process input logic/draw animation logic
-      * split out static/dynamic animations
-      * text anims to be collated into streams for entities (make them not overlap)
     * renderer unify texture types (source texture/target texture)
     * deprecate use of assets.bin for non-release candidates
       * load sounds from wave files at run time
@@ -115,13 +104,10 @@
 
   * spells/cards
     * magic missile
-    * fireball
-    * lightning (bounces off walls etc)
     * teleport sphere (chaos sphere?)
     * cloud/grease
     * freeze
     * flesh to stone
-    * disease (card can't be discarded)
 
   * rendering
     * add shadows over water
