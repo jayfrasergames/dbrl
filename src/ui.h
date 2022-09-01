@@ -96,6 +96,7 @@ enum World_Anim_Dynamic_Type
 	ANIM_TURN_INVISIBLE,
 	ANIM_TURN_VISIBLE,
 	ANIM_OPEN_DOOR,
+	ANIM_CLOSE_DOOR,
 };
 
 struct World_Anim_Dynamic
@@ -195,8 +196,12 @@ struct World_Anim_Dynamic
 		} add_creature;
 		struct {
 			Entity_ID entity_id;
-			v2        spirte_coords;
+			v2        sprite_coords;
 		} open_door;
+		struct {
+			Entity_ID entity_id;
+			v2        sprite_coords;
+		} close_door;
 	};
 };
 

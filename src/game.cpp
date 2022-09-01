@@ -872,6 +872,7 @@ enum Transaction_Type
 	TRANSACTION_BUMP_ATTACK_SNEAK,
 	TRANSACTION_BUMP_ATTACK_SNEAK_CONNECT,
 	TRANSACTION_OPEN_DOOR,
+	TRANSACTION_CLOSE_DOOR,
 	TRANSACTION_DROP_TILE,
 	TRANSACTION_FIREBALL_SHOT,
 	TRANSACTION_FIREBALL_HIT,
@@ -965,6 +966,10 @@ struct Transaction
 			Entity_ID entity_id;
 			Entity_ID door_id;
 		} open_door;
+		struct {
+			Entity_ID entity_id;
+			Entity_ID door_id;
+		} close_door;
 		struct {
 			Entity_ID caster_id;
 			Pos       target;
@@ -1222,6 +1227,13 @@ Transaction to_transaction(Action action)
 		t.phase = PHASE_ACTION;
 		t.open_door.entity_id = action.entity_id;
 		t.open_door.door_id = action.open_door.door_id;
+		break;
+	}
+	case ACTION_CLOSE_DOOR: {
+		t.type = TRANSACTION_CLOSE_DOOR;
+		t.phase = PHASE_ACTION;
+		t.close_door.entity_id = action.entity_id;
+		t.close_door.door_id = action.close_door.door_id;
 		break;
 	}
 	case ACTION_FIREBALL: {
@@ -2348,10 +2360,31 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 				event.open_door.door_id = door_id;
 				event.open_door.new_appearance = APPEARANCE_DOOR_WOODEN_OPEN;
 				events.append(event);
-				door->appearance = APPEARANCE_DOOR_WOODEN_OPEN;
-				door->flags = (Entity_Flag)(door->flags | ENTITY_FLAG_BLOCKS_VISION);
+				door->flags = (Entity_Flag)(door->flags & ~ENTITY_FLAG_BLOCKS_VISION);
 				door->block_mask = 0;
-				door->default_action = ACTION_NONE;
+				door->default_action = ACTION_CLOSE_DOOR;
+
+				break;
+			}
+			case TRANSACTION_CLOSE_DOOR: {
+				t->type = TRANSACTION_REMOVE;
+
+				auto door_id = t->close_door.door_id;
+				auto door = get_entity_by_id(game, door_id);
+				if (!door) {
+					break;
+				}
+
+				Event event = {};
+				event.type = EVENT_CLOSE_DOOR;
+				event.time = time;
+				event.close_door.door_id = door_id;
+				event.close_door.new_appearance = door->appearance;
+				events.append(event);
+
+				door->flags = (Entity_Flag)(door->flags | ENTITY_FLAG_BLOCKS_VISION);
+				door->block_mask = BLOCK_FLY | BLOCK_SWIM | BLOCK_WALK;
+				door->default_action = ACTION_OPEN_DOOR;
 
 				break;
 			}

@@ -125,6 +125,9 @@ struct Action
 			Entity_ID door_id;
 		} open_door;
 		struct {
+			Entity_ID door_id;
+		} close_door;
+		struct {
 			Pos target;
 		} shoot_web;
 	};
@@ -383,6 +386,7 @@ enum Event_Type
 	EVENT_MOVE_BLOCKED,
 	EVENT_BUMP_ATTACK,
 	EVENT_OPEN_DOOR,
+	EVENT_CLOSE_DOOR,
 	EVENT_DROP_TILE,
 	EVENT_FIREBALL_HIT,
 	EVENT_FIREBALL_SHOT,
@@ -470,6 +474,10 @@ struct Event
 			Entity_ID  door_id;
 			Appearance new_appearance;
 		} open_door;
+		struct {
+			Entity_ID  door_id;
+			Appearance new_appearance;
+		} close_door;
 		struct {
 			Entity_ID entity_id;
 			Pos pos;

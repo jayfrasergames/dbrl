@@ -812,6 +812,14 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 					}
 					break;
 				}
+				case ACTION_CLOSE_DOOR: {
+					auto player = get_player(&program->game);
+					if (positions_are_adjacent(player->pos, entity->pos)) {
+						player_action.type = action_type;
+						player_action.close_door.door_id = entity->id;
+					}
+					break;
+				}
 				case ACTION_BUMP_ATTACK: {
 					auto player = get_player(&program->game);
 					if (positions_are_adjacent(player->pos, entity->pos)) {

@@ -1049,12 +1049,27 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 			anim.start_time = event->time;
 			anim.duration = 0.0f;
 			anim.open_door.entity_id = event->open_door.door_id;
-			anim.open_door.spirte_coords = appearance_get_door_sprite_coords(event->open_door.new_appearance);
+			anim.open_door.sprite_coords = appearance_get_door_sprite_coords(event->open_door.new_appearance);
 			world_dynamic_anims.append(anim);
 
 			Sound_Anim open_sound = {};
 			open_sound.start_time = event->time;
 			open_sound.sound_id = SOUND_FANTASY_GAME_DOOR_OPEN;
+			sound_anims.append(open_sound);
+			break;
+		}
+		case EVENT_CLOSE_DOOR: {
+			World_Anim_Dynamic anim = {};
+			anim.type = ANIM_CLOSE_DOOR;
+			anim.start_time = event->time;
+			anim.duration = 0.0f;
+			anim.close_door.entity_id = event->close_door.door_id;
+			anim.close_door.sprite_coords = appearance_get_door_sprite_coords(event->close_door.new_appearance);
+			world_dynamic_anims.append(anim);
+
+			Sound_Anim open_sound = {};
+			open_sound.start_time = event->time;
+			open_sound.sound_id = SOUND_FANTASY_GAME_DOOR_CLOSE;
 			sound_anims.append(open_sound);
 			break;
 		}
@@ -1620,7 +1635,6 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 					--card_anim->hand.index;
 				}
 			}
-			// card_anim_create_hand_to_hand_anims()
 			break;
 		}
 		default:
@@ -1906,6 +1920,7 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 		case ANIM_POLYMORPH:
 		case ANIM_FIELD_OF_VISION_CHANGED:
 		case ANIM_OPEN_DOOR:
+		case ANIM_CLOSE_DOOR:
 			break;
 		default:
 			ASSERT(0);
@@ -2078,7 +2093,14 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 			auto static_anim = get_static_anim(anim_state, anim->open_door.entity_id);
 			ASSERT(static_anim);
 			ASSERT(static_anim->type == ANIM_TILE_STATIC);
-			static_anim->sprite_coords = anim->open_door.spirte_coords;
+			static_anim->sprite_coords = anim->open_door.sprite_coords;
+			break;
+		}
+		case ANIM_CLOSE_DOOR: {
+			auto static_anim = get_static_anim(anim_state, anim->close_door.entity_id);
+			ASSERT(static_anim);
+			ASSERT(static_anim->type == ANIM_TILE_STATIC);
+			static_anim->sprite_coords = anim->close_door.sprite_coords;
 			break;
 		}
 		// TODO -- clean up particles
