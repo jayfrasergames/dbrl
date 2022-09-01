@@ -1556,6 +1556,39 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 			anim->play_card.card_id = event->play_card.card_id;
 			break;
 		}
+		case EVENT_REMOVE_CARD: {
+			auto anim = world_dynamic_anims.append();
+			*anim = {};
+			anim->type = ANIM_TEXT;
+			anim->text.caption[ 0] = '*';
+			anim->text.caption[ 1] = 'l';
+			anim->text.caption[ 2] = 'o';
+			anim->text.caption[ 3] = 's';
+			anim->text.caption[ 4] = 'e';
+			anim->text.caption[ 5] = ' ';
+			anim->text.caption[ 6] = 'c';
+			anim->text.caption[ 7] = 'a';
+			anim->text.caption[ 8] = 'r';
+			anim->text.caption[ 9] = 'd';
+			anim->text.caption[10] = '*';
+			anim->text.caption[11] = 0;
+			anim->text.pos = (v2)event->remove_card.target_pos;
+			anim->text.color = v4(1.0f, 0.0f, 0.0f, 1.0f);
+			anim->start_time = event->time;
+			anim->duration = constants.anims.text_duration;
+			anim->started = false;
+
+			auto sound = sound_anims.append();
+			Sound_ID sound_ids[] = {
+				SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_WHOOSH_01,
+				SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_WHOOSH_02,
+				SOUND_CARD_GAME_MOVEMENT_DEAL_SINGLE_WHOOSH_03,
+			};
+			sound->sound_id = sound_ids[rand_u32() % ARRAY_SIZE(sound_ids)];
+			sound->start_time = event->time;
+
+			break;
+		}
 
 		}
 	}
@@ -2510,6 +2543,9 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 bool is_animating(Anim_State* anim_state)
 {
 	if (anim_state->world_dynamic_anims) {
+		return true;
+	}
+	if (anim_state->card_anim_state.card_dynamic_anims) {
 		return true;
 	}
 	return false;

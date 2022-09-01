@@ -73,6 +73,7 @@ enum Action_Type
 	ACTION_CLOSE_DOOR,
 	ACTION_SHOOT_WEB,
 	ACTION_TURN_INVISIBLE,
+	ACTION_STEAL_CARD,
 
 	ACTION_DRAW_CARDS,
 	ACTION_DISCARD_HAND,
@@ -130,6 +131,9 @@ struct Action
 		struct {
 			Pos target;
 		} shoot_web;
+		struct {
+			Entity_ID target_id;
+		} steal_card;
 	};
 
 	operator bool() { return type; }
@@ -148,6 +152,7 @@ enum Controller_Type
 	CONTROLLER_DRAGON,
 	CONTROLLER_SLIME,
 	CONTROLLER_LICH,
+	CONTROLLER_IMP,
 
 	CONTROLLER_SPIDER_NORMAL,
 	CONTROLLER_SPIDER_WEB,
@@ -182,6 +187,9 @@ struct Controller
 			Max_Length_Array<Entity_ID, CONTROLLER_LICH_MAX_SKELETONS> skeleton_ids;
 			u32 heal_cooldown;
 		} lich;
+		struct {
+			Entity_ID imp_id;
+		} imp;
 		struct {
 			Entity_ID entity_id;
 		} spider_normal;
@@ -279,6 +287,7 @@ enum Creature_Type
 	CREATURE_SPIDER_WEB,
 	CREATURE_SPIDER_POISON,
 	CREATURE_SPIDER_SHADOW,
+	CREATURE_IMP,
 };
 
 // =============================================================================
@@ -419,6 +428,7 @@ enum Event_Type
 	EVENT_DISCARD,
 	EVENT_DISCARD_HAND,
 	EVENT_PLAY_CARD,
+	EVENT_REMOVE_CARD,
 
 	// XXX
 	EVENT_CARD_DRAW,
@@ -445,6 +455,10 @@ struct Event
 		struct {
 			Card_ID card_id;
 		} play_card;
+		struct {
+			Card_ID card_id;
+			Pos     target_pos;
+		} remove_card;
 
 
 		struct {
@@ -649,6 +663,7 @@ Entity*          add_spider_normal(Game* game, Pos pos);
 Entity*          add_spider_web(Game* game, Pos pos);
 Entity*          add_spider_poison(Game* game, Pos pos);
 Entity*          add_spider_shadow(Game* game, Pos pos);
+Entity*          add_imp(Game* game, Pos pos);
 Entity*          add_spiderweb(Game* game, Pos pos);
 Message_Handler* add_trap_spider_cave(Game* game, Pos pos, u32 radius);
 

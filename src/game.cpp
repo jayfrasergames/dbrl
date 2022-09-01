@@ -288,6 +288,8 @@ Entity* add_creature(Game* game, Pos pos, Creature_Type type)
 		return add_spider_poison(game, pos);
 	case CREATURE_SPIDER_SHADOW:
 		return add_spider_shadow(game, pos);
+	case CREATURE_IMP:
+		return add_imp(game, pos);
 	default:
 		ASSERT(0);
 	}
@@ -364,6 +366,20 @@ Entity* add_spider_shadow(Game* game, Pos pos)
 	c->type = CONTROLLER_SPIDER_SHADOW;
 	c->spider_shadow.entity_id = e->id;
 	c->spider_shadow.invisible_cooldown = 3;
+
+	return e;
+}
+
+Entity* add_imp(Game* game, Pos pos)
+{
+	auto e = add_enemy(game, 5);
+	e->appearance = APPEARANCE_CREATURE_IMP;
+	e->movement_type = BLOCK_FLY;
+	e->pos = pos;
+
+	auto c = add_controller(game);
+	c->type = CONTROLLER_IMP;
+	c->imp.imp_id = e->id;
 
 	return e;
 }
@@ -466,6 +482,17 @@ static Entity_ID lich_get_skeleton_to_heal(Game *game, Controller *controller)
 	return best_skeleton_id;
 }
 
+static void do_action_if_adjacent(Game* game, Entity_ID actor_id, Entity_ID target_id, Output_Buffer<Action> actions, Action action)
+{
+	auto actor = get_entity_by_id(game, actor_id);
+	auto target = get_entity_by_id(game, target_id);
+	ASSERT(actor && target);
+
+	if (positions_are_adjacent(actor->pos, target->pos)) {
+		actions.append(action);
+	}
+}
+
 static void bump_attack_player_if_adjacent(Game* game, Entity_ID entity_id, Output_Buffer<Action> attacks, Action_Type bump_attack_type = ACTION_BUMP_ATTACK)
 {
 	auto player = get_player(game);
@@ -519,6 +546,14 @@ void make_bump_attacks(Controller* c, Game* game, Output_Buffer<Action> attacks)
 		} else {
 			bump_attack_player_if_adjacent(game, spider_id, attacks);
 		}
+		break;
+	}
+	case CONTROLLER_IMP: {
+		Action steal_card = {};
+		steal_card.type = ACTION_STEAL_CARD;
+		steal_card.entity_id = c->imp.imp_id;
+		steal_card.steal_card.target_id = ENTITY_ID_PLAYER;
+		do_action_if_adjacent(game, steal_card.entity_id, ENTITY_ID_PLAYER, attacks, steal_card);
 		break;
 	}
 
@@ -896,6 +931,7 @@ enum Transaction_Type
 	TRANSACTION_ADD_CREATURE,
 	TRANSACTION_TURN_INVISIBLE_CAST,
 	TRANSACTION_TURN_INVISIBLE,
+	TRANSACTION_STEAL_CARD,
 
 	TRANSACTION_DRAW_CARDS_1,
 	TRANSACTION_DRAW_CARDS_2,
@@ -992,6 +1028,10 @@ struct Transaction
 			Card_ID card_id;
 			Action  action;
 		} play_card;
+		struct {
+			Entity_ID stealer_id;
+			Entity_ID target_id;
+		} steal_card;
 	};
 };
 
@@ -1213,6 +1253,14 @@ Transaction to_transaction(Action action)
 		t.phase = PHASE_BUMP_ATTACK;
 		t.bump_attack.attacker_id = action.entity_id;
 		t.bump_attack.target_id = action.bump_attack.target_id;
+		break;
+	}
+	case ACTION_STEAL_CARD: {
+		t.type = TRANSACTION_STEAL_CARD;
+		t.start_time = constants.anims.bump_attack.duration / 2.0f;
+		t.phase = PHASE_BUMP_ATTACK;
+		t.steal_card.stealer_id = action.entity_id;
+		t.steal_card.target_id = action.steal_card.target_id;
 		break;
 	}
 	case ACTION_BUMP_ATTACK_SNEAK: {
@@ -2227,7 +2275,6 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 
 				break;
 			}
-
 			case TRANSACTION_BUMP_ATTACK_CONNECT: {
 				// TODO -- move_pre_enter message
 				//         move_post_enter message
@@ -2256,6 +2303,52 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 				u32 idx = rand_u32() % ARRAY_SIZE(sounds);
 				event.bump_attack.sound = sounds[idx];
 				events.append(event);
+
+				break;
+			}
+
+			case TRANSACTION_STEAL_CARD: {
+				t->type = TRANSACTION_REMOVE;
+				ASSERT(t->steal_card.target_id == ENTITY_ID_PLAYER);
+
+				auto stealer = get_entity_by_id(game, t->steal_card.stealer_id);
+				auto target = get_entity_by_id(game, t->steal_card.target_id);
+
+				if (!stealer || !target) {
+					break;
+				}
+
+				Event event = {};
+				event.type = EVENT_BUMP_ATTACK;
+				event.time = time - constants.anims.bump_attack.duration / 2.0f;
+				event.bump_attack.attacker_id = stealer->id;
+				event.bump_attack.start = stealer->pos;
+				event.bump_attack.end = target->pos;
+				event.bump_attack.sound = SOUND_CARD_GAME_EFFECT_POOF_02;
+				events.append(event);
+
+				auto &deck = game->card_state.deck;
+				auto &discard = game->card_state.discard;
+
+				ASSERT(deck || discard);
+				u32 idx = rand_u32() % (deck.len + discard.len);
+				Card_ID card_id = 0;
+				if (idx < deck.len) {
+					card_id = deck[idx].id;
+					deck.remove(idx);
+				} else {
+					idx -= deck.len;
+					card_id = discard[idx].id;
+					discard.remove(idx);
+				}
+				ASSERT(card_id);
+
+				Event remove_card = {};
+				remove_card.type = EVENT_REMOVE_CARD;
+				remove_card.time = time;
+				remove_card.remove_card.card_id = card_id;
+				remove_card.remove_card.target_pos = target->pos;
+				events.append(remove_card);
 
 				break;
 			}

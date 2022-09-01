@@ -5,7 +5,6 @@
     * fix slime splitting bug (i.e. slime splits during bump_attack phase, then moves to same square as another
       slime moves to in the movement phase)
     * poison card draw/poison player
-  * close door
   * disease (card can't be discarded)
 
 * goals (initial)
@@ -81,6 +80,7 @@
       * load sounds from wave files at run time
       * deprecate gigabyte asset buffer *barf*
     * make a header file with forward declarations. work to eliminate header file dependencies
+    * remove lua
 
     * console
       * command history

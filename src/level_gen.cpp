@@ -684,6 +684,12 @@ static void from_string(Game* game, char* str)
 
 			break;
 		}
+		case 'i': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			add_imp(game, cur_pos);
+		}
 
 		}
 		++cur_pos.x;
@@ -728,6 +734,22 @@ void build_level_default(Game* game, Log* log)
 		"#.............#..........................#\n"
 		"#.............#..........................#\n"
 		"##########################################\n");
+}
+
+void build_level_imp_test(Game* game, Log* log)
+{
+	from_string(game,
+		"###############\n"
+		"#.............#\n"
+		"#.............#\n"
+		"#.............#\n"
+		"#.....i.......#\n"
+		"#.............#\n"
+		"#.............#\n"
+		"#.....@.......#\n"
+		"#.............#\n"
+		"#.............#\n"
+		"###############\n");
 }
 
 void build_level_anim_test(Game* game, Log* log)

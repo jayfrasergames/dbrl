@@ -10,6 +10,7 @@ typedef void (*Build_Level_Function)(Game* game, Log* log);
 #define LEVEL_GEN_FUNCS \
 	FUNC(default) \
 	FUNC(anim_test) \
+	FUNC(imp_test) \
 	FUNC(slime_test) \
 	FUNC(lich_test) \
 	FUNC(field_of_vision_test) \
