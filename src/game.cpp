@@ -624,6 +624,32 @@ player_wont_move:
 				potential_moves.append(pm);
 			}
 			break;
+		case CONTROLLER_IMP: {
+			auto imp_id = c->imp.imp_id;
+			auto imp = get_entity_by_id(game, imp_id);
+			if (!positions_are_adjacent(imp->pos, player_end_pos)) {
+				u16 move_mask = imp->movement_type;
+				Pos start = imp->pos;
+				for (i8 dy = -1; dy <= 1; ++dy) {
+					for (i8 dx = -1; dx <= 1; ++dx) {
+						if (!(dx || dy)) {
+							continue;
+						}
+						Pos end = (Pos)((v2_i16)start + v2_i16(dx, dy));
+						Tile t = tiles[end];
+						if (tile_is_passable(t, move_mask)) {
+							Potential_Move pm = {};
+							pm.entity_id = imp_id;
+							pm.start = start;
+							pm.end = end;
+							pm.weight = uniform_f32(0.0f, 1.0f);
+							potential_moves.append(pm);
+						}
+					}
+				}
+			}
+			break;
+		}
 		case CONTROLLER_RANDOM_MOVE: {
 			Entity *e = get_entity_by_id(game, c->random_move.entity_id);
 			u16 move_mask = e->movement_type;
@@ -1167,6 +1193,33 @@ struct Transaction
 	};
 };
 
+static Card* get_card_by_id(Game* game, Card_ID card_id)
+{
+	auto &hand = game->card_state.hand;
+	auto &deck = game->card_state.deck;
+	auto &discard = game->card_state.discard;
+
+	for (u32 i = 0; i < hand.len; ++i) {
+		if (hand[i].id == card_id) {
+			return &hand[i];
+		}
+	}
+
+	for (u32 i = 0; i < deck.len; ++i) {
+		if (deck[i].id == card_id) {
+			return &deck[i];
+		}
+	}
+
+	for (u32 i = 0; i < discard.len; ++i) {
+		if (discard[i].id == card_id) {
+			return &discard[i];
+		}
+	}
+
+	return NULL;
+}
+
 void game_dispatch_message(Game*                      game,
                            Message                    message,
                            f32                        time,
@@ -1174,8 +1227,26 @@ void game_dispatch_message(Game*                      game,
                            Output_Buffer<Event>       events,
                            void*                      data)
 {
+	switch (message.type) {
+	case MESSAGE_DRAW_CARD: {
+		auto card = get_card_by_id(game, message.draw_card.card_id);
+		ASSERT(card);
+		switch (card->appearance) {
+		case CARD_APPEARANCE_POISON: {
+			Transaction t = {};
+			t.type = TRANSACTION_POISON;
+			t.start_time = time + TRANSACTION_EPSILON;
+			t.poison.card_id = message.draw_card.card_id;
+			t.poison.entity_id = ENTITY_ID_PLAYER;
+			transactions.append(t);
+			break;
+		}
+		}
+		break;
+	}
+	}
+
 	auto &handlers = game->handlers;
-	u32 num_handlers = handlers.len;
 	for (u32 i = 0; i < handlers.len; ) {
 		Message_Handler *h = &handlers[i];
 		if (!(message.type & h->handle_mask)) {
@@ -1419,10 +1490,6 @@ Transaction to_transaction(Action action, f32 time)
 		t.type = TRANSACTION_BLINK_CAST;
 		t.blink.caster_id = action.entity_id;
 		t.blink.target = action.blink.target;
-		break;
-	}
-	case ACTION_POISON: {
-		ASSERT(0);
 		break;
 	}
 	case ACTION_FIRE_BOLT: {
@@ -3042,6 +3109,12 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 					}
 					auto card = card_state->deck.pop();
 					card_state->hand.append(card);
+
+					Message message = {};
+					message.type = MESSAGE_DRAW_CARD;
+					message.draw_card.card_id = card.id;
+					game_dispatch_message(game, message, time, transactions, events, NULL);
+
 					draw_card_event.card_draw.hand_index = i;
 					draw_card_event.card_draw.card_id = card.id;
 					events.append(draw_card_event);

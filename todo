@@ -1,6 +1,7 @@
 * current todo
   * poison card draw/poison player
   * disease (card can't be discarded)
+  * fireball hits barrels, chain reaction
 
 * goals (initial)
   * content
@@ -90,7 +91,6 @@
     * animation "speeding up" when moves made rapidly
 
 * scenarios:
-  * fireball hits barrels, chain reaction
   * invisible wall (interrupt transaction pre-enter/rebound for movement)
     * test scenario: walk into invisible wall whilst standing on a drop tile
   * enemy abilities
@@ -107,9 +107,6 @@
   * rendering
     * add shadows over water
 
-  * card user interface
-    * card discarding
-
   * editor
     * editor mode
     * entity picking/tile editing
@@ -120,8 +117,6 @@
     * enemy editor
 
   * technical
-    * fix D3D11 errors
-
     * logging
       * have a list of different logs and make an interface for reading those logs
       * logs can create notifications if something bad happens
@@ -134,8 +129,7 @@
 
     * cleanup renderer
       * merge all texture types (target/source) into a single abstract texture type
-      * load shaders from text files at run time
-        * add texture targets for writing debug output which can be viewed at runtime
+      * add texture targets for writing debug output which can be viewed at runtime
 
       * port shaders to cleaned up renderer (reverse order they are rendered in dbrl.cpp)
         * card_render

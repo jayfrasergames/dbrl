@@ -731,6 +731,9 @@ void card_anim_draw(Card_Anim_State* card_anim_state,
 
 			switch (card_modifier->type) {
 			case CARD_ANIM_MOD_FLASH: {
+				if (time < card_modifier->flash.start_time) {
+					continue;
+				}
 				f32 dt = (time - card_modifier->flash.start_time);
 				u32 flash_counter = (u32)floorf(dt / card_modifier->flash.flash_duration);
 				if (flash_counter % 2 == 0) {

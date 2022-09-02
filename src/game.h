@@ -66,7 +66,7 @@ enum Action_Type
 	ACTION_FIRE_BOLT,
 	ACTION_EXCHANGE,
 	ACTION_BLINK,
-	ACTION_POISON,
+	// ACTION_POISON,
 	ACTION_HEAL,
 	ACTION_LIGHTNING,
 	ACTION_OPEN_DOOR,
@@ -108,10 +108,6 @@ struct Action
 		struct {
 			Pos       target;
 		} blink;
-		struct {
-			Entity_ID target;
-			Card_ID   card_id;
-		} poison;
 		struct {
 			Entity_ID target_id;
 		} fire_bolt;
@@ -303,6 +299,7 @@ enum Message_Type : u32
 	MESSAGE_DAMAGE          = 1 << 4,
 	MESSAGE_PRE_DEATH       = 1 << 5,
 	MESSAGE_POST_DEATH      = 1 << 6,
+	MESSAGE_DRAW_CARD       = 1 << 7,
 };
 
 struct Message
@@ -322,6 +319,9 @@ struct Message
 		struct {
 			Entity_ID entity_id;
 		} death;
+		struct {
+			Card_ID card_id;
+		} draw_card;
 	};
 };
 
