@@ -1295,9 +1295,8 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 		case EVENT_SLIME_SPLIT: {
 			World_Anim_Dynamic anim = {};
 			anim.type = ANIM_SLIME_SPLIT;
-			anim.start_time = event->time;
+			anim.start_time = event->time - constants.anims.slime_split.duration;
 			anim.duration = constants.anims.slime_split.duration;
-			anim.slime_split.original_id = event->slime_split.original_id;
 			anim.slime_split.new_id = event->slime_split.new_id;
 			anim.slime_split.start = event->slime_split.start;
 			anim.slime_split.end = event->slime_split.end;
@@ -1706,6 +1705,201 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 
 		card_dynamic_anims.remove(i);
 	}
+	// clear up finished animations
+	for (u32 i = 0; i < world_dynamic_anims.len; ) {
+		auto anim = &world_dynamic_anims[i];
+		if (anim->start_time + anim->duration > dyn_time) {
+			++i;
+			continue;
+		}
+
+		switch (anim->type) {
+		case ANIM_TURN_VISIBLE: {
+			auto static_anim = get_static_anim(anim_state, anim->turn_visible.entity_id);
+			if (static_anim) {
+				for (u32 i = 0; i < static_anim->modifiers.len; ++i) {
+					if (static_anim->modifiers[i].type == ANIM_MOD_COLOR) {
+						static_anim->modifiers.remove(i);
+						break;
+					}
+				}
+			}
+			break;
+		}
+		case ANIM_MOVE: {
+			auto static_anim = get_static_anim(anim_state, anim->move.entity_id);
+			if (static_anim) {
+				static_anim->idle.offset = time;
+				static_anim->idle.duration = uniform_f32(0.8f, 1.2f);
+				static_anim->world_coords = anim->move.end;
+				for (u32 i = 0; i < static_anim->modifiers.len; ++i) {
+					if (static_anim->modifiers[i].type == ANIM_MOD_POS) {
+						static_anim->modifiers.remove(i);
+						break;
+					}
+				}
+			}
+			break;
+		}
+		case ANIM_MOVE_BLOCKED: {
+			auto static_anim = get_static_anim(anim_state, anim->move.entity_id);
+			if (static_anim) {
+				static_anim->idle.offset = time;
+				static_anim->idle.duration = uniform_f32(0.8f, 1.2f);
+				static_anim->world_coords = anim->move.start;
+				for (u32 i = 0; i < static_anim->modifiers.len; ++i) {
+					if (static_anim->modifiers[i].type == ANIM_MOD_POS) {
+						static_anim->modifiers.remove(i);
+						break;
+					}
+				}
+			}
+			break;
+		}
+		case ANIM_DEATH: {
+			Entity_ID entity_id = anim->death.entity_id;
+			for (u32 i = 0; i < world_static_anims.len; ) {
+				if (world_static_anims[i].entity_id == entity_id) {
+					world_static_anims.remove(i);
+					continue;
+				}
+				++i;
+			}
+			break;
+		}
+		case ANIM_DROP_TILE: {
+			Entity_ID entity_id = anim->drop_tile.entity_id;
+			for (u32 i = 0; i < world_static_anims.len; ) {
+				if (world_static_anims[i].entity_id == entity_id) {
+					world_static_anims.remove(i);
+					continue;
+				}
+				++i;
+			}
+			break;
+		}
+		case ANIM_EXCHANGE: {
+			Entity_ID a_id = anim->exchange.a;
+			Entity_ID b_id = anim->exchange.b;
+			auto a = get_static_anim(anim_state, a_id);
+			auto b = get_static_anim(anim_state, b_id);
+			ASSERT(a && b);
+			// XXX - not sure what to do about this
+			ASSERT(a->type == ANIM_CREATURE_IDLE);
+			ASSERT(b->type == ANIM_CREATURE_IDLE);
+			v2 tmp = a->world_coords;
+			a->world_coords = b->world_coords;
+			b->world_coords = tmp;
+			break;
+		}
+		case ANIM_BLINK: {
+			Entity_ID e_id = anim->blink.entity_id;
+			auto caster_anim = get_static_anim(anim_state, e_id);
+			ASSERT(caster_anim);
+			caster_anim->world_coords = anim->blink.target;
+			break;
+		}
+		case ANIM_SLIME_SPLIT: {
+			auto static_anim = get_static_anim(anim_state, anim->slime_split.new_id);
+			ASSERT(static_anim);
+			for (u32 i = 0; i < static_anim->modifiers.len; ) {
+				auto modifier = &static_anim->modifiers[i];
+				switch (modifier->type) {
+				case ANIM_MOD_POS:
+					static_anim->modifiers.remove(i);
+					continue;
+				}
+				++i;
+			}
+			break;
+		}
+		case ANIM_POLYMORPH: {
+			Entity_ID entity_id = anim->polymorph.entity_id;
+			auto static_anim = get_static_anim(anim_state, entity_id);
+			static_anim->sprite_coords = anim->polymorph.new_sprite_coords;
+			break;
+		}
+		case ANIM_CREATURE_DROP_IN: {
+			auto static_anim = get_static_anim(anim_state, anim->creature_drop_in.entity_id);
+			ASSERT(static_anim);
+			for (u32 i = 0; i < static_anim->modifiers.len; ) {
+				switch (static_anim->modifiers[i].type) {
+				case ANIM_MOD_COLOR:
+					static_anim->modifiers.remove(i);
+					continue;
+				case ANIM_MOD_POS:
+					static_anim->modifiers.remove(i);
+					continue;
+				}
+				++i;
+			}
+			break;
+		}
+		case ANIM_TURN_INVISIBLE: {
+			auto static_anim = get_static_anim(anim_state, anim->turn_invisible.entity_id);
+			if (static_anim) {
+				for (u32 i = 0; i < static_anim->modifiers.len; ++i) {
+					auto modifier = &static_anim->modifiers[i];
+					if (modifier->type == ANIM_MOD_COLOR) {
+						modifier->color.color = v4(1.0f, 1.0f, 1.0f, constants.anims.turn_invisible.visibility);
+					}
+				}
+			}
+			break;
+		}
+		case ANIM_ADD_ITEM: {
+			auto static_anim = world_static_anims.append();
+			static_anim->type = ANIM_TILE_STATIC;
+			static_anim->sprite_coords = anim->add_item.sprite_coords;
+			static_anim->world_coords = anim->add_item.pos;
+			static_anim->entity_id = anim->add_item.entity_id;
+			// XXX -- ugh
+			static_anim->depth_offset = constants.z_offsets.door;
+			break;
+		}
+		case ANIM_ADD_CREATURE: {
+			auto static_anim = world_static_anims.append();
+			static_anim->type = ANIM_CREATURE_IDLE;
+			static_anim->sprite_coords = anim->add_creature.sprite_coords;
+			static_anim->world_coords = anim->add_creature.pos;
+			static_anim->entity_id = anim->add_creature.entity_id;
+			static_anim->depth_offset = constants.z_offsets.character;
+			break;
+		}
+		case ANIM_OPEN_DOOR: {
+			auto static_anim = get_static_anim(anim_state, anim->open_door.entity_id);
+			ASSERT(static_anim);
+			ASSERT(static_anim->type == ANIM_TILE_STATIC);
+			static_anim->sprite_coords = anim->open_door.sprite_coords;
+			break;
+		}
+		case ANIM_CLOSE_DOOR: {
+			auto static_anim = get_static_anim(anim_state, anim->close_door.entity_id);
+			ASSERT(static_anim);
+			ASSERT(static_anim->type == ANIM_TILE_STATIC);
+			static_anim->sprite_coords = anim->close_door.sprite_coords;
+			break;
+		}
+		// TODO -- clean up particles
+		case ANIM_EXCHANGE_PARTICLES:
+		case ANIM_BLINK_PARTICLES:
+		case ANIM_POLYMORPH_PARTICLES:
+		case ANIM_HEAL_PARTICLES:
+		case ANIM_SHOOT_WEB_PARTICLES:
+			break;
+		case ANIM_FIELD_OF_VISION_CHANGED:
+		case ANIM_TEXT:
+		case ANIM_PROJECTILE_EFFECT_24:
+		case ANIM_PROJECTILE_EFFECT_32:
+		case ANIM_CAMERA_SHAKE:
+			break;
+		default:
+			// Should explicitly decide whether a dynamic anim does anything on cleanup or not
+			ASSERT(0);
+			break;
+		}
+		world_dynamic_anims.remove(i);
+	}
 
 	// start new dynamic animations
 	for (u32 i = 0; i < world_dynamic_anims.len; ++i) {
@@ -1961,201 +2155,6 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 		}
 	}
 
-	// clear up finished animations
-	for (u32 i = 0; i < world_dynamic_anims.len; ) {
-		auto anim = &world_dynamic_anims[i];
-		if (anim->start_time + anim->duration > dyn_time) {
-			++i;
-			continue;
-		}
-
-		switch (anim->type) {
-		case ANIM_TURN_VISIBLE: {
-			auto static_anim = get_static_anim(anim_state, anim->turn_visible.entity_id);
-			if (static_anim) {
-				for (u32 i = 0; i < static_anim->modifiers.len; ++i) {
-					if (static_anim->modifiers[i].type == ANIM_MOD_COLOR) {
-						static_anim->modifiers.remove(i);
-						break;
-					}
-				}
-			}
-			break;
-		}
-		case ANIM_MOVE: {
-			auto static_anim = get_static_anim(anim_state, anim->move.entity_id);
-			if (static_anim) {
-				static_anim->idle.offset = time;
-				static_anim->idle.duration = uniform_f32(0.8f, 1.2f);
-				static_anim->world_coords = anim->move.end;
-				for (u32 i = 0; i < static_anim->modifiers.len; ++i) {
-					if (static_anim->modifiers[i].type == ANIM_MOD_POS) {
-						static_anim->modifiers.remove(i);
-						break;
-					}
-				}
-			}
-			break;
-		}
-		case ANIM_MOVE_BLOCKED: {
-			auto static_anim = get_static_anim(anim_state, anim->move.entity_id);
-			if (static_anim) {
-				static_anim->idle.offset = time;
-				static_anim->idle.duration = uniform_f32(0.8f, 1.2f);
-				static_anim->world_coords = anim->move.start;
-				for (u32 i = 0; i < static_anim->modifiers.len; ++i) {
-					if (static_anim->modifiers[i].type == ANIM_MOD_POS) {
-						static_anim->modifiers.remove(i);
-						break;
-					}
-				}
-			}
-			break;
-		}
-		case ANIM_DEATH: {
-			Entity_ID entity_id = anim->death.entity_id;
-			for (u32 i = 0; i < world_static_anims.len; ) {
-				if (world_static_anims[i].entity_id == entity_id) {
-					world_static_anims.remove(i);
-					continue;
-				}
-				++i;
-			}
-			break;
-		}
-		case ANIM_DROP_TILE: {
-			Entity_ID entity_id = anim->drop_tile.entity_id;
-			for (u32 i = 0; i < world_static_anims.len; ) {
-				if (world_static_anims[i].entity_id == entity_id) {
-					world_static_anims.remove(i);
-					continue;
-				}
-				++i;
-			}
-			break;
-		}
-		case ANIM_EXCHANGE: {
-			Entity_ID a_id = anim->exchange.a;
-			Entity_ID b_id = anim->exchange.b;
-			auto a = get_static_anim(anim_state, a_id);
-			auto b = get_static_anim(anim_state, b_id);
-			ASSERT(a && b);
-			// XXX - not sure what to do about this
-			ASSERT(a->type == ANIM_CREATURE_IDLE);
-			ASSERT(b->type == ANIM_CREATURE_IDLE);
-			v2 tmp = a->world_coords;
-			a->world_coords = b->world_coords;
-			b->world_coords = tmp;
-			break;
-		}
-		case ANIM_BLINK: {
-			Entity_ID e_id = anim->blink.entity_id;
-			auto caster_anim = get_static_anim(anim_state, e_id);
-			ASSERT(caster_anim);
-			caster_anim->world_coords = anim->blink.target;
-			break;
-		}
-		case ANIM_SLIME_SPLIT: {
-			auto static_anim = get_static_anim(anim_state, anim->slime_split.new_id);
-			ASSERT(static_anim);
-			for (u32 i = 0; i < static_anim->modifiers.len; ) {
-				auto modifier = &static_anim->modifiers[i];
-				switch (modifier->type) {
-				case ANIM_MOD_POS:
-					static_anim->modifiers.remove(i);
-					continue;
-				}
-				++i;
-			}
-			break;
-		}
-		case ANIM_POLYMORPH: {
-			Entity_ID entity_id = anim->polymorph.entity_id;
-			auto static_anim = get_static_anim(anim_state, entity_id);
-			static_anim->sprite_coords = anim->polymorph.new_sprite_coords;
-			break;
-		}
-		case ANIM_CREATURE_DROP_IN: {
-			auto static_anim = get_static_anim(anim_state, anim->creature_drop_in.entity_id);
-			ASSERT(static_anim);
-			for (u32 i = 0; i < static_anim->modifiers.len; ) {
-				switch (static_anim->modifiers[i].type) {
-				case ANIM_MOD_COLOR:
-					static_anim->modifiers.remove(i);
-					continue;
-				case ANIM_MOD_POS:
-					static_anim->modifiers.remove(i);
-					continue;
-				}
-				++i;
-			}
-			break;
-		}
-		case ANIM_TURN_INVISIBLE: {
-			auto static_anim = get_static_anim(anim_state, anim->turn_invisible.entity_id);
-			if (static_anim) {
-				for (u32 i = 0; i < static_anim->modifiers.len; ++i) {
-					auto modifier = &static_anim->modifiers[i];
-					if (modifier->type == ANIM_MOD_COLOR) {
-						modifier->color.color = v4(1.0f, 1.0f, 1.0f, constants.anims.turn_invisible.visibility);
-					}
-				}
-			}
-			break;
-		}
-		case ANIM_ADD_ITEM: {
-			auto static_anim = world_static_anims.append();
-			static_anim->type = ANIM_TILE_STATIC;
-			static_anim->sprite_coords = anim->add_item.sprite_coords;
-			static_anim->world_coords = anim->add_item.pos;
-			static_anim->entity_id = anim->add_item.entity_id;
-			// XXX -- ugh
-			static_anim->depth_offset = constants.z_offsets.door;
-			break;
-		}
-		case ANIM_ADD_CREATURE: {
-			auto static_anim = world_static_anims.append();
-			static_anim->type = ANIM_CREATURE_IDLE;
-			static_anim->sprite_coords = anim->add_creature.sprite_coords;
-			static_anim->world_coords = anim->add_creature.pos;
-			static_anim->entity_id = anim->add_creature.entity_id;
-			static_anim->depth_offset = constants.z_offsets.character;
-			break;
-		}
-		case ANIM_OPEN_DOOR: {
-			auto static_anim = get_static_anim(anim_state, anim->open_door.entity_id);
-			ASSERT(static_anim);
-			ASSERT(static_anim->type == ANIM_TILE_STATIC);
-			static_anim->sprite_coords = anim->open_door.sprite_coords;
-			break;
-		}
-		case ANIM_CLOSE_DOOR: {
-			auto static_anim = get_static_anim(anim_state, anim->close_door.entity_id);
-			ASSERT(static_anim);
-			ASSERT(static_anim->type == ANIM_TILE_STATIC);
-			static_anim->sprite_coords = anim->close_door.sprite_coords;
-			break;
-		}
-		// TODO -- clean up particles
-		case ANIM_EXCHANGE_PARTICLES:
-		case ANIM_BLINK_PARTICLES:
-		case ANIM_POLYMORPH_PARTICLES:
-		case ANIM_HEAL_PARTICLES:
-		case ANIM_SHOOT_WEB_PARTICLES:
-			break;
-		case ANIM_FIELD_OF_VISION_CHANGED:
-		case ANIM_TEXT:
-		case ANIM_PROJECTILE_EFFECT_24:
-		case ANIM_PROJECTILE_EFFECT_32:
-		case ANIM_CAMERA_SHAKE:
-			break;
-		default:
-			// Should explicitly decide whether a dynamic anim does anything on cleanup or not
-			ASSERT(0);
-			break;
-		}
-		world_dynamic_anims.remove(i);
-	}
 
 	f32 camera_offset_mag = 0.0f;
 	// Draw dynamic animations

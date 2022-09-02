@@ -1,10 +1,5 @@
 * current todo
-  * phases
-    * update transactions to be simulated in phases
-    * update controller function to be "get_action(Game*, Controller*, Phase, has_acted)"
-    * fix slime splitting bug (i.e. slime splits during bump_attack phase, then moves to same square as another
-      slime moves to in the movement phase)
-    * poison card draw/poison player
+  * poison card draw/poison player
   * disease (card can't be discarded)
 
 * goals (initial)

@@ -482,7 +482,7 @@ static Entity_ID lich_get_skeleton_to_heal(Game *game, Controller *controller)
 	return best_skeleton_id;
 }
 
-static void do_action_if_adjacent(Game* game, Entity_ID actor_id, Entity_ID target_id, Output_Buffer<Action> actions, Action action)
+static void do_action_if_adjacent(Game* game, Entity_ID actor_id, Entity_ID target_id, Action action, Output_Buffer<Action> actions)
 {
 	auto actor = get_entity_by_id(game, actor_id);
 	auto target = get_entity_by_id(game, target_id);
@@ -493,85 +493,26 @@ static void do_action_if_adjacent(Game* game, Entity_ID actor_id, Entity_ID targ
 	}
 }
 
-static void bump_attack_player_if_adjacent(Game* game, Entity_ID entity_id, Output_Buffer<Action> attacks, Action_Type bump_attack_type = ACTION_BUMP_ATTACK)
+static void bump_attack_if_adjacent(Game* game, Entity_ID actor_id, Entity_ID target_id, Output_Buffer<Action> actions)
 {
-	auto player = get_player(game);
-
-	Entity *entity = get_entity_by_id(game, entity_id);
-	if (positions_are_adjacent(player->pos, entity->pos)) {
-		Action bump = {};
-		bump.type = bump_attack_type;
-		bump.entity_id = entity_id;
-		bump.bump_attack.target_id = player->id;
-		attacks.append(bump);
-	}
+	Action action = {};
+	action.type = ACTION_BUMP_ATTACK;
+	action.entity_id = actor_id;
+	action.bump_attack.target_id = target_id;
+	do_action_if_adjacent(game, actor_id, target_id, action, actions);
 }
 
-void make_bump_attacks(Controller* c, Game* game, Output_Buffer<Action> attacks)
-{
-	switch (c->type) {
-	case CONTROLLER_PLAYER:
-		if (c->player.action.type == ACTION_BUMP_ATTACK) {
-			attacks.append(c->player.action);
-		}
-		break;
-	case CONTROLLER_SLIME: {
-		bump_attack_player_if_adjacent(game, c->slime.entity_id, attacks);
-		break;
-	}
-	case CONTROLLER_LICH: {
-		u32 num_skeletons = c->lich.skeleton_ids.len;
-		for (u32 i = 0; i < num_skeletons; ++i) {
-			bump_attack_player_if_adjacent(game, c->lich.skeleton_ids[i], attacks);
-		}
-		break;
-	}
-	case CONTROLLER_SPIDER_NORMAL: {
-		bump_attack_player_if_adjacent(game, c->spider_normal.entity_id, attacks);
-		break;
-	}
-	case CONTROLLER_SPIDER_WEB: {
-		bump_attack_player_if_adjacent(game, c->spider_web.entity_id, attacks);
-		break;
-	}
-	case CONTROLLER_SPIDER_POISON: {
-		bump_attack_player_if_adjacent(game, c->spider_poison.entity_id, attacks, ACTION_BUMP_ATTACK_POISON);
-		break;
-	}
-	case CONTROLLER_SPIDER_SHADOW: {
-		auto spider_id = c->spider_shadow.entity_id;
-		auto spider = get_entity_by_id(game, spider_id);
-		if (spider->flags & ENTITY_FLAG_INVISIBLE) {
-			bump_attack_player_if_adjacent(game, spider_id, attacks, ACTION_BUMP_ATTACK_SNEAK);
-		} else {
-			bump_attack_player_if_adjacent(game, spider_id, attacks);
-		}
-		break;
-	}
-	case CONTROLLER_IMP: {
-		Action steal_card = {};
-		steal_card.type = ACTION_STEAL_CARD;
-		steal_card.entity_id = c->imp.imp_id;
-		steal_card.steal_card.target_id = ENTITY_ID_PLAYER;
-		do_action_if_adjacent(game, steal_card.entity_id, ENTITY_ID_PLAYER, attacks, steal_card);
-		break;
-	}
-
-	case CONTROLLER_RANDOM_MOVE:
-	case CONTROLLER_DRAGON:
-		break;
-	}
-}
-
-static void move_toward_player(Game* game, Entity_ID entity_id, Output_Buffer<Potential_Move> potential_moves)
+static void move_toward_pos(Game* game, Entity_ID entity_id, Pos pos, Output_Buffer<Potential_Move> potential_moves)
 {
 	auto entity = get_entity_by_id(game, entity_id);
-	auto player = get_player(game);
 
 	v2_i16 spider_pos = (v2_i16)entity->pos;
-	v2_i16 player_pos = (v2_i16)player->pos;
-	v2_i16 d = player_pos - spider_pos;
+	v2_i16 target_pos = (v2_i16)pos;
+	v2_i16 d = target_pos - spider_pos;
 	u32 cur_dist_squared = d.x*d.x + d.y*d.y;
+	if (cur_dist_squared <= 2) {
+		return;
+	}
 
 	auto &tiles = game->tiles;
 	for (i16 dy = -1; dy <= 1; ++dy) {
@@ -580,7 +521,7 @@ static void move_toward_player(Game* game, Entity_ID entity_id, Output_Buffer<Po
 				continue;
 			}
 			v2_i16 end = spider_pos + v2_i16(dx, dy);
-			d = player_pos - end;
+			d = target_pos - end;
 			Tile t = tiles[(Pos)end];
 			if (d.x*d.x + d.y*d.y <= cur_dist_squared
 				&& tile_is_passable(t, entity->movement_type)) {
@@ -595,78 +536,96 @@ static void move_toward_player(Game* game, Entity_ID entity_id, Output_Buffer<Po
 	}
 }
 
-void make_moves(Controller* c, Game* game, Output_Buffer<Potential_Move> potential_moves)
+static void peek_message_response(Game* game, Message message, void* data)
 {
-	auto& tiles = game->tiles;
+	auto &handlers = game->handlers;
 
-	switch (c->type) {
-	case CONTROLLER_PLAYER:
-		if (c->player.action.type == ACTION_MOVE) {
-			Potential_Move pm = {};
-			pm.entity_id = c->player.entity_id;
-			pm.start = c->player.action.move.start;
-			pm.end = c->player.action.move.end;
-			// XXX -- weight here should be infinite
-			pm.weight = 10.0f;
-			potential_moves.append(pm);
+	for (u32 i = 0; i < handlers.len; ++i) {
+		auto h = &handlers[i];
+		if (!(message.type & h->handle_mask)) {
+			continue;
 		}
-		break;
-	case CONTROLLER_RANDOM_MOVE: {
-		Entity *e = get_entity_by_id(game, c->random_move.entity_id);
-		u16 move_mask = e->movement_type;
-		Pos start = e->pos;
-		for (i8 dy = -1; dy <= 1; ++dy) {
-			for (i8 dx = -1; dx <= 1; ++dx) {
-				if (!(dx || dy)) {
-					continue;
-				}
-				Pos end = (Pos)((v2_i16)start + v2_i16(dx, dy));
-				Tile t = tiles[end];
-				if (tile_is_passable(t, move_mask)) {
-					Potential_Move pm = {};
-					pm.entity_id = e->id;
-					pm.start = start;
-					pm.end = end;
-					pm.weight = uniform_f32(0.0f, 1.0f);
-					// pm.weight = 1.0f;
-					potential_moves.append(pm);
+
+		switch (h->type) {
+		case MESSAGE_HANDLER_PREVENT_EXIT: {
+			if (h->prevent_exit.pos == message.move.start) {
+				auto can_exit = (bool*)data;
+				*can_exit = false;
+			}
+			break;
+		}
+		case MESSAGE_HANDLER_SPIDER_WEB_PREVENT_EXIT: {
+			if (h->prevent_exit.pos == message.move.start) {
+				auto entity = get_entity_by_id(game, message.move.entity_id);
+				if (!(entity->flags & ENTITY_FLAG_WALK_THROUGH_WEBS)) {
+					auto can_exit = (bool*)data;
+					*can_exit = false;
 				}
 			}
+			break;
 		}
-		break;
-	}
-	case CONTROLLER_SLIME: {
-		Entity *e = get_entity_by_id(game, c->slime.entity_id);
-		// Pos p = e->pos;
-		v2_i16 start = (v2_i16)e->pos;
-		v2_i16 iplayer_pos = (v2_i16)get_player(game)->pos;
-		v2_i16 d = iplayer_pos - start;
-		u32 distance_squared = (u32)(d.x*d.x + d.y*d.y);
-		for (i16 dy = -1; dy <= 1; ++dy) {
-			for (i16 dx = -1; dx <= 1; ++dx) {
-				if (!dx && !dy) {
-					continue;
-				}
-				v2_i16 end = start + v2_i16(dx, dy);
-				d = iplayer_pos - end;
-				Pos pend = (Pos)end;
-				Tile t = tiles[pend];
-				if ((u32)(d.x*d.x + d.y*d.y) <= distance_squared
-					&& tile_is_passable(t, e->movement_type)) {
-					Potential_Move pm = {};
-					pm.entity_id = e->id;
-					pm.start = (Pos)start;
-					pm.end = (Pos)end;
-					pm.weight = uniform_f32(1.9f, 2.1f);
-					potential_moves.append(pm);
-				}
+		case MESSAGE_HANDLER_PREVENT_ENTER: {
+			if (h->prevent_enter.pos == message.move.end) {
+				auto can_enter = (bool*)data;
+				*can_enter = false;
 			}
+			break;
 		}
-		break;
+		}
 	}
-	case CONTROLLER_LICH: {
-		if (!lich_get_skeleton_to_heal(game, c)) {
-			Entity *e = get_entity_by_id(game, c->lich.lich_id);
+}
+
+void make_moves(Game* game, Output_Buffer<Potential_Move> potential_moves)
+{
+	auto &controllers = game->controllers;
+	auto &tiles = game->tiles;
+
+	// determine where player is likely going to be after this
+	auto player = get_player(game);
+	auto player_end_pos = player->pos;
+	{
+		auto c = &controllers[0];
+		ASSERT(c->type == CONTROLLER_PLAYER);
+		ASSERT(c->player.entity_id == player->id);
+		auto action = &c->player.action;
+		if (action->type != ACTION_MOVE) {
+			goto player_wont_move;
+		}
+		bool can_move = true;
+		Message message = {};
+		message.type = MESSAGE_MOVE_PRE_EXIT;
+		message.move.entity_id = player->id;
+		message.move.start = player->pos;
+		message.move.end = action->move.end;
+		peek_message_response(game, message, &can_move);
+		if (!can_move) {
+			goto player_wont_move;
+		}
+		message.type = MESSAGE_MOVE_PRE_ENTER;
+		peek_message_response(game, message, &can_move);
+		if (can_move) {
+			player_end_pos = action->move.end;
+		}
+	}
+player_wont_move:
+
+	for (u32 i = 0; i < controllers.len; ++i) {
+		auto c = &controllers[i];
+
+		switch (c->type) {
+		case CONTROLLER_PLAYER:
+			if (c->player.action.type == ACTION_MOVE) {
+				Potential_Move pm = {};
+				pm.entity_id = c->player.entity_id;
+				pm.start = c->player.action.move.start;
+				pm.end = c->player.action.move.end;
+				// XXX -- weight here should be infinite
+				pm.weight = 10.0f;
+				potential_moves.append(pm);
+			}
+			break;
+		case CONTROLLER_RANDOM_MOVE: {
+			Entity *e = get_entity_by_id(game, c->random_move.entity_id);
 			u16 move_mask = e->movement_type;
 			Pos start = e->pos;
 			for (i8 dy = -1; dy <= 1; ++dy) {
@@ -687,69 +646,109 @@ void make_moves(Controller* c, Game* game, Output_Buffer<Potential_Move> potenti
 					}
 				}
 			}
+			break;
 		}
-		auto& skeleton_ids = c->lich.skeleton_ids;
-		u32 num_skeleton_ids = skeleton_ids.len;
-		for (u32 i = 0; i < num_skeleton_ids; ++i) {
-			Entity *e = get_entity_by_id(game, skeleton_ids[i]);
-			// Pos p = e->pos;
-			v2_i16 start = (v2_i16)e->pos;
-			v2_i16 iplayer_pos = (v2_i16)get_player(game)->pos;
-			v2_i16 d = iplayer_pos - start;
-			u32 distance_squared = (u32)(d.x*d.x + d.y*d.y);
-			for (i16 dy = -1; dy <= 1; ++dy) {
-				for (i16 dx = -1; dx <= 1; ++dx) {
-					if (!dx && !dy) {
-						continue;
-					}
-					v2_i16 end = start + v2_i16(dx, dy);
-					d = iplayer_pos - end;
-					Pos pend = (Pos)end;
-					Tile t = tiles[pend];
-					if ((u32)(d.x*d.x + d.y*d.y) <= distance_squared
-						&& tile_is_passable(t, e->movement_type)) {
-						Potential_Move pm = {};
-						pm.entity_id = e->id;
-						pm.start = (Pos)start;
-						pm.end = (Pos)end;
-						pm.weight = uniform_f32(1.9f, 2.1f);
-						potential_moves.append(pm);
+		case CONTROLLER_SLIME: {
+			move_toward_pos(game, c->slime.entity_id, player_end_pos, potential_moves);
+			break;
+		}
+		case CONTROLLER_LICH: {
+			if (!lich_get_skeleton_to_heal(game, c)) {
+				Entity *e = get_entity_by_id(game, c->lich.lich_id);
+				u16 move_mask = e->movement_type;
+				Pos start = e->pos;
+				for (i8 dy = -1; dy <= 1; ++dy) {
+					for (i8 dx = -1; dx <= 1; ++dx) {
+						if (!(dx || dy)) {
+							continue;
+						}
+						Pos end = (Pos)((v2_i16)start + v2_i16(dx, dy));
+						Tile t = tiles[end];
+						if (tile_is_passable(t, move_mask)) {
+							Potential_Move pm = {};
+							pm.entity_id = e->id;
+							pm.start = start;
+							pm.end = end;
+							pm.weight = uniform_f32(0.0f, 1.0f);
+							// pm.weight = 1.0f;
+							potential_moves.append(pm);
+						}
 					}
 				}
 			}
+			auto& skeleton_ids = c->lich.skeleton_ids;
+			u32 num_skeleton_ids = skeleton_ids.len;
+			for (u32 i = 0; i < num_skeleton_ids; ++i) {
+				move_toward_pos(game, c->lich.skeleton_ids[i], player_end_pos, potential_moves);
+			}
+			break;
 		}
-		break;
-	}
 
-	case CONTROLLER_SPIDER_NORMAL: {
-		auto spider_id = c->spider_normal.entity_id;
-		move_toward_player(game, spider_id, potential_moves);
-		break;
-	}
-
-	case CONTROLLER_SPIDER_POISON: {
-		auto spider_id = c->spider_poison.entity_id;
-		move_toward_player(game, spider_id, potential_moves);
-		break;
-	}
-
-	case CONTROLLER_SPIDER_WEB: {
-		auto spider_id = c->spider_web.entity_id;
-		if (c->spider_web.web_cooldown) {
-			move_toward_player(game, spider_id, potential_moves);
+		case CONTROLLER_SPIDER_NORMAL: {
+			auto spider_id = c->spider_normal.entity_id;
+			move_toward_pos(game, spider_id, player_end_pos, potential_moves);
+			break;
 		}
-		break;
-	}
 
-	case CONTROLLER_SPIDER_SHADOW: {
-		auto spider_id = c->spider_shadow.entity_id;
-		auto spider = get_entity_by_id(game, spider_id);
-		if (c->spider_shadow.invisible_cooldown || (spider->flags & ENTITY_FLAG_INVISIBLE)) {
-			move_toward_player(game, spider_id, potential_moves);
+		case CONTROLLER_SPIDER_POISON: {
+			auto spider_id = c->spider_poison.entity_id;
+			move_toward_pos(game, spider_id, player_end_pos, potential_moves);
+			break;
 		}
-		break;
-	}
 
+		case CONTROLLER_SPIDER_WEB: {
+			auto spider_id = c->spider_web.entity_id;
+			auto player = get_player(game);
+			auto spider = get_entity_by_id(game, spider_id);
+			v2_i32 d = (v2_i32)player->pos - (v2_i32)spider->pos;
+			if (c->spider_web.web_cooldown || (d.x*d.x + d.y*d.y > 3*3)) {
+				move_toward_pos(game, spider_id, player_end_pos, potential_moves);
+			}
+			break;
+		}
+
+		case CONTROLLER_SPIDER_SHADOW: {
+			auto spider_id = c->spider_shadow.entity_id;
+			auto spider = get_entity_by_id(game, spider_id);
+			if (c->spider_shadow.invisible_cooldown || (spider->flags & ENTITY_FLAG_INVISIBLE)) {
+				move_toward_pos(game, spider_id, player_end_pos, potential_moves);
+			}
+			break;
+		}
+
+		}
+	}
+}
+
+void do_cooldowns(Slice<Controller> controllers)
+{
+	for (u32 i = 0; i < controllers.len; ++i) {
+		auto c = &controllers[i];
+		switch (c->type) {
+		case CONTROLLER_PLAYER:
+		case CONTROLLER_RANDOM_MOVE:
+		case CONTROLLER_DRAGON:
+		case CONTROLLER_SLIME:
+		case CONTROLLER_IMP:
+		case CONTROLLER_SPIDER_NORMAL:
+		case CONTROLLER_SPIDER_POISON:
+			break;
+		case CONTROLLER_LICH:
+			if (c->lich.heal_cooldown) {
+				--c->lich.heal_cooldown;
+			}
+			break;
+		case CONTROLLER_SPIDER_WEB:
+			if (c->spider_web.web_cooldown) {
+				--c->spider_web.web_cooldown;
+			}
+			break;
+		case CONTROLLER_SPIDER_SHADOW:
+			if (c->spider_shadow.invisible_cooldown) {
+				--c->spider_shadow.invisible_cooldown;
+			}
+			break;
+		}
 	}
 }
 
@@ -757,57 +756,91 @@ void make_actions(Controller* c, Game* game, Slice<bool> has_acted, Output_Buffe
 {
 	switch (c->type) {
 	case CONTROLLER_PLAYER:
-		// if (c->player.action.type != ACTION_MOVE) {
 		if (!has_acted[c->player.entity_id]) {
 			actions.append(c->player.action);
 		}
 		break;
+	case CONTROLLER_IMP: {
+		auto imp_id = c->imp.imp_id;
+		if (!has_acted[imp_id]) {
+			Action action = {};
+			action.type = ACTION_STEAL_CARD;
+			action.entity_id = c->imp.imp_id;
+			action.steal_card.target_id = ENTITY_ID_PLAYER;
+			do_action_if_adjacent(game, imp_id, ENTITY_ID_PLAYER, action, actions);
+		}
+		break;
+	}
 	case CONTROLLER_DRAGON: {
-		Entity *e = get_entity_by_id(game, c->dragon.entity_id);
-		u16 move_mask = e->movement_type;
-		u32 t_idx = rand_u32() % game->entities.len;
-		Entity *t = &game->entities[t_idx];
-		Action a = {};
-		a.type = ACTION_FIREBALL;
-		a.entity_id = c->dragon.entity_id;
-		a.fireball.end = t->pos;
+		auto dragon_id = c->dragon.entity_id;
+		if (!has_acted[dragon_id]) {
+			u32 target_idx = rand_u32() % game->entities.len;
+			auto target = &game->entities[target_idx];
 
-		/*
-		debug_draw_world_reset();
-		debug_draw_world_set_color(v4(1.0f, 1.0f, 0.0f, 1.0f));
-		debug_draw_world_arrow((v2)a.fireball.start, (v2)a.fireball.end);
-		debug_pause();
-		*/
-
-		actions.append(a);
+			Action a = {};
+			a.type = ACTION_FIREBALL;
+			a.entity_id = dragon_id;
+			a.fireball.end = target->pos;
+			actions.append(a);
+		}
 		break;
 	}
 	case CONTROLLER_LICH: {
-		Entity_ID skeleton_to_heal = lich_get_skeleton_to_heal(game, c);
-		if (skeleton_to_heal) {
-			c->lich.heal_cooldown = 5;
+		auto lich_id = c->lich.lich_id;
+		if (!has_acted[lich_id]) {
+			auto skeleton_to_heal = lich_get_skeleton_to_heal(game, c);
+			if (skeleton_to_heal) {
+				c->lich.heal_cooldown = 5;
 
-			Action a = {};
-			a.type = ACTION_HEAL;
-			a.entity_id = c->lich.lich_id;
-			a.heal.target_id = skeleton_to_heal;
-			a.heal.amount = 5;
-			actions.append(a);
-		} else if (c->lich.heal_cooldown) {
-			--c->lich.heal_cooldown;
+				Action a = {};
+				a.type = ACTION_HEAL;
+				a.entity_id = c->lich.lich_id;
+				a.heal.target_id = skeleton_to_heal;
+				a.heal.amount = 5;
+				actions.append(a);
+			}
+		}
+		auto &skeleton_ids = c->lich.skeleton_ids;
+		for (u32 i = 0; i < skeleton_ids.len; ++i) {
+			auto skeleton_id = skeleton_ids[i];
+			if (!has_acted[skeleton_id]) {
+				bump_attack_if_adjacent(game, skeleton_id, ENTITY_ID_PLAYER, actions);
+			}
 		}
 		break;
 	}
-
+	case CONTROLLER_SLIME: {
+		auto slime_id = c->slime.entity_id;
+		if (!has_acted[slime_id]) {
+			bump_attack_if_adjacent(game, slime_id, ENTITY_ID_PLAYER, actions);
+		}
+		break;
+	}
+	case CONTROLLER_SPIDER_NORMAL: {
+		auto spider_id = c->spider_normal.entity_id;
+		if (!has_acted[spider_id]) {
+			bump_attack_if_adjacent(game, spider_id, ENTITY_ID_PLAYER, actions);
+		}
+		break;
+	}
+	case CONTROLLER_SPIDER_POISON: {
+		auto spider_id = c->spider_poison.entity_id;
+		if (!has_acted[spider_id]) {
+			Action action = {};
+			action.type = ACTION_BUMP_ATTACK_POISON;
+			action.entity_id = spider_id;
+			action.bump_attack.target_id = ENTITY_ID_PLAYER;
+			do_action_if_adjacent(game, spider_id, ENTITY_ID_PLAYER, action, actions);
+		}
+		break;
+	}
 	case CONTROLLER_SPIDER_WEB: {
 		auto spider_id = c->spider_web.entity_id;
-		if (c->spider_web.web_cooldown) {
-			--c->spider_web.web_cooldown;
-		}
 		if (has_acted[spider_id]) {
 			return;
 		}
 		if (c->spider_web.web_cooldown) {
+			bump_attack_if_adjacent(game, spider_id, ENTITY_ID_PLAYER, actions);
 			return;
 		}
 
@@ -853,13 +886,19 @@ void make_actions(Controller* c, Game* game, Slice<bool> has_acted, Output_Buffe
 		auto spider_id = c->spider_shadow.entity_id;
 		auto spider = get_entity_by_id(game, spider_id);
 
-		if (c->spider_shadow.invisible_cooldown) {
-			--c->spider_shadow.invisible_cooldown;
-		}
 		if (has_acted[spider_id]) {
 			return;
 		}
 		if (c->spider_shadow.invisible_cooldown || (spider->flags & ENTITY_FLAG_INVISIBLE)) {
+			if (spider->flags & ENTITY_FLAG_INVISIBLE) {
+				Action action = {};
+				action.type = ACTION_BUMP_ATTACK_SNEAK;
+				action.entity_id = spider_id;
+				action.bump_attack.target_id = ENTITY_ID_PLAYER;
+				do_action_if_adjacent(game, spider_id, ENTITY_ID_PLAYER, action, actions);
+			} else {
+				bump_attack_if_adjacent(game, spider_id, ENTITY_ID_PLAYER, actions);
+			}
 			return;
 		}
 
@@ -884,15 +923,108 @@ void make_actions(Controller* c, Game* game, Slice<bool> has_acted, Output_Buffe
 
 enum Phase
 {
-	PHASE_CURRENT,
-
-	PHASE_CARDS,
-	PHASE_BUMP_ATTACK,
+	PHASE_PLAYER_ACTION,
 	PHASE_MOVE,
-	PHASE_ACTION,
+	PHASE_ENEMY_ACTION,
 
 	NUM_PHASES,
 };
+
+void make_actions(Game* game, Phase phase, Slice<bool> has_acted, Output_Buffer<Action> actions)
+{
+	auto &controllers = game->controllers;
+
+	switch (phase) {
+	case PHASE_PLAYER_ACTION: {
+		auto c = &controllers[0];
+		ASSERT(c->type == CONTROLLER_PLAYER && c->player.entity_id == ENTITY_ID_PLAYER);
+		auto action = c->player.action;
+		switch (action.type) {
+		case ACTION_MOVE:
+			break;
+		default:
+			actions.append(action);
+			break;
+		}
+		break;
+	}
+	case PHASE_MOVE: {
+		Max_Length_Array<Potential_Move, MAX_ENTITIES * 9> potential_moves;
+		potential_moves.reset();
+
+		Map_Cache_Bool occupied;
+		occupied.reset();
+
+		auto &tiles = game->tiles;
+
+		make_moves(game, potential_moves);
+
+		u32 num_entities = game->entities.len;
+		for (u32 i = 0; i < num_entities; ++i) {
+			Entity *e = &game->entities[i];
+			if (e->block_mask) {
+				occupied.set(e->pos);
+			}
+		}
+
+		// sort
+		for (u32 i = 1; i < potential_moves.len; ++i) {
+			Potential_Move tmp = potential_moves[i];
+			u32 j = i;
+			while (j && potential_moves[j - 1].weight < tmp.weight) {
+				potential_moves[j] = potential_moves[j - 1];
+				--j;
+			}
+			potential_moves[j] = tmp;
+		}
+
+		bool has_moved[MAX_ENTITIES] = {};
+		for (;;) {
+			u32 idx = 0;
+			while (idx < potential_moves.len && occupied.get(potential_moves[idx].end)) {
+				++idx;
+			}
+			if (idx == potential_moves.len) {
+				break;
+			}
+			Potential_Move pm = potential_moves[idx];
+
+			if (!has_acted[pm.entity_id] && !has_moved[pm.entity_id]) {
+				Action chosen_move = {};
+				chosen_move.type = ACTION_MOVE;
+				chosen_move.entity_id = pm.entity_id;
+				chosen_move.move.start = pm.start;
+				chosen_move.move.end = pm.end;
+				actions.append(chosen_move);
+
+				occupied.unset(pm.start);
+				occupied.set(pm.end);
+
+				has_moved[pm.entity_id] = true;
+			}
+
+			u32 push_back = 0;
+			for (u32 i = 0; i < potential_moves.len; ++i) {
+				if (potential_moves[i].entity_id == pm.entity_id) {
+					++push_back;
+				} else if (push_back) {
+					potential_moves[i - push_back] = potential_moves[i];
+				}
+			}
+			potential_moves.len -= push_back;
+		}
+		break;
+	}
+	case PHASE_ENEMY_ACTION:
+		for (u32 i = 0; i < controllers.len; ++i) {
+			auto c = &controllers[i];
+			if (c->type != CONTROLLER_PLAYER) {
+				make_actions(c, game, has_acted, actions);
+			}
+		}
+		break;
+	}
+}
 
 enum Transaction_Type
 {
@@ -944,7 +1076,7 @@ enum Transaction_Type
 struct Transaction
 {
 	Transaction_Type type;
-	Phase            phase;
+	// Phase            phase;
 	f32              start_time;
 	union {
 		struct {
@@ -1053,8 +1185,8 @@ void game_dispatch_message(Game*                      game,
 		switch (h->type) {
 		case MESSAGE_HANDLER_PREVENT_EXIT: {
 			if (h->prevent_exit.pos == message.move.start) {
-				u8 *can_exit = (u8*)data;
-				*can_exit = 0;
+				auto can_exit = (bool*)data;
+				*can_exit = false;
 			}
 			break;
 		}
@@ -1062,17 +1194,16 @@ void game_dispatch_message(Game*                      game,
 			if (h->prevent_exit.pos == message.move.start) {
 				auto entity = get_entity_by_id(game, message.move.entity_id);
 				if (!(entity->flags & ENTITY_FLAG_WALK_THROUGH_WEBS)) {
-					u8 *can_exit = (u8*) data;
-					*can_exit = 0;
+					auto can_exit = (bool*)data;
+					*can_exit = false;
 				}
 			}
 			break;
 		}
 		case MESSAGE_HANDLER_PREVENT_ENTER: {
-			if (h->prevent_enter.pos.x == message.move.end.x
-			 && h->prevent_enter.pos.y == message.move.end.y) {
-				u8 *can_enter = (u8*)data;
-				*can_enter = 0;
+			if (h->prevent_enter.pos == message.move.end) {
+				auto can_enter = (bool*)data;
+				*can_enter = false;
 			}
 			break;
 		}
@@ -1103,17 +1234,11 @@ void game_dispatch_message(Game*                      game,
 			break;
 		case MESSAGE_HANDLER_SLIME_SPLIT:
 			if (h->owner_id == message.damage.entity_id && !message.damage.entity_died) {
-				Entity *e = get_entity_by_id(game, h->owner_id);
-				Pos p = e->pos;
-				/*
-				debug_draw_world_reset();
-				debug_draw_world_set_color(v4(0.0f, 1.0f, 0.0f, 1.0f));
-				debug_draw_world_circle((v2)p, 0.25f);
-				debug_pause();
-				*/
+				auto e = get_entity_by_id(game, h->owner_id);
+
 				Transaction t = {};
 				t.type = TRANSACTION_SLIME_SPLIT;
-				t.start_time = time + TRANSACTION_EPSILON;
+				t.start_time = time + constants.anims.slime_split.duration;
 				t.slime_split.slime_id = h->owner_id;
 				t.slime_split.hit_points = e->hit_points;
 				transactions.append(t);
@@ -1225,9 +1350,10 @@ void game_dispatch_message(Game*                      game,
 // #define DEBUG_SHOW_ACTIONS
 // #define DEBUG_TRANSACTION_PROCESSING
 
-Transaction to_transaction(Action action)
+Transaction to_transaction(Action action, f32 time)
 {
 	Transaction t = {};
+	t.start_time = time;
 
 	switch (action.type) {
 	case ACTION_NONE:
@@ -1235,7 +1361,6 @@ Transaction to_transaction(Action action)
 		break;
 	case ACTION_MOVE: {
 		t.type = TRANSACTION_MOVE_EXIT;
-		t.phase = PHASE_MOVE;
 		t.move.entity_id = action.entity_id;
 		t.move.start = action.move.start;
 		t.move.end = action.move.end;
@@ -1243,64 +1368,55 @@ Transaction to_transaction(Action action)
 	}
 	case ACTION_BUMP_ATTACK: {
 		t.type = TRANSACTION_BUMP_ATTACK;
-		t.phase = PHASE_BUMP_ATTACK;
 		t.bump_attack.attacker_id = action.entity_id;
 		t.bump_attack.target_id = action.bump_attack.target_id;
 		break;
 	}
 	case ACTION_BUMP_ATTACK_POISON: {
 		t.type = TRANSACTION_BUMP_ATTACK_POISON;
-		t.phase = PHASE_BUMP_ATTACK;
 		t.bump_attack.attacker_id = action.entity_id;
 		t.bump_attack.target_id = action.bump_attack.target_id;
 		break;
 	}
 	case ACTION_STEAL_CARD: {
 		t.type = TRANSACTION_STEAL_CARD;
-		t.start_time = constants.anims.bump_attack.duration / 2.0f;
-		t.phase = PHASE_BUMP_ATTACK;
+		t.start_time += constants.anims.bump_attack.duration / 2.0f;
 		t.steal_card.stealer_id = action.entity_id;
 		t.steal_card.target_id = action.steal_card.target_id;
 		break;
 	}
 	case ACTION_BUMP_ATTACK_SNEAK: {
 		t.type = TRANSACTION_BUMP_ATTACK_SNEAK;
-		t.phase = PHASE_BUMP_ATTACK;
 		t.bump_attack.attacker_id = action.entity_id;
 		t.bump_attack.target_id = action.bump_attack.target_id;
 		break;
 	}
 	case ACTION_OPEN_DOOR: {
 		t.type = TRANSACTION_OPEN_DOOR;
-		t.phase = PHASE_ACTION;
 		t.open_door.entity_id = action.entity_id;
 		t.open_door.door_id = action.open_door.door_id;
 		break;
 	}
 	case ACTION_CLOSE_DOOR: {
 		t.type = TRANSACTION_CLOSE_DOOR;
-		t.phase = PHASE_ACTION;
 		t.close_door.entity_id = action.entity_id;
 		t.close_door.door_id = action.close_door.door_id;
 		break;
 	}
 	case ACTION_FIREBALL: {
 		t.type = TRANSACTION_FIREBALL_SHOT;
-		t.phase = PHASE_ACTION;
 		t.fireball_shot.caster_id = action.entity_id;
 		t.fireball_shot.end = action.fireball.end;
 		break;
 	}
 	case ACTION_EXCHANGE: {
 		t.type = TRANSACTION_EXCHANGE_CAST;
-		t.phase = PHASE_ACTION;
 		t.exchange.a = action.exchange.a;
 		t.exchange.b = action.exchange.b;
 		break;
 	}
 	case ACTION_BLINK: {
 		t.type = TRANSACTION_BLINK_CAST;
-		t.phase = PHASE_ACTION;
 		t.blink.caster_id = action.entity_id;
 		t.blink.target = action.blink.target;
 		break;
@@ -1311,14 +1427,12 @@ Transaction to_transaction(Action action)
 	}
 	case ACTION_FIRE_BOLT: {
 		t.type = TRANSACTION_FIRE_BOLT_CAST;
-		t.phase = PHASE_ACTION;
 		t.fire_bolt.caster_id = action.entity_id;
 		t.fire_bolt.target_id = action.fire_bolt.target_id;
 		break;
 	}
 	case ACTION_HEAL: {
 		t.type = TRANSACTION_HEAL_CAST;
-		t.phase = PHASE_ACTION;
 		t.heal.caster_id = action.entity_id;
 		t.heal.target_id = action.heal.target_id;
 		t.heal.amount = action.heal.amount;
@@ -1326,38 +1440,32 @@ Transaction to_transaction(Action action)
 	}
 	case ACTION_LIGHTNING: {
 		t.type = TRANSACTION_LIGHTNING_CAST;
-		t.phase = PHASE_ACTION;
 		t.lightning.caster_id = action.entity_id;
 		t.lightning.end = action.lightning.end;
 		break;
 	}
 	case ACTION_SHOOT_WEB: {
 		t.type = TRANSACTION_SHOOT_WEB_CAST;
-		t.phase = PHASE_ACTION;
 		t.shoot_web.caster_id = action.entity_id;
 		t.shoot_web.target = action.shoot_web.target;
 		break;
 	}
 	case ACTION_TURN_INVISIBLE: {
 		t.type = TRANSACTION_TURN_INVISIBLE;
-		t.phase = PHASE_ACTION;
 		t.turn_invisible.entity_id = action.entity_id;
 		break;
 	}
 	case ACTION_DRAW_CARDS: {
 		t.type = TRANSACTION_DRAW_CARDS_1;
-		t.phase = PHASE_CARDS;
 		break;
 	}
 	case ACTION_DISCARD_HAND: {
 		t.type = TRANSACTION_DISCARD_HAND;
-		t.phase = PHASE_CARDS;
-		t.start_time = constants.cards_ui.hand_to_discard_time;
+		t.start_time += constants.cards_ui.hand_to_discard_time;
 		break;
 	}
 	case ACTION_PLAY_CARD: {
 		t.type = TRANSACTION_PLAY_CARD;
-		t.phase = PHASE_CARDS;
 		t.play_card.card_id = action.play_card.card_id;
 		Action card_action = {};
 		card_action.type = action.play_card.action_type;
@@ -1383,7 +1491,7 @@ Transaction to_transaction(Action action)
 	return t;
 }
 
-void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Event> events)
+f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Buffer<Event> events)
 {
 	// TODO -- field of vision
 
@@ -1671,7 +1779,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 
 	for (u32 i = 0; i < actions.len; ++i) {
 		Action action = actions[i];
-		transactions.append(to_transaction(action));
+		transactions.append(to_transaction(action, time));
 	}
 
 	// 2. initialise "occupied" grid
@@ -1732,9 +1840,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 	physics_start_frame(&physics);
 	physics_compute_collisions(&physics, 0.0f, physics_events);
 
-	f32 time = 0.0f;
 	u8 physics_processing_left = 1;
-	auto cur_phase = (Phase)1;
 	while (transactions || physics_processing_left) {
 		u8 recompute_physics_collisions = 0;
 		physics_processing_left = 0;
@@ -1849,8 +1955,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 						Physics_Static_Line *l = pe.sl_lc.line;
 						Physics_Linear_Circle *c = pe.sl_lc.circle;
 						if (p->last_anim_built < time) {
-							f32 start = max(p->last_anim_built,
-							                c->start_time);
+							f32 start = max_f32(p->last_anim_built, c->start_time);
 							f32 end = time;
 							p->last_anim_built = time;
 							v2 start_pos = c->start
@@ -2045,7 +2150,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 						Physics_Linear_Circle *c = pe.lc.circle;
 						Projectile *p = &projectiles[projectile_idx];
 
-						f32 start = max(p->last_anim_built, c->start_time);
+						f32 start = max_f32(p->last_anim_built, c->start_time);
 						f32 end = time;
 						p->last_anim_built = time;
 						v2 start_pos = c->start
@@ -2073,10 +2178,6 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 
 		for (u32 i = 0; i < transactions.len; ++i) {
 			Transaction *t = &transactions[i];
-			ASSERT(t->phase == PHASE_CURRENT || t->phase >= cur_phase);
-			if (t->phase != PHASE_CURRENT && t->phase > cur_phase) {
-				continue;
-			}
 			ASSERT(t->start_time >= time);
 			if (t->start_time > time) {
 				continue;
@@ -2084,7 +2185,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 			switch (t->type) {
 			case TRANSACTION_MOVE_EXIT: {
 				// pre-exit
-				u8 can_exit = 1;
+				bool can_exit = true;
 				Message m = {};
 				m.type = MESSAGE_MOVE_PRE_EXIT;
 				m.move.entity_id = t->move.entity_id;
@@ -2147,7 +2248,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 				}
 
 				// pre-enter
-				u8 can_enter = 1;
+				bool can_enter = true;
 				Pos start = t->move.start;
 				Pos end = t->move.end;
 				Message m = {};
@@ -2679,7 +2780,6 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 					Event event = {};
 					event.type = EVENT_SLIME_SPLIT;
 					event.time = time;
-					event.slime_split.original_id = e->id;
 					event.slime_split.new_id = new_id;
 					event.slime_split.start = (v2)start;
 					event.slime_split.end = (v2)end;
@@ -2756,7 +2856,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 					break;
 				}
 				target->hit_points += t->heal.amount;
-				target->hit_points = min(target->hit_points, target->max_hit_points);
+				target->hit_points = min_i32(target->hit_points, target->max_hit_points);
 
 				Event e = {};
 				e.type = EVENT_HEAL;
@@ -3004,8 +3104,7 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 					}
 				}
 
-				auto card_transaction = to_transaction(t->play_card.action);
-				ASSERT(card_transaction.phase > PHASE_CARDS);
+				auto card_transaction = to_transaction(t->play_card.action, time);
 				transactions.append(card_transaction);
 
 				break;
@@ -3106,37 +3205,8 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 			break;
 		}
 
-		// maybe advance phase
-		if (!physics_processing_left) {
-			auto next_phase = NUM_PHASES;
-			for (u32 i = 0; i < transactions.len; ++i) {
-				auto t = &transactions[i];
-				if (t->phase == PHASE_CURRENT) {
-					next_phase = cur_phase;
-					break;
-				}
-				if (t->phase < next_phase) {
-					next_phase = t->phase;
-				}
-			}
-			ASSERT(cur_phase <= next_phase && (next_phase < NUM_PHASES || transactions.len == 0));
-			if (next_phase > cur_phase) {
-				for (u32 i = 0; i < transactions.len; ++i) {
-					auto t = &transactions[i];
-					if (t->phase == next_phase) {
-						t->start_time += time + TRANSACTION_EPSILON;
-					}
-				}
-				cur_phase = next_phase;
-			}
-		}
-
 		for (u32 i = 0; i < transactions.len; ++i) {
 			Transaction *t = &transactions[i];
-			ASSERT(t->phase == PHASE_CURRENT || t->phase >= cur_phase);
-			if (t->phase != PHASE_CURRENT && t->phase > cur_phase) {
-				continue;
-			}
 			f32 start_time = t->start_time;
 			ASSERT(start_time > time);
 			if (start_time < next_time) {
@@ -3144,7 +3214,9 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 			}
 		}
 
-		time = next_time;
+		if (transactions || physics_processing_left) {
+			time = next_time;
+		}
 	}
 
 	Entity_ID player_id;
@@ -3164,165 +3236,30 @@ void game_simulate_actions(Game* game, Slice<Action> actions, Output_Buffer<Even
 		e.field_of_vision.fov = &game->field_of_vision;
 		events.append(e);
 	}
+
+	return time;
 }
 
 void game_do_turn(Game* game, Output_Buffer<Event> events)
 {
 	events.reset();
 
-	// =====================================================================
-	// create chosen actions
-
-	// TODO -- safe function which checks for one action being
-	// registered per entity
-
 	Max_Length_Array<Action, MAX_ENTITIES> actions;
-	actions.reset();
+	bool has_acted[MAX_ENTITIES] = {};
 
-	Entity_ID player_id = get_player(game)->id;
-	u32 num_controllers = game->controllers.len;
+	do_cooldowns(game->controllers);
 
-	bool entity_has_acted[MAX_ENTITIES] = {};
-
-	// 0. create bump attacks
-
-	for (u32 i = 0; i < num_controllers; ++i) {
-		Controller *c = &game->controllers[i];
-		make_bump_attacks(c, game, actions);
+	f32 time = 0.0f;
+	for (auto phase = (Phase)0; phase < NUM_PHASES; phase = (Phase)(phase + 1)) {
+		actions.reset();
+		make_actions(game, phase, Slice<bool>(has_acted, ARRAY_SIZE(has_acted)), actions);
+		for (u32 i = 0; i < actions.len; ++i) {
+			auto entity_id = actions[i].entity_id;
+			ASSERT(!has_acted[entity_id]);
+			has_acted[entity_id] = true;
+		}
+		time = game_simulate_actions(game, time, actions, events);
 	}
-
-	for (u32 i = 0; i < actions.len; ++i) {
-		auto action = &actions[i];
-		if (action->entity_id) {
-			entity_has_acted[action->entity_id] = true;
-		}
-	}
-
-	// 1. choose moves
-
-	Max_Length_Array<Potential_Move, MAX_ENTITIES * 9> potential_moves;
-	potential_moves.reset();
-
-	Map_Cache_Bool occupied;
-	occupied.reset();
-
-	auto& tiles = game->tiles;
-
-	for (u32 i = 0; i < num_controllers; ++i) {
-		Controller *c = &game->controllers[i];
-		make_moves(c, game, potential_moves);
-	}
-
-	u32 num_entities = game->entities.len;
-	for (u32 i = 0; i < num_entities; ++i) {
-		Entity *e = &game->entities[i];
-		if (e->block_mask) {
-			occupied.set(e->pos);
-		}
-	}
-
-#if 0
-	debug_draw_world_reset();
-	debug_draw_world_set_color(v4(1.0f, 0.0f, 0.0f, 1.0f));
-	for (u8 y = 1; y < 255; ++y) {
-		for (u8 x = 1; x < 255; ++x) {
-			Pos p = { x, y };
-			if (occupied.get(p)) {
-				debug_draw_world_circle((v2)p, 0.25f);
-			}
-		}
-	}
-	debug_pause();
-#endif
-
-	// sort
-	for (u32 i = 1; i < potential_moves.len; ++i) {
-		Potential_Move tmp = potential_moves[i];
-		u32 j = i;
-		while (j && potential_moves[j - 1].weight < tmp.weight) {
-			potential_moves[j] = potential_moves[j - 1];
-			--j;
-		}
-		potential_moves[j] = tmp;
-	}
-
-	for (;;) {
-		u32 idx = 0;
-		while (idx < potential_moves.len && occupied.get(potential_moves[idx].end)) {
-			++idx;
-		}
-		if (idx == potential_moves.len) {
-			break;
-		}
-		Potential_Move pm = potential_moves[idx];
-
-#ifdef DEBUG_CREATE_MOVES
-		debug_draw_world_reset();
-		debug_draw_world_set_color(v4(pm.weight, 0.0f, 0.0f, 1.0f));
-		debug_draw_world_arrow((v2)pm.start, (v2)pm.end);
-		debug_pause();
-#endif
-
-		if (!entity_has_acted[pm.entity_id]) {
-			Action chosen_move = {};
-			chosen_move.type = ACTION_MOVE;
-			chosen_move.entity_id = pm.entity_id;
-			chosen_move.move.start = pm.start;
-			chosen_move.move.end = pm.end;
-			actions.append(chosen_move);
-
-			occupied.unset(pm.start);
-			occupied.set(pm.end);
-
-			entity_has_acted[pm.entity_id] = true;
-		}
-
-		u32 push_back = 0;
-		for (u32 i = 0; i < potential_moves.len; ++i) {
-			if (potential_moves[i].entity_id == pm.entity_id) {
-				++push_back;
-			} else if (push_back) {
-				potential_moves[i - push_back] = potential_moves[i];
-			}
-		}
-		potential_moves.len -= push_back;
-
-#ifdef DEBUG_CREATE_MOVES
-		debug_draw_world_reset();
-		for (u32 i = 0; i < potential_moves.len; ++i) {
-			Potential_Move pm = potential_moves[i];
-			debug_draw_world_set_color(v4(pm.weight, 0.0f, 0.0f, 1.0f));
-			debug_draw_world_arrow((v2)pm.start, (v2)pm.end);
-		}
-		debug_pause();
-#endif
-	}
-
-	// 2. create other actions...
-
-	// XXX - the whole point of doing other actions _now_ is that we can
-	// use the locations of where things finish after movement for targetting
-	// we should incorporate that here
-	for (u32 i = 0; i < num_controllers; ++i) {
-		Controller *c = &game->controllers[i];
-		make_actions(c, game, Slice<bool>(entity_has_acted, ARRAY_SIZE(entity_has_acted)), actions);
-	}
-
-#ifdef DEBUG_SHOW_ACTIONS
-	debug_draw_world_reset();
-	debug_draw_world_set_color(v4(0.0f, 1.0f, 1.0f, 1.0f));
-	for (u32 i = 0; i < actions.len; ++i) {
-		Action action = actions[i];
-		switch (action.type) {
-		case ACTION_MOVE:
-			debug_draw_world_arrow((v2)action.move.start, (v2)action.move.end);
-			break;
-		}
-	}
-	debug_pause();
-#endif
-
-	game_simulate_actions(game, actions, events);
 }
 
 void do_action(Game* game, Action action, Output_Buffer<Event> events)
@@ -3330,7 +3267,7 @@ void do_action(Game* game, Action action, Output_Buffer<Event> events)
 	switch (action.type) {
 	case ACTION_DRAW_CARDS:
 	case ACTION_PLAY_CARD:
-		game_simulate_actions(game, slice_one(&action), events);
+		game_simulate_actions(game, 0.0f, slice_one(&action), events);
 		break;
 	default: {
 		auto c = &game->controllers[0];

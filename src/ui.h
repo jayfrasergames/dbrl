@@ -147,7 +147,6 @@ struct World_Anim_Dynamic
 			v2  pos;
 		} blink_particles;
 		struct {
-			Entity_ID original_id;
 			Entity_ID new_id;
 			v2        start;
 			v2        end;

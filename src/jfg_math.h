@@ -20,6 +20,7 @@
 	}
 
 MAKE_MIN_MAX_FUNCTIONS(u32)
+MAKE_MIN_MAX_FUNCTIONS(i32)
 MAKE_MIN_MAX_FUNCTIONS(f32)
 
 static inline v2_u32 max_v2_u32(v2_u32 a, v2_u32 b)

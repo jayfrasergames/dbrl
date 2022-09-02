@@ -536,7 +536,6 @@ struct Event
 			Pos       target;
 		} blink;
 		struct {
-			Entity_ID original_id;
 			Entity_ID new_id;
 			v2 start;
 			v2 end;
