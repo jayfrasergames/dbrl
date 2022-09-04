@@ -1502,12 +1502,15 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 			break;
 		}
 		case EVENT_DISCARD: {
+			u32 hand_index = (u32)-1;
 			for (u32 i = 0; i < card_anims.len; ++i) {
 				auto card_anim = &card_anims[i];
 				if (card_anim->card_id == event->discard.card_id) {
 					switch (card_anim->type) {
 					case CARD_ANIM_IN_HAND: {
 						--anim_state->card_anim_state.hand_size;
+
+						hand_index = card_anim->hand.index;
 
 						auto card_pos = card_anim->pos;
 						card_anim->type = CARD_ANIM_HAND_TO_DISCARD;
@@ -1537,6 +1540,32 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 						break;
 					}
 					break;
+				}
+			}
+			if (hand_index != (u32)-1) {
+				for (u32 i = 0; i < card_anims.len; ++i) {
+					auto card_anim = &card_anims[i];
+					switch (card_anim->type) {
+					case CARD_ANIM_IN_HAND: {
+						auto pos = card_anim->pos;
+						auto index = card_anim->hand.index;
+						if (index > hand_index) {
+							--index;
+						}
+						card_anim->hand.index = index;
+						/*
+						card_anim->hand_to_hand.start_time = event->time - constants.cards_ui.hand_to_discard_time;
+						card_anim->hand_to_hand.duration = constants.cards_ui.hand_to_hand_time;
+						card_anim->hand_to_hand.index = index;
+						*/
+						break;
+					}
+					case CARD_ANIM_HAND_TO_HAND:
+						if (card_anim->hand_to_hand.index > hand_index) {
+							--card_anim->hand_to_hand.index;
+						}
+						break;
+					}
 				}
 			}
 			break;

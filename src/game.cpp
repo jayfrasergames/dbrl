@@ -1241,10 +1241,22 @@ void game_dispatch_message(Game*                      game,
 			transactions.append(t);
 			break;
 		}
-		}
+		} // end switch
 		break;
 	}
+	case MESSAGE_DISCARD_CARD_PRE: {
+		auto card = get_card_by_id(game, message.discard_card.card_id);
+		ASSERT(card);
+		switch (card->appearance) {
+		case CARD_APPEARANCE_DISEASE: {
+			auto can_discard = (bool*)data;
+			*can_discard = false;
+			break;
+		}
+		} // end switch
+		break;
 	}
+	} // end switch
 
 	auto &handlers = game->handlers;
 	for (u32 i = 0; i < handlers.len; ) {
@@ -3079,6 +3091,8 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 			case TRANSACTION_DRAW_CARDS_1: {
 				t->type = TRANSACTION_DRAW_CARDS_2;
 				u32 num_cards_to_draw = min_u32(game->card_state.hand_size, game->card_state.discard.len + game->card_state.deck.len);
+				ASSERT(num_cards_to_draw > game->card_state.hand.len);
+				num_cards_to_draw -= game->card_state.hand.len;
 				t->start_time += constants.cards_ui.draw_duration + (num_cards_to_draw - 1) * constants.cards_ui.between_draw_delay;
 				t->draw_cards.num_cards_to_draw = num_cards_to_draw;
 				break;
@@ -3115,7 +3129,7 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 					message.draw_card.card_id = card.id;
 					game_dispatch_message(game, message, time, transactions, events, NULL);
 
-					draw_card_event.card_draw.hand_index = i;
+					draw_card_event.card_draw.hand_index = card_state->hand.len - 1;
 					draw_card_event.card_draw.card_id = card.id;
 					events.append(draw_card_event);
 					draw_card_event.time += constants.cards_ui.between_draw_delay;
@@ -3138,14 +3152,23 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 				discard_event.time = t->start_time;
 
 				auto card_state = &game->card_state;
-				for (u32 i = 0; i < card_state->hand.len; ++i) {
+				for (u32 i = 0; i < card_state->hand.len; ) {
 					auto card = card_state->hand[i];
+					bool can_discard = true;
+					Message message = {};
+					message.type = MESSAGE_DISCARD_CARD_PRE;
+					message.discard_card.card_id = card.id;
+					game_dispatch_message(game, message, time, transactions, events, &can_discard);
+					if (!can_discard) {
+						++i;
+						continue;
+					}
+					card_state->hand.remove_preserve_order(i);
 					card_state->discard.append(card);
 					discard_event.discard.card_id = card.id;
 					discard_event.discard.discard_index = card_state->discard.len - 1;
 					events.append(discard_event);
 				}
-				card_state->hand.reset();
 
 				for (u32 i = 0; i < card_state->in_play.len; ++i) {
 					auto card = card_state->in_play[i];

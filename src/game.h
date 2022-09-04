@@ -292,14 +292,15 @@ enum Creature_Type
 
 enum Message_Type : u32
 {
-	MESSAGE_MOVE_PRE_EXIT   = 1 << 0,
-	MESSAGE_MOVE_POST_EXIT  = 1 << 1,
-	MESSAGE_MOVE_PRE_ENTER  = 1 << 2,
-	MESSAGE_MOVE_POST_ENTER = 1 << 3,
-	MESSAGE_DAMAGE          = 1 << 4,
-	MESSAGE_PRE_DEATH       = 1 << 5,
-	MESSAGE_POST_DEATH      = 1 << 6,
-	MESSAGE_DRAW_CARD       = 1 << 7,
+	MESSAGE_MOVE_PRE_EXIT    = 1 << 0,
+	MESSAGE_MOVE_POST_EXIT   = 1 << 1,
+	MESSAGE_MOVE_PRE_ENTER   = 1 << 2,
+	MESSAGE_MOVE_POST_ENTER  = 1 << 3,
+	MESSAGE_DAMAGE           = 1 << 4,
+	MESSAGE_PRE_DEATH        = 1 << 5,
+	MESSAGE_POST_DEATH       = 1 << 6,
+	MESSAGE_DRAW_CARD        = 1 << 7,
+	MESSAGE_DISCARD_CARD_PRE = 1 << 8,
 };
 
 struct Message
@@ -322,6 +323,9 @@ struct Message
 		struct {
 			Card_ID card_id;
 		} draw_card;
+		struct {
+			Card_ID card_id;
+		} discard_card;
 	};
 };
 
