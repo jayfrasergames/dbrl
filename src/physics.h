@@ -344,22 +344,45 @@ static void physics_get_overlapping_intervals_2d(Slice<Physics_Interval> x_inter
                                                  Slice<Physics_Interval> y_intervals_2,
                                                  Output_Buffer<Physics_Interval_Overlap> output)
 {
-	Max_Length_Array<Physics_Interval_Overlap, 4096> overlapping_x_intervals;
-	Max_Length_Array<Physics_Interval_Overlap, 4096> overlapping_y_intervals;
+	ASSERT(PHYSICS_MAX_STATIC_LINES == PHYSICS_MAX_LINEAR_CIRCLES);
+	ASSERT(PHYSICS_MAX_LINEAR_CIRCLES == PHYSICS_MAX_STATIC_CIRCLES);
+	ASSERT(PHYSICS_MAX_STATIC_CIRCLES == 1024);
+
+	struct Tmp_Stuff
+	{
+		Max_Length_Array<Physics_Interval_Overlap, 1024*1024> overlapping_x_intervals;
+		Max_Length_Array<Physics_Interval_Overlap, 1024*1024> overlapping_y_intervals;
+		u64 overlaps[1024 * 1024 / 64] = {};
+	} *stuff = NULL;
+
+	stuff = (Tmp_Stuff*)malloc(sizeof(*stuff));
+
+	auto &overlapping_x_intervals = stuff->overlapping_x_intervals;
+	auto &overlapping_y_intervals = stuff->overlapping_y_intervals;
+	auto &overlaps = stuff->overlaps;
+	memset(&overlaps, 0, sizeof(overlaps));
+
 	physics_get_overlapping_intervals_1d(x_intervals_1, x_intervals_2, overlapping_x_intervals);
 	physics_get_overlapping_intervals_1d(y_intervals_1, y_intervals_2, overlapping_y_intervals);
 
 	output.reset();
+
+
 	for (u32 i = 0; i < overlapping_x_intervals.len; ++i) {
-		Physics_Interval_Overlap overlap_x = overlapping_x_intervals[i];
-		for (u32 j = 0; j < overlapping_y_intervals.len; ++j) {
-			Physics_Interval_Overlap overlap_y = overlapping_y_intervals[j];
-			if (overlap_x.object_index_1 == overlap_y.object_index_1
-			 && overlap_x.object_index_2 == overlap_y.object_index_2) {
-				output.append(overlap_x);
-			}
+		auto overlap_x = overlapping_x_intervals[i];
+		u32 idx = overlap_x.object_index_1 * 1024 + overlap_x.object_index_2;
+		overlaps[idx / 64] |= 1 << (idx % 64);
+	}
+
+	for (u32 i = 0; i < overlapping_y_intervals.len; ++i) {
+		auto overlap_y = overlapping_y_intervals[i];
+		u32 idx = overlap_y.object_index_1 * 1024 + overlap_y.object_index_2;
+		if (overlaps[idx / 64] & (1 << (idx % 64))) {
+			output.append(overlap_y);
 		}
 	}
+
+	free(stuff);
 }
 
 static u8 physics_get_linear_circle_origin_intersection_times(v2 p, v2 v, f32 r, f32* t_0, f32* t_1)
@@ -427,7 +450,14 @@ void physics_compute_collisions(Physics_Context* context,
 {
 	USE_PHYSICS_CONTEXT(context)
 
-	Max_Length_Array<Physics_Interval_Overlap, 4096> overlaps;
+	struct Tmp_Stuff
+	{
+		Max_Length_Array<Physics_Interval_Overlap, 1024*1024> overlaps;
+	} *stuff = NULL;
+
+	stuff = (Tmp_Stuff*)malloc(sizeof(*stuff));
+
+	auto &overlaps = stuff->overlaps;
 
 	output.reset();
 	Physics_Event event = {};
@@ -702,6 +732,8 @@ void physics_compute_collisions(Physics_Context* context,
 		}
 		output[j] = event;
 	}
+
+	free(stuff);
 }
 
 void physics_remove_objects_for_entity(Physics_Context* context, Entity_ID entity_id)

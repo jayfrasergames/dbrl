@@ -846,13 +846,20 @@ void world_anim_init(Anim_State* anim_state, Game* game)
 			world_static_anims.append(ta);
 
 		} else if (appearance_is_item(app)) {
-			World_Static_Anim ia = {};
-			ia.type = ANIM_TILE_STATIC;
-			ia.sprite_coords = appearance_get_item_sprite_coords(app);
-			ia.world_coords = (v2)pos;
-			ia.entity_id = e->id;
-			ia.depth_offset = constants.z_offsets.item;
-			world_static_anims.append(ia);
+			auto ia = world_static_anims.append();
+			switch (app) {
+			case APPEARANCE_ITEM_BARREL:
+				ia->type = ANIM_ITEM_WITH_SHADOW;
+				ia->item_with_shadow.shadow_sprite_coords = v2(4.0f, 22.0f);
+				break;
+			default:
+				ia->type = ANIM_TILE_STATIC;
+				break;
+			}
+			ia->sprite_coords = appearance_get_item_sprite_coords(app);
+			ia->world_coords = (v2)pos;
+			ia->entity_id = e->id;
+			ia->depth_offset = constants.z_offsets.item;
 
 		} else if (appearance_is_door(app)) {
 			World_Static_Anim da = {};
@@ -2455,6 +2462,29 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 
 			sprite_sheet_instances_add(&draw->creatures, shadow);
 			sprite_sheet_instances_add(&draw->creatures, creature);
+			break;
+		}
+		case ANIM_ITEM_WITH_SHADOW: {
+			v2 world_pos = anim->world_coords;
+
+			Sprite_Sheet_Instance shadow = {};
+			shadow.sprite_pos = anim->item_with_shadow.shadow_sprite_coords;
+			shadow.world_pos = world_pos;
+			shadow.sprite_id = anim->entity_id;
+			shadow.depth_offset = constants.z_offsets.character_shadow;
+			shadow.y_offset = -3.0f;
+			shadow.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+
+			Sprite_Sheet_Instance item = {};
+			item.sprite_pos = anim->sprite_coords;
+			item.world_pos = world_pos;
+			item.sprite_id = anim->entity_id;
+			item.depth_offset = constants.z_offsets.character;
+			item.y_offset = -6.0f;
+			item.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+
+			sprite_sheet_instances_add(&draw->creatures, shadow);
+			sprite_sheet_instances_add(&draw->tiles, item);
 			break;
 		}
 		case ANIM_WATER_EDGE: {

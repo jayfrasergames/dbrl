@@ -615,7 +615,7 @@ static void from_string(Game* game, char* str)
 			e->max_hit_points = 1;
 			e->pos = cur_pos;
 			e->appearance = APPEARANCE_ITEM_TRAP_HEX;
-			e->default_action = ACTION_BUMP_ATTACK;
+			// e->default_action = ACTION_BUMP_ATTACK;
 
 			auto mh = add_message_handler(game);
 			mh->type = MESSAGE_HANDLER_TRAP_FIREBALL;
@@ -691,6 +691,13 @@ static void from_string(Game* game, char* str)
 			add_imp(game, cur_pos);
 		}
 
+		case 'o': {
+			tiles[cur_pos].type = TILE_FLOOR;
+			tiles[cur_pos].appearance = APPEARANCE_FLOOR_ROCK;
+
+			add_explosive_barrel(game, cur_pos);
+		}
+
 		}
 		++cur_pos.x;
 	}
@@ -703,13 +710,13 @@ void build_level_default(Game* game, Log* log)
 	from_string(game,
 		"##########################################\n"
 		"#.........b...#b#..##....................#\n"
-		"#......#.bwb..#b#........................#\n"
-		"#.....###.b...#b#.......###..............#\n"
-		"#....#####....#b#.......#x#..............#\n"
-		"#...##.#.##...#b#.....###x#.#............#\n"
-		"#..##..#..##..#b#.....#xxxxx#............#\n"
-		"#...b..#......#b#.....###x###............#\n"
-		"#b.bwb.#......#w#.......#x#..............#\n"
+		"#......#.bwb..#b#...............o........#\n"
+		"#.....###.b...#b#.......###...o....o.....#\n"
+		"#....#####....#b#.......#x#.....o.....o..#\n"
+		"#...##.#.##...#b#.....###x#.#......o.o...#\n"
+		"#..##..#..##..#b#.....#xxxxx#....o....o..#\n"
+		"#...b..#......#b#.....###x###.o....o.....#\n"
+		"#b.bwb.#......#w#.......#x#.....o..o..o..#\n"
 		"#wb.b..#...b..@.+.......###..............#\n"
 		"#b.....#..bwb.###........................#\n"
 		"#......#...b..#vvv.^..^....#.............#\n"

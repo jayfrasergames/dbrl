@@ -1,6 +1,11 @@
 * current todo
-  * disease (card can't be discarded)
-  * fireball hits barrels, chain reaction
+  * magic missile
+  * field of vision
+    * transition between fovs
+      * event represents when FOV changed
+      * have a blend time for FOV change animations (blend starts at t - anim_time and ends at t + anim_time)
+      * simultaneous FOV anims get blended together
+  * level generation
 
 * goals (initial)
   * content
@@ -54,11 +59,6 @@
   * level generation!
     * room generators (generate a spider room - webs around the edges, invisible trap
       that summons more webs and more spiders :-D!)
-  * field of vision
-    * transition between fovs
-      * event represents when FOV changed
-      * have a blend time for FOV change animations (blend starts at t - anim_time and ends at t + anim_time)
-      * simultaneous FOV anims get blended together
   * doors
     * field of vision
     * trapped
@@ -97,7 +97,6 @@
   * a spell which leaves an aura on a creature (e.g. particles which follow the creature etc)
 
   * spells/cards
-    * magic missile
     * teleport sphere (chaos sphere?)
     * cloud/grease
     * freeze

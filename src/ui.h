@@ -39,6 +39,7 @@ enum World_Static_Anim_Type
 	ANIM_TILE_LIQUID,
 	ANIM_WATER_EDGE,
 	ANIM_CREATURE_IDLE,
+	ANIM_ITEM_WITH_SHADOW,
 };
 
 #define MAX_ANIM_MODIFIERS 16
@@ -59,6 +60,9 @@ struct World_Static_Anim
 		struct {
 			v4_u8 color;
 		} water_edge;
+		struct {
+			v2 shadow_sprite_coords;
+		} item_with_shadow;
 	};
 	v2        sprite_coords;
 	v2        world_coords;

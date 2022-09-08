@@ -420,6 +420,23 @@ Entity* add_spiderweb(Game* game, Pos pos)
 	return e;
 }
 
+Entity* add_explosive_barrel(Game* game, Pos pos)
+{
+	auto e = add_entity(game);
+	e->hit_points = 1;
+	e->max_hit_points = 1;
+	e->appearance = APPEARANCE_ITEM_BARREL;
+	e->pos = pos;
+	e->block_mask = BLOCK_FLY | BLOCK_SWIM | BLOCK_WALK;
+
+	auto mh = add_message_handler(game);
+	mh->type = MESSAGE_HANDLER_EXPLODE_ON_DEATH;
+	mh->handle_mask = MESSAGE_PRE_DEATH;
+	mh->owner_id = e->id;
+
+	return e;
+}
+
 Message_Handler* add_trap_spider_cave(Game* game, Pos pos, u32 radius)
 {
 	auto mh = add_message_handler(game);
@@ -1315,6 +1332,24 @@ void game_dispatch_message(Game*                      game,
 				events.append(e);
 			}
 			break;
+		case MESSAGE_HANDLER_EXPLODE_ON_DEATH:
+			if (h->owner_id == message.death.entity_id) {
+				auto e = get_entity_by_id(game, message.death.entity_id);
+				ASSERT(e);
+
+				Transaction t = {};
+				t.type = TRANSACTION_FIREBALL_HIT;
+				t.start_time = time + TRANSACTION_EPSILON;
+				t.fireball_shot.end = e->pos;
+				transactions.append(t);
+
+				Event event = {};
+				event.type = EVENT_FIREBALL_HIT;
+				event.time = time;
+				event.fireball_hit.pos = e->pos;
+				events.append(event);
+			}
+			break;
 		case MESSAGE_HANDLER_SLIME_SPLIT:
 			if (h->owner_id == message.damage.entity_id && !message.damage.entity_died) {
 				auto e = get_entity_by_id(game, h->owner_id);
@@ -1912,7 +1947,7 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 	Max_Length_Array<Entities_Hit_By_Projectile, MAX_PROJECTILES> entities_hit_by_projectile;
 	entities_hit_by_projectile.reset();
 
-#define MAX_PHYSICS_EVENTS 1024
+#define MAX_PHYSICS_EVENTS 10240
 	Max_Length_Array<Physics_Event, MAX_PHYSICS_EVENTS> physics_events;
 	physics_events.reset();
 

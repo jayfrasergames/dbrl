@@ -318,6 +318,7 @@ struct Message
 			u8        entity_died;
 		} damage;
 		struct {
+			Pos pos;
 			Entity_ID entity_id;
 		} death;
 		struct {
@@ -339,6 +340,7 @@ enum Message_Handler_Type
 	MESSAGE_HANDLER_LICH_DEATH,
 	MESSAGE_HANDLER_TRAP_SPIDER_CAVE,
 	MESSAGE_HANDLER_SPIDER_WEB_PREVENT_EXIT,
+	MESSAGE_HANDLER_EXPLODE_ON_DEATH,
 };
 
 struct Message_Handler
@@ -668,6 +670,7 @@ Entity*          add_spider_poison(Game* game, Pos pos);
 Entity*          add_spider_shadow(Game* game, Pos pos);
 Entity*          add_imp(Game* game, Pos pos);
 Entity*          add_spiderweb(Game* game, Pos pos);
+Entity*          add_explosive_barrel(Game* game, Pos pos);
 Message_Handler* add_trap_spider_cave(Game* game, Pos pos, u32 radius);
 
 Entity_ID        add_slime(Game* game, Pos pos, u32 hit_points);
