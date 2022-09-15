@@ -158,6 +158,7 @@ void init(Game* game)
 	controller->player.action.type = ACTION_NONE;
 
 	game->card_state.hand_size = constants.rules.initial_hand_size;
+	game->fovs.append();
 }
 
 Entity* get_entity_by_id(Game* game, Entity_ID entity_id)
@@ -259,7 +260,12 @@ void update_fov(Game* game)
 	ASSERT(player);
 
 	calculate_fov(&fov, &map, player->pos);
-	update(&game->field_of_vision, &fov);
+
+	if (game->fovs.len > 1) {
+		memcpy(&game->fovs[0], &game->fovs[game->fovs.len - 1], sizeof(game->fovs[0]));
+		game->fovs.len = 1;
+	}
+	update(&game->fovs[0], &fov);
 }
 
 // ============================================================================
@@ -1108,6 +1114,9 @@ enum Transaction_Type
 	TRANSACTION_TURN_INVISIBLE,
 	TRANSACTION_STEAL_CARD,
 
+	TRANSACTION_MAGIC_MISSILE_CAST,
+	TRANSACTION_MAGIC_MISSILE_HIT,
+
 	TRANSACTION_DRAW_CARDS_1,
 	TRANSACTION_DRAW_CARDS_2,
 	TRANSACTION_DISCARD_HAND,
@@ -1207,6 +1216,12 @@ struct Transaction
 			Entity_ID stealer_id;
 			Entity_ID target_id;
 		} steal_card;
+		struct {
+			Entity_ID caster_id;
+			Entity_ID target_id;
+			Pos start;
+			Pos end;
+		} magic_missile;
 	};
 };
 
@@ -1601,6 +1616,12 @@ Transaction to_transaction(Action action, f32 time)
 		t.play_card.action = card_action;
 		break;
 	}
+	case ACTION_MAGIC_MISSILE: {
+		t.type = TRANSACTION_MAGIC_MISSILE_CAST;
+		t.magic_missile.caster_id = action.entity_id;
+		t.magic_missile.target_id = action.magic_missile.target_id;
+		break;
+	}
 	}
 	return t;
 }
@@ -1953,6 +1974,14 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 
 	physics_start_frame(&physics);
 	physics_compute_collisions(&physics, 0.0f, physics_events);
+
+	auto &fovs = game->fovs;
+	ASSERT(fovs.len >= 1);
+	if (fovs.len > 1) {
+		memcpy(&fovs[0], &fovs[fovs.len - 1], sizeof(fovs[0]));
+		fovs.len = 1;
+	}
+	auto cur_fov = &fovs[0];
 
 	u8 physics_processing_left = 1;
 	while (transactions || physics_processing_left) {
@@ -3241,9 +3270,90 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 				break;
 			}
 
+			case TRANSACTION_MAGIC_MISSILE_CAST: {
+				auto caster = get_entity_by_id(game, t->magic_missile.caster_id);
+				if (!caster) {
+					t->type = TRANSACTION_REMOVE;
+					break;
+				}
+
+				t->type = TRANSACTION_MAGIC_MISSILE_HIT;
+				t->start_time += constants.anims.magic_missile.cast_time + constants.anims.magic_missile.shot_time;
+				t->magic_missile.start = caster->pos;
+				break;
+			}
+			case TRANSACTION_MAGIC_MISSILE_HIT: {
+				t->type = TRANSACTION_REMOVE;
+				auto target = get_entity_by_id(game, t->magic_missile.target_id);
+				if (!target) {
+					break;
+				}
+
+				const u32 num_missiles = 5;
+
+				auto event = events.append();
+				event->type = EVENT_MAGIC_MISSILE_SHOT;
+				event->time = t->start_time - constants.anims.magic_missile.shot_time;
+				event->magic_missile_shot.start = (v2)t->magic_missile.start;
+				event->magic_missile_shot.end = (v2)target->pos;
+				event->magic_missile_shot.num_missiles = num_missiles;
+				event->magic_missile_shot.duration = constants.anims.magic_missile.shot_time;
+
+				auto damage = entity_damage.append();
+				damage->entity_id = target->id;
+				damage->damage = num_missiles;
+				damage->pos = (v2)target->pos;
+
+				break;
+			}
+
 			}
 		}
 
+		// process FOV
+		{
+			Map_Cache_Bool map = {}, fov = {};
+			map.reset();
+
+			auto &tiles = game->tiles;
+			for (u16 y = 0; y < 256; ++y) {
+				for (u16 x = 0; x < 256; ++x) {
+					Pos p = Pos((u8)x, (u8)y);
+					if (game_is_pos_opaque(game, p)) {
+						map.set(p);
+					}
+				}
+			}
+
+			auto &entities = game->entities;
+			for (u32 i = 0; i < entities.len; ++i) {
+				if (entities[i].flags & ENTITY_FLAG_BLOCKS_VISION) {
+					map.set(entities[i].pos);
+				}
+			}
+
+			auto player = get_entity_by_id(game, game->player_id);
+			ASSERT(player);
+
+			calculate_fov(&fov, &map, player->pos);
+
+			auto new_fov = fovs.append();
+			memcpy(new_fov, cur_fov, sizeof(*new_fov));
+			update(new_fov, &fov);
+
+			if (memcmp(new_fov, cur_fov, sizeof(*new_fov))) {
+				cur_fov = new_fov;
+
+				Event e = {};
+				e.type = EVENT_FIELD_OF_VISION_CHANGED;
+				e.time = max_f32(0.0f, time - constants.anims.fov.transition_time / 2.0f);
+				e.field_of_vision.duration = constants.anims.fov.transition_time;
+				e.field_of_vision.fov = cur_fov;
+				events.append(e);
+			} else {
+				fovs.remove(fovs.len - 1);
+			}
+		}
 
 		// merge damage events
 		for (u32 i = 0; i < entity_damage.len; ++i) {
@@ -3357,17 +3467,6 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 		player_id = c->player.entity_id;
 	}
 
-	// XXX - tmp - recalculate FOV
-	{
-		update_fov(game);
-		Event e = {};
-		e.type = EVENT_FIELD_OF_VISION_CHANGED;
-		e.time = 0.0f; // XXX
-		e.field_of_vision.duration = constants.anims.move.duration;
-		e.field_of_vision.fov = &game->field_of_vision;
-		events.append(e);
-	}
-
 	return time;
 }
 
@@ -3437,7 +3536,13 @@ void get_card_params(Game* game, Card_ID card_id, Action_Type* action_type, Outp
 	case CARD_APPEARANCE_FIRE_SHIELD:
 	case CARD_APPEARANCE_FIRE_WALL:
 	case CARD_APPEARANCE_POISON:
-	case CARD_APPEARANCE_MAGIC_MISSILE:
+	case CARD_APPEARANCE_MAGIC_MISSILE: {
+		*action_type = ACTION_MAGIC_MISSILE;
+		auto param = card_params.append();
+		param->type = CARD_PARAM_CREATURE;
+		param->offset = OFFSET_OF(Action, magic_missile.target_id);
+		break;
+	}
 	case CARD_APPEARANCE_DISEASE:
 		*action_type = ACTION_NONE;
 		break;

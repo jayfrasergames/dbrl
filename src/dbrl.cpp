@@ -614,6 +614,7 @@ void program_init(Program* program, Draw* draw, Render* render, Platform_Functio
 	program->render = render;
 	program->draw = draw;
 	program->anim_state.draw = draw;
+	program->display_fog_of_war = true;
 
 	lua_State *lua_state = luaL_newstate();
 	program->lua_state = lua_state;
@@ -1059,8 +1060,9 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 	}
 
 	// render world
+	/*
 	if (program->display_fog_of_war) {
-		render(&program->game.field_of_vision, program->render);
+		render(&program->game.fovs[0], program->render);
 	} else {
 		Field_Of_Vision fov = {};
 		for (u32 y = 1; y < 255; ++y) {
@@ -1070,6 +1072,23 @@ void process_frame_aux(Program* program, Input* input, v2_u32 screen_size)
 		}
 		render(&fov, program->render);
 	}
+	*/
+
+	{
+		auto r = &program->render->render_job_buffer;
+		begin(r, RENDER_EVENT_FOV_COMPOSITE);
+
+		Render_Job job = {};
+		job.type = RENDER_JOB_FOV_COMPOSITE;
+		job.fov_composite.fov_id           = TARGET_TEXTURE_FOV_RENDER;
+		job.fov_composite.world_static_id  = TARGET_TEXTURE_WORLD_STATIC;
+		job.fov_composite.world_dynamic_id = TARGET_TEXTURE_WORLD_DYNAMIC;
+		job.fov_composite.output_tex_id    = TARGET_TEXTURE_WORLD_COMPOSITE;
+		push(r, job);
+
+		end(r, RENDER_EVENT_FOV_COMPOSITE);
+	}
+
 	if (sprite_id) {
 		highlight_sprite_id(&program->render->render_job_buffer,
 		                    TARGET_TEXTURE_WORLD_COMPOSITE,

@@ -6,6 +6,7 @@
 
 #include "game.h"
 #include "sound.h"
+#include "fov.h"
 
 #include "draw.h"
 
@@ -101,6 +102,7 @@ enum World_Anim_Dynamic_Type
 	ANIM_TURN_VISIBLE,
 	ANIM_OPEN_DOOR,
 	ANIM_CLOSE_DOOR,
+	ANIM_MAGIC_MISSILE,
 };
 
 struct World_Anim_Dynamic
@@ -170,7 +172,7 @@ struct World_Anim_Dynamic
 		} heal_particles;
 		struct {
 			u32 buffer_id;
-			// Field_Of_Vision* fov;
+			Field_Of_Vision* fov;
 		} field_of_vision;
 		struct {
 			v2  start;
@@ -205,6 +207,11 @@ struct World_Anim_Dynamic
 			Entity_ID entity_id;
 			v2        sprite_coords;
 		} close_door;
+		struct {
+			v2 start;
+			v2 end;
+			v2 offset;
+		} magic_missile;
 	};
 };
 

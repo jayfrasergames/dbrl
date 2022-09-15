@@ -66,7 +66,6 @@ enum Action_Type
 	ACTION_FIRE_BOLT,
 	ACTION_EXCHANGE,
 	ACTION_BLINK,
-	// ACTION_POISON,
 	ACTION_HEAL,
 	ACTION_LIGHTNING,
 	ACTION_OPEN_DOOR,
@@ -74,6 +73,7 @@ enum Action_Type
 	ACTION_SHOOT_WEB,
 	ACTION_TURN_INVISIBLE,
 	ACTION_STEAL_CARD,
+	ACTION_MAGIC_MISSILE,
 
 	ACTION_DRAW_CARDS,
 	ACTION_DISCARD_HAND,
@@ -130,6 +130,9 @@ struct Action
 		struct {
 			Entity_ID target_id;
 		} steal_card;
+		struct {
+			Entity_ID target_id;
+		} magic_missile;
 	};
 
 	operator bool() { return type; }
@@ -428,6 +431,7 @@ enum Event_Type
 	EVENT_CARD_POISON,
 	EVENT_TURN_INVISIBLE,
 	EVENT_TURN_VISIBLE,
+	EVENT_MAGIC_MISSILE_SHOT,
 
 	EVENT_DRAW_CARD,
 	EVENT_SHUFFLE_DISCARD_TO_DECK,
@@ -615,6 +619,12 @@ struct Event
 		struct {
 			Entity_ID entity_id;
 		} turn_visible;
+		struct {
+			v2 start;
+			v2 end;
+			f32 duration;
+			u32 num_missiles;
+		} magic_missile_shot;
 	};
 };
 
@@ -624,6 +634,7 @@ struct Event
 
 #define GAME_MAX_CONTROLLERS 1024
 #define GAME_MAX_MESSAGE_HANDLERS 1024
+#define GAME_MAX_FOVS 8
 
 struct Game
 {
@@ -643,7 +654,9 @@ struct Game
 
 	Max_Length_Array<Message_Handler, GAME_MAX_MESSAGE_HANDLERS> handlers;
 
-	Field_Of_Vision field_of_vision;
+	// Field_Of_Vision field_of_vision;
+
+	Max_Length_Array<Field_Of_Vision, GAME_MAX_FOVS> fovs;
 };
 
 // =============================================================================

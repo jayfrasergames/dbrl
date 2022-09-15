@@ -983,9 +983,10 @@ void world_anim_init(Anim_State* anim_state, Game* game)
 		World_Anim_Dynamic a = {};
 		a.type = ANIM_FIELD_OF_VISION_CHANGED;
 		a.start_time = 0.0f;
-		a.duration = constants.anims.move.duration;
-		a.field_of_vision.buffer_id = 0;
-		// a.field_of_vision.fov = &game->field_of_vision;
+		a.duration = 0.0f;
+		// a.field_of_vision.buffer_id = 0;
+		ASSERT(game->fovs.len == 1);
+		a.field_of_vision.fov = &game->fovs[0];
 		anim_state->world_dynamic_anims.append(a);
 	}
 
@@ -1413,7 +1414,7 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 			a.type = ANIM_FIELD_OF_VISION_CHANGED;
 			a.start_time = event->time;
 			a.duration = event->field_of_vision.duration;
-			// a.field_of_vision.fov = event->field_of_vision.fov;
+			a.field_of_vision.fov = event->field_of_vision.fov;
 			world_dynamic_anims.append(a);
 			break;
 		}
@@ -1627,6 +1628,31 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 
 			break;
 		}
+		case EVENT_MAGIC_MISSILE_SHOT: {
+			auto num_missiles = event->magic_missile_shot.num_missiles;
+
+			World_Anim_Dynamic anim = {};
+			anim.type = ANIM_MAGIC_MISSILE;
+			anim.start_time = false;
+			anim.start_time = event->time;
+			anim.duration = constants.anims.magic_missile.shot_time;
+			v2 start = event->magic_missile_shot.start;
+			v2 end = event->magic_missile_shot.end;
+			anim.magic_missile.start = start;
+			anim.magic_missile.end = end;
+			v2 offset = end - start;
+			offset /= sqrtf(offset.x*offset.x + offset.y*offset.y);
+			offset = v2(-offset.y, offset.x);
+			for (u32 i = 0; i < num_missiles; ++i) {
+				anim.magic_missile.offset = offset * ((f32)(num_missiles - 1) / 2.0f - (f32)i);
+				world_dynamic_anims.append(anim);
+			}
+
+			auto sound = sound_anims.append();
+			sound->sound_id = SOUND_MAGIC_WHOOSH_1;
+			sound->start_time = event->time;
+			break;
+		}
 
 		}
 	}
@@ -1644,9 +1670,9 @@ static World_Static_Anim* get_static_anim(Anim_State* anim_state, Entity_ID enti
 	return NULL;
 }
 
-void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2_u32 screen_size, f32 time)
+void draw(Anim_State* anim_state, Render* renderer, Sound_Player* sound_player, v2_u32 screen_size, f32 time)
 {
-	auto r = &render->render_job_buffer;
+	auto r = &renderer->render_job_buffer;
 
 	// XXX -- temporary
 	// reset draw state
@@ -1919,6 +1945,12 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 			static_anim->sprite_coords = anim->close_door.sprite_coords;
 			break;
 		}
+		case ANIM_FIELD_OF_VISION_CHANGED: {
+			if (!anim->started) {
+				render(anim->field_of_vision.fov, renderer);
+			}
+			break;
+		}
 		// TODO -- clean up particles
 		case ANIM_EXCHANGE_PARTICLES:
 		case ANIM_BLINK_PARTICLES:
@@ -1926,11 +1958,11 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 		case ANIM_HEAL_PARTICLES:
 		case ANIM_SHOOT_WEB_PARTICLES:
 			break;
-		case ANIM_FIELD_OF_VISION_CHANGED:
 		case ANIM_TEXT:
 		case ANIM_PROJECTILE_EFFECT_24:
 		case ANIM_PROJECTILE_EFFECT_32:
 		case ANIM_CAMERA_SHAKE:
+		case ANIM_MAGIC_MISSILE:
 			break;
 		default:
 			// Should explicitly decide whether a dynamic anim does anything on cleanup or not
@@ -2173,6 +2205,10 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 			}
 			break;
 		}
+		case ANIM_FIELD_OF_VISION_CHANGED: {
+			render(anim->field_of_vision.fov, renderer);
+			break;
+		}
 		case ANIM_TURN_VISIBLE:
 		case ANIM_ADD_ITEM:
 		case ANIM_ADD_CREATURE:
@@ -2184,9 +2220,9 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 		case ANIM_EXCHANGE:
 		case ANIM_BLINK:
 		case ANIM_POLYMORPH:
-		case ANIM_FIELD_OF_VISION_CHANGED:
 		case ANIM_OPEN_DOOR:
 		case ANIM_CLOSE_DOOR:
+		case ANIM_MAGIC_MISSILE:
 			break;
 		default:
 			ASSERT(0);
@@ -2365,6 +2401,17 @@ void draw(Anim_State* anim_state, Render* render, Sound_Player* sound_player, v2
 					modifier->pos.y_offset = 0.0f;
 				}
 			}
+			break;
+		}
+		case ANIM_MAGIC_MISSILE: {
+			Sprite_Sheet_Instance instance = {};
+			instance.sprite_pos = v2(0.0f, 0.0f);
+			instance.world_pos = lerp(anim->magic_missile.start, anim->magic_missile.end, dt);
+			instance.world_pos += anim->magic_missile.offset * (dt * (1.0f - dt) * 4.0f);
+			instance.sprite_id = 0;
+			instance.depth_offset = 2.0f;
+			instance.color_mod = v4(1.0f, 1.0f, 1.0f, 1.0f);
+			sprite_sheet_instances_add(&draw->effects_32, instance);
 			break;
 		}
 		case ANIM_FIELD_OF_VISION_CHANGED:

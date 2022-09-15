@@ -49,7 +49,6 @@ void render(Field_Of_Vision* fov, Render* render)
 	constants.edge_tex_size = 16.0f * v2(24.0f, 24.0f);
 	constants.output_val = 1;
 
-	begin(r, RENDER_EVENT_FOV);
 	begin(r, RENDER_EVENT_FOV_PRECOMPUTE);
 
 	clear_uint(r, TARGET_TEXTURE_FOV_RENDER);
@@ -62,18 +61,6 @@ void render(Field_Of_Vision* fov, Render* render)
 	render_aux(fov, r, FOV_VISIBLE);
 
 	end(r, RENDER_EVENT_FOV_PRECOMPUTE);
-	begin(r, RENDER_EVENT_FOV_COMPOSITE);
-
-	Render_Job job = {};
-	job.type = RENDER_JOB_FOV_COMPOSITE;
-	job.fov_composite.fov_id           = TARGET_TEXTURE_FOV_RENDER;
-	job.fov_composite.world_static_id  = TARGET_TEXTURE_WORLD_STATIC;
-	job.fov_composite.world_dynamic_id = TARGET_TEXTURE_WORLD_DYNAMIC;
-	job.fov_composite.output_tex_id    = TARGET_TEXTURE_WORLD_COMPOSITE;
-	push(r, job);
-
-	end(r, RENDER_EVENT_FOV_COMPOSITE);
-	end(r, RENDER_EVENT_FOV);
 }
 
 void update(Field_Of_Vision* _fov, Map_Cache_Bool* can_see)
