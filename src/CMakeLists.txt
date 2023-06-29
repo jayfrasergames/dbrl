@@ -42,6 +42,7 @@ set(object_sources
 	debug_line_draw.cpp
 	jfg_error.cpp
 	jfg_dsound.cpp
+	jfg_math.cpp
 	sprite_sheet.cpp
 	field_of_vision_render.cpp
 	fov.cpp

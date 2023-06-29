@@ -2,6 +2,7 @@
 #define JFG_MATH_H
 
 #include "prelude.h"
+#include "containers.hpp"
 #include <math.h>
 
 // a tad excessive...
@@ -36,6 +37,16 @@ static inline v2_u32 jfg_max(v2_u32 a, v2_u32 b)
 static inline v2_u32 jfg_min(v2_u32 a, v2_u32 b)
 {
 	return v2_u32(min_u32(a.x, b.x), min_u32(a.y, b.y));
+}
+
+static inline i32 jfg_max(i32 a, i32 b)
+{
+	return a > b ? a : b;
+}
+
+static inline i32 jfg_max(i32 a, i32 b, i32 c, i32 d)
+{
+	return jfg_max(jfg_max(jfg_max(a, b), c), d);
 }
 
 #undef MAKE_MIN_MAX_FUNCTIONS
@@ -150,5 +161,7 @@ static inline bool operator<=(Rational a, Rational b)
 	}
 	return result;
 }
+
+void calc_line(v2_i32 start, v2_i32 end, Output_Buffer<v2_i32> line);
 
 #endif

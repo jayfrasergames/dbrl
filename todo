@@ -1,10 +1,29 @@
 * current todo
+  * fire wall
+    * fire wall takes no damage
+    * line of fire wall
+      * card params
+    * entities remaining in the fire wall get damaged
+
   * field of vision
     * transition between fovs
       * simultaneous FOV anims get blended together
       * have a blend time for FOV change animations (blend starts at t - anim_time and ends at t + anim_time)
-  * magic missile
   * level generation
+
+  * cards
+    * fire
+      * fire shield
+      * summon fire elemental (factions)
+    * earth/rock
+    * electricity
+    * wind
+    * earth/nature
+    * water
+    * light
+      * heal (harms skeletons/heals others)
+    * dark
+      * harm
 
 * goals (initial)
   * content

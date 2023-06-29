@@ -296,6 +296,8 @@ Entity* add_creature(Game* game, Pos pos, Creature_Type type)
 		return add_spider_shadow(game, pos);
 	case CREATURE_IMP:
 		return add_imp(game, pos);
+	case CREATURE_FIRE_WALL:
+		return add_fire_wall(game, pos);
 	default:
 		ASSERT(0);
 	}
@@ -386,6 +388,22 @@ Entity* add_imp(Game* game, Pos pos)
 	auto c = add_controller(game);
 	c->type = CONTROLLER_IMP;
 	c->imp.imp_id = e->id;
+
+	return e;
+}
+
+Entity* add_fire_wall(Game* game, Pos pos)
+{
+	auto e = add_entity(game);
+	e->hit_points = 1;
+	e->max_hit_points = 1;
+	e->appearance = APPEARANCE_CREATURE_RED_FLAME;
+	e->pos = pos;
+
+	auto mh = add_message_handler(game);
+	mh->type = MESSAGE_HANDLER_FIRE_WALL_ENTER;
+	mh->handle_mask = MESSAGE_MOVE_POST_ENTER;
+	mh->owner_id = e->id;
 
 	return e;
 }
@@ -1092,6 +1110,8 @@ enum Transaction_Type
 	TRANSACTION_DROP_TILE,
 	TRANSACTION_FIREBALL_SHOT,
 	TRANSACTION_FIREBALL_HIT,
+	TRANSACTION_FIRE_WALL_CAST,
+	TRANSACTION_FIRE_WALL_START,
 	TRANSACTION_EXCHANGE_CAST,
 	TRANSACTION_EXCHANGE,
 	TRANSACTION_BLINK_CAST,
@@ -1113,6 +1133,7 @@ enum Transaction_Type
 	TRANSACTION_TURN_INVISIBLE_CAST,
 	TRANSACTION_TURN_INVISIBLE,
 	TRANSACTION_STEAL_CARD,
+	TRANSACTION_DAMAGE,
 
 	TRANSACTION_MAGIC_MISSILE_CAST,
 	TRANSACTION_MAGIC_MISSILE_HIT,
@@ -1136,6 +1157,10 @@ struct Transaction
 			Pos start;
 			Pos end;
 		} move;
+		struct {
+			Entity_ID entity_id;
+			i32       amount;
+		} damage;
 		struct {
 			Entity_ID attacker_id;
 			Entity_ID target_id;
@@ -1171,6 +1196,11 @@ struct Transaction
 			Pos start;
 			Pos end;
 		} fire_bolt;
+		struct {
+			Entity_ID caster_id;
+			Pos start;
+			Pos end;
+		} fire_wall;
 		struct {
 			Entity_ID caster_id;
 			Entity_ID target_id;
@@ -1319,6 +1349,22 @@ void game_dispatch_message(Game*                      game,
 			if (h->prevent_enter.pos == message.move.end) {
 				auto can_enter = (bool*)data;
 				*can_enter = false;
+			}
+			break;
+		}
+		case MESSAGE_HANDLER_FIRE_WALL_ENTER: {
+			auto owner = get_entity_by_id(game, h->owner_id);
+			ASSERT(owner);
+			if (owner->pos == message.move.end) {
+				auto t = transactions.append();
+				t->type = TRANSACTION_DAMAGE;
+				t->start_time = time + TRANSACTION_EPSILON;
+				t->damage.entity_id = message.move.entity_id;
+				t->damage.amount = 3;
+
+				auto e = events.append();
+				e->type = EVENT_FIRE_DAMAGE;
+				e->time = time;
 			}
 			break;
 		}
@@ -1620,6 +1666,13 @@ Transaction to_transaction(Action action, f32 time)
 		t.type = TRANSACTION_MAGIC_MISSILE_CAST;
 		t.magic_missile.caster_id = action.entity_id;
 		t.magic_missile.target_id = action.magic_missile.target_id;
+		break;
+	}
+	case ACTION_FIRE_WALL: {
+		t.type = TRANSACTION_FIRE_WALL_CAST;
+		t.fire_wall.caster_id = action.entity_id;
+		t.fire_wall.start = action.fire_wall.start;
+		t.fire_wall.end = action.fire_wall.end;
 		break;
 	}
 	}
@@ -2486,6 +2539,22 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 				break;
 			}
 
+			case TRANSACTION_DAMAGE: {
+				t->type = TRANSACTION_REMOVE;
+
+				auto e = get_entity_by_id(game, t->damage.entity_id);
+				if (!e) {
+					break;
+				}
+
+				auto ed = entity_damage.append();
+				ed->entity_id = e->id;
+				ed->damage = t->damage.amount;
+				ed->pos = (v2)e->pos;
+
+				break;
+			}
+
 			case TRANSACTION_BUMP_ATTACK:
 			case TRANSACTION_BUMP_ATTACK_POISON:
 			case TRANSACTION_BUMP_ATTACK_SNEAK: {
@@ -2981,6 +3050,38 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 
 				break;
 			}
+			case TRANSACTION_FIRE_WALL_CAST: {
+				auto caster = get_entity_by_id(game, t->fire_wall.caster_id);
+				if (!caster) {
+					t->type = TRANSACTION_REMOVE;
+					break;
+				}
+
+				t->type = TRANSACTION_FIRE_WALL_START;
+				t->start_time += constants.anims.fire_wall.cast_time;
+				break;
+			}
+			case TRANSACTION_FIRE_WALL_START: {
+				t->type = TRANSACTION_REMOVE;
+
+				Event event = {};
+				event.type = EVENT_ADD_CREATURE;
+				event.time = t->start_time;
+
+				Max_Length_Array<v2_i32, 16> line;
+				line.reset();
+				calc_line((v2_i32)t->fire_wall.start, (v2_i32)t->fire_wall.end, line);
+				for (u32 i = 0; i < line.len; ++i) {
+					auto fire = add_creature(game, (Pos)line[i], CREATURE_FIRE_WALL);
+
+					event.add_creature.creature_id = fire->id;
+					event.add_creature.appearance = fire->appearance;
+					event.add_creature.pos = (v2)fire->pos;
+					events.append(event);
+				}
+
+				break;
+			}
 			case TRANSACTION_HEAL_CAST: {
 				t->type = TRANSACTION_HEAL;
 				t->start_time += constants.anims.heal.cast_time;
@@ -3374,14 +3475,8 @@ f32 game_simulate_actions(Game* game, f32 time, Slice<Action> actions, Output_Bu
 			Entity_Damage *ed = &entity_damage[i];
 			Entity_ID entity_id = ed->entity_id;
 
-			u32 num_entities = game->entities.len;
-			Entity *e = game->entities.items;
-			for (u32 i = 0; i < num_entities; ++i, ++e) {
-				if (e->id == entity_id) {
-					break;
-				}
-			}
-			ASSERT(e->id == entity_id);
+			auto e = get_entity_by_id(game, entity_id);
+			ASSERT(e);
 
 			e->hit_points -= ed->damage;
 			u8 entity_died = e->hit_points <= 0;
@@ -3534,7 +3629,6 @@ void get_card_params(Game* game, Card_ID card_id, Action_Type* action_type, Outp
 	case CARD_APPEARANCE_PSY_MANA:
 	case CARD_APPEARANCE_WATER_MANA:
 	case CARD_APPEARANCE_FIRE_SHIELD:
-	case CARD_APPEARANCE_FIRE_WALL:
 	case CARD_APPEARANCE_POISON:
 	case CARD_APPEARANCE_MAGIC_MISSILE: {
 		*action_type = ACTION_MAGIC_MISSILE;
@@ -3558,6 +3652,16 @@ void get_card_params(Game* game, Card_ID card_id, Action_Type* action_type, Outp
 		auto param = card_params.append();
 		param->type = CARD_PARAM_CREATURE;
 		param->offset = OFFSET_OF(Action, fire_bolt.target_id);
+		break;
+	}
+	case CARD_APPEARANCE_FIRE_WALL: {
+		*action_type = ACTION_FIRE_WALL;
+		auto param = card_params.append();
+		param->type = CARD_PARAM_AVAILABLE_TILE;
+		param->offset = OFFSET_OF(Action, fire_wall.start);
+		param = card_params.append();
+		param->type = CARD_PARAM_AVAILABLE_TILE;
+		param->offset = OFFSET_OF(Action, fire_wall.end);
 		break;
 	}
 	case CARD_APPEARANCE_EXCHANGE: {

@@ -64,6 +64,7 @@ enum Action_Type
 	ACTION_BUMP_ATTACK_SNEAK,
 	ACTION_FIREBALL,
 	ACTION_FIRE_BOLT,
+	ACTION_FIRE_WALL,
 	ACTION_EXCHANGE,
 	ACTION_BLINK,
 	ACTION_HEAL,
@@ -101,6 +102,10 @@ struct Action
 		struct {
 			Pos end;
 		} fireball;
+		struct {
+			Pos start;
+			Pos end;
+		} fire_wall;
 		struct {
 			Entity_ID a;
 			Entity_ID b;
@@ -287,6 +292,8 @@ enum Creature_Type
 	CREATURE_SPIDER_POISON,
 	CREATURE_SPIDER_SHADOW,
 	CREATURE_IMP,
+
+	CREATURE_FIRE_WALL,
 };
 
 // =============================================================================
@@ -344,6 +351,7 @@ enum Message_Handler_Type
 	MESSAGE_HANDLER_TRAP_SPIDER_CAVE,
 	MESSAGE_HANDLER_SPIDER_WEB_PREVENT_EXIT,
 	MESSAGE_HANDLER_EXPLODE_ON_DEATH,
+	MESSAGE_HANDLER_FIRE_WALL_ENTER,
 };
 
 struct Message_Handler
@@ -432,6 +440,7 @@ enum Event_Type
 	EVENT_TURN_INVISIBLE,
 	EVENT_TURN_VISIBLE,
 	EVENT_MAGIC_MISSILE_SHOT,
+	EVENT_FIRE_DAMAGE,
 
 	EVENT_DRAW_CARD,
 	EVENT_SHUFFLE_DISCARD_TO_DECK,
@@ -682,6 +691,7 @@ Entity*          add_spider_web(Game* game, Pos pos);
 Entity*          add_spider_poison(Game* game, Pos pos);
 Entity*          add_spider_shadow(Game* game, Pos pos);
 Entity*          add_imp(Game* game, Pos pos);
+Entity*          add_fire_wall(Game* game, Pos pos);
 Entity*          add_spiderweb(Game* game, Pos pos);
 Entity*          add_explosive_barrel(Game* game, Pos pos);
 Message_Handler* add_trap_spider_cave(Game* game, Pos pos, u32 radius);

@@ -1633,7 +1633,7 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 
 			World_Anim_Dynamic anim = {};
 			anim.type = ANIM_MAGIC_MISSILE;
-			anim.start_time = false;
+			anim.started = false;
 			anim.start_time = event->time;
 			anim.duration = constants.anims.magic_missile.shot_time;
 			v2 start = event->magic_missile_shot.start;
@@ -1650,6 +1650,20 @@ void build_animations(Anim_State* anim_state, Slice<Event> events, f32 time)
 
 			auto sound = sound_anims.append();
 			sound->sound_id = SOUND_MAGIC_WHOOSH_1;
+			sound->start_time = event->time;
+			break;
+		}
+		case EVENT_FIRE_DAMAGE: {
+			Sound_ID sounds[] = {
+				SOUND_FANTASY_GAME_MAGIC_FIRE_INSTANT_CAST_SPELL_A,
+				SOUND_FANTASY_GAME_MAGIC_FIRE_INSTANT_CAST_SPELL_B,
+				SOUND_FANTASY_GAME_MAGIC_FIRE_INSTANT_CAST_SPELL_C,
+				SOUND_FANTASY_GAME_MAGIC_FIRE_INSTANT_CAST_SPELL_D,
+				SOUND_FANTASY_GAME_MAGIC_FIRE_INSTANT_CAST_SPELL_E,
+			};
+
+			auto sound = sound_anims.append();
+			sound->sound_id = sounds[rand_u32() % ARRAY_SIZE(sounds)];
 			sound->start_time = event->time;
 			break;
 		}
@@ -1929,6 +1943,9 @@ void draw(Anim_State* anim_state, Render* renderer, Sound_Player* sound_player, 
 			static_anim->world_coords = anim->add_creature.pos;
 			static_anim->entity_id = anim->add_creature.entity_id;
 			static_anim->depth_offset = constants.z_offsets.character;
+			f32 duration = uniform_f32(0.8f, 1.2f);
+			static_anim->idle.duration = duration;
+			static_anim->idle.offset = rand_f32() * duration;
 			break;
 		}
 		case ANIM_OPEN_DOOR: {
